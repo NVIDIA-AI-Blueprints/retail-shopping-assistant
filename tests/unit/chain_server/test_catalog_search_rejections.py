@@ -1706,6 +1706,67 @@ def test_one_category_and_no_subcategory_is_left_alone() -> None:
     assert _one_scope_per_category(ctx, [scope]) == [scope]
 
 
+def test_a_filter_and_no_category_reaches_every_department() -> None:
+    """"Nothing over $50" names nowhere, and nowhere means everywhere.
+
+    The model sends this correctly: no product type, no category, a price and
+    a guidance line reading "everything in the shop, across all departments".
+    Left as one scope it was ranked rather than spread, and four bags won a
+    similarity contest against "affordable items under $50" -- a phrase with
+    no product signal in it -- while twenty qualifying apparel pieces went
+    unmentioned. The reply then read its own results back as intent: "I'm
+    assuming you're looking for bags."
+    """
+
+    from chain_server.src.catalog_search import _one_scope_per_category
+
+    ctx = SimpleNamespace(
+        capabilities=_capabilities(),
+        config=SimpleNamespace(max_search_scopes_per_call=10),
+    )
+    scope = {
+        "semantic_query": "affordable items under $50",
+        "requested_product_type": None,
+        "taxonomy": {"category": [], "subcategory": []},
+        "required_constraints": {"price": {"max": 50}},
+    }
+
+    fanned = _one_scope_per_category(ctx, [scope])
+
+    assert len(fanned) > 1
+    assert [f["taxonomy"]["category"] for f in fanned] == [
+        [name] for name in sorted(_capabilities().taxonomy.categories)
+    ]
+    # Every scope keeps the ceiling, and each carries its own department's
+    # advertised subcategories rather than an empty list.
+    assert all(f["required_constraints"] == {"price": {"max": 50}} for f in fanned)
+    assert all(f["taxonomy"]["subcategory"] for f in fanned)
+
+
+def test_a_browse_with_no_filter_at_all_is_left_alone() -> None:
+    """Nothing to narrow by is not the whole shop, it is a question.
+
+    The schema refuses a scope with no type, no taxonomy and no filter, and
+    that refusal is what turns "looking for something nice" into a question.
+    Fanning it here would hand back the catalog and route around the guard.
+    """
+
+    from chain_server.src.catalog_search import _one_scope_per_category
+
+    ctx = SimpleNamespace(
+        capabilities=_capabilities(),
+        config=SimpleNamespace(max_search_scopes_per_call=10),
+    )
+    scope = {
+        "semantic_query": "something nice",
+        "requested_product_type": None,
+        "taxonomy": {"category": [], "subcategory": []},
+        "required_constraints": {},
+    }
+
+    assert _one_scope_per_category(ctx, [scope]) == [scope]
+
+
 def test_a_scope_that_names_subcategories_is_left_alone() -> None:
     from chain_server.src.catalog_search import _one_scope_per_category
 

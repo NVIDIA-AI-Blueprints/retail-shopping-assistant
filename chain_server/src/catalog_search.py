@@ -2374,6 +2374,28 @@ def _one_scope_per_category(ctx: SearchContext, scopes: list[Any]) -> list[Any]:
         taxonomy = fields.get("taxonomy") or {}
         asked = taxonomy.get("category") if isinstance(taxonomy, dict) else None
         named = list(taxonomy.get("subcategory") or []) if isinstance(taxonomy, dict) else []
+        if (
+            isinstance(asked, list)
+            and not asked
+            and not named
+            and not str(fields.get("requested_product_type") or "").strip()
+            and _hard_filter_scopes_this(fields.get("required_constraints"))
+        ):
+            # No product type, no category, a filter and nothing else: the
+            # shopper asked about the shop. Named none, this used to stay one
+            # scope, and one scope with no category is ranked rather than
+            # spread -- "nothing over $50" went out as `category: []` with the
+            # guidance "everything in the shop, across all departments", and
+            # came back as four bags because they won a similarity contest
+            # against "affordable items under $50", a phrase with no product
+            # signal in it at all. Forty-three products qualified, twenty of
+            # them apparel. The reply then read its own results back as intent
+            # and opened "I'm assuming you're looking for bags".
+            #
+            # Filling the categories in here rather than asking the model to
+            # list them keeps the one request that means "everywhere" off the
+            # path where ranking decides where.
+            asked = sorted(categories)
         # Two or more categories only. One category with no subcategory is
         # indistinguishable from an invented role: "rainy outfit under $60"
         # arrives as apparel with a price and nothing else, and filling in

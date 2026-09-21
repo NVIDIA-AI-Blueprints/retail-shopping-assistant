@@ -121,6 +121,9 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
         relation = _scope_relation_line(payload, has_products=False)
         if relation:
             lines.append(relation)
+        near_miss = _the_filter_removed_line(payload)
+        if near_miss:
+            lines.append(near_miss)
         # Zero results told the model what was absent and nothing about what
         # was present, so it asked. "No green dress in a size 2 -- would you
         # like size 4 instead?" showed nothing, on a turn where the catalog
@@ -159,6 +162,12 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
         return "\n".join(lines)
 
     lines = [_summarize_typed_product_evidence(payload)]
+    near_miss = _the_filter_removed_line(payload)
+    if near_miss:
+        lines.append(near_miss)
+    slice_of = _only_part_of_what_matched_line(payload)
+    if slice_of:
+        lines.append(slice_of)
     unconfirmed = payload.get("unconfirmed_requirements") or []
     if unconfirmed:
         # Retrieval ranked on these; no filter enforced them. Saying so is what
@@ -181,6 +190,57 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
         lines.append(audience)
     return "\n".join(lines)
 
+
+
+def _the_filter_removed_line(payload: dict[str, Any]) -> str:
+    """Name the product a filter took out, and forbid denying it exists.
+
+    A filtered search can confirm that something fits and can never report
+    that it does not, so results are no evidence at all about what the filter
+    removed. Asked whether a $169.99 bracelet fitted a $150 budget, a turn
+    searched bracelets under the $110.01 unspent, got four, and answered "I
+    don't have a Southwest Bracelet in the shop". The catalog sells one.
+
+    The price is here because it is the answer. Told only that the product
+    exists, the reply can stop denying it and still not say the one thing
+    that was asked.
+    """
+
+    near_miss = payload.get("excluded_near_miss") or {}
+    name = str(near_miss.get("display_name") or "").strip()
+    if not name:
+        return ""
+    price = near_miss.get("price")
+    priced = f" It costs {price}." if price is not None else ""
+    return (
+        f"EXCLUDED_BY_THIS_SEARCHS_FILTER: {name} is in this catalog and was "
+        f"removed by a filter on this search, which is why it is not among "
+        f"the products above.{priced} Never say this shop has no such "
+        "product. It does not meet the filter, so do not offer it, list it, "
+        "or count it among the results -- state it only to answer what was "
+        "asked about it."
+    )
+
+
+def _only_part_of_what_matched_line(payload: dict[str, Any]) -> str:
+    """Say that the products shown are a slice, when they are.
+
+    Absent when they are not, which is most of the point. "Here are the tote
+    bags the shop carries under $50" over all four of them is true and has to
+    stay sayable; the identical sentence over four of seventeen jewellery
+    pieces is the defect, and only the count tells them apart.
+    """
+
+    matched = payload.get("how_many_matched")
+    if not isinstance(matched, int) or matched <= 0:
+        return ""
+    shown = len(payload.get("products") or [])
+    return (
+        f"PARTIAL_RESULT_SET: at least {matched} products matched this search "
+        f"and {shown} are shown. These are a selection, not the whole of what "
+        "the catalog holds for it, so do not present them as everything, all, "
+        "the full set, or what the shop carries. More can be shown if asked."
+    )
 
 
 def _scope_relation_line(payload: dict[str, Any], *, has_products: bool) -> str:

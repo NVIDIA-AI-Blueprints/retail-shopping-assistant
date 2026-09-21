@@ -176,7 +176,7 @@ def _format_colour_words_read_as_advertised_ones(
     )
 
 
-def _format_excluded_near_miss(near_miss: Any) -> str:
+def _format_excluded_near_miss(near_miss: dict[str, Any]) -> str:
     """Say what the filter removed, so a question about the filter can be answered.
 
     A filtered search can confirm that something fits and can never report
@@ -189,24 +189,18 @@ def _format_excluded_near_miss(near_miss: Any) -> str:
     It is evidence and not a result. It fails the search it came from, so it
     is not offered, not counted and not shown -- it is here to be *told*
     about, which is what was asked for.
+
+    Rendered from the same dictionary the evidence artifact carries, so the
+    line the agent reads and the line the grounding editor reads cannot come
+    to differ. Told only here, it reached the agent and never the editor,
+    which is the component that writes what the shopper gets.
     """
 
-    if near_miss is None:
+    if not near_miss:
         return ""
-    name = str(getattr(near_miss, "display_name", "") or "").strip()
-    if not name:
-        return ""
-    payload: dict[str, Any] = {"display_name": name}
-    price = getattr(near_miss, "price", None)
-    amount = getattr(price, "amount", None)
-    if amount is not None:
-        # The number, not the Money object. The price is the whole point of
-        # this line -- it is what the shopper asked about -- and serialising
-        # the wrapper puts a currency field between them and the answer.
-        payload["price"] = amount
     return (
         "EXCLUDED BY A FILTER ON THIS SEARCH: "
-        + json.dumps(payload, sort_keys=True, default=str)
+        + json.dumps(near_miss, sort_keys=True, default=str)
         + " -- this product exists in the catalog and does not satisfy the "
         "filter, which is why it is not among the results. It is not an "
         "option and must not be offered or listed as one. State it only to "

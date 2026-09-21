@@ -1881,6 +1881,9 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             budget_exhausted=bool(search_budget_exhausted),
             unconfirmed_requirements=unconfirmable_requirements,
             size_the_scope_has_not=dict(attempt.size_the_scope_has_not or {}),
+            # Nothing came back and a filter is why: the clearest case of a
+            # search that cannot speak to what it excluded.
+            excluded_near_miss=_the_filter_removed(result.excluded_near_miss),
             scope_outcome={
                 "outcome": "zero_results",
                 "requested_product_type": request.requested_product_type,
@@ -1914,7 +1917,7 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         # $110" and "we have no such bracelet" are different answers, and the
         # products cannot tell them apart because the filter removed the one
         # that would have.
-        near_miss_note = _format_excluded_near_miss(result.excluded_near_miss)
+        near_miss_note = _format_excluded_near_miss(evidence.excluded_near_miss)
         if near_miss_note:
             lines.append(near_miss_note)
         if scope_relation_evidence:
@@ -1970,6 +1973,11 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             _search_product_record(product) for product in result.products
         ],
     )
+    evidence.excluded_near_miss = _the_filter_removed(result.excluded_near_miss)
+    evidence.how_many_matched = _more_matched_than_are_shown(
+        result.diagnostics,
+        len(evidence.products),
+    )
     evidence.assumed_audience = _assumed_audience(
         str(getattr(ctx.config, "wearer_audience_field", "") or ""),
         confirmed_filters,
@@ -2000,7 +2008,7 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     # Results came back, and the one the shopper asked about may not be among
     # them because the filter removed it. Four bracelets under budget are no
     # evidence at all about a fifth that is over it.
-    near_miss_note = _format_excluded_near_miss(result.excluded_near_miss)
+    near_miss_note = _format_excluded_near_miss(evidence.excluded_near_miss)
     if near_miss_note:
         lines.append(near_miss_note)
     if scope_relation_evidence:
@@ -2280,6 +2288,41 @@ def _a_category_the_shopper_did_not_name(evidence: Any, attempt: Any) -> str:
         str(value) for value in (taxonomy.get(field) or []) if str(value).strip()
     ]
     return categories[0] if len(categories) == 1 else ""
+
+
+def _the_filter_removed(near_miss: Any) -> dict[str, Any]:
+    """The excluded product reduced to what an answer about it needs.
+
+    A name and a number. The price is the whole point -- it is what the
+    shopper asked about -- so the amount is taken out of its Money wrapper
+    rather than leaving a currency field between them and the answer.
+    """
+
+    name = str(getattr(near_miss, "display_name", "") or "").strip()
+    if not name:
+        return {}
+    removed: dict[str, Any] = {"display_name": name}
+    amount = getattr(getattr(near_miss, "price", None), "amount", None)
+    if amount is not None:
+        removed["price"] = amount
+    return removed
+
+
+def _more_matched_than_are_shown(diagnostics: Any, shown: int) -> int:
+    """How many matched, when top-k returned fewer than that, else 0.
+
+    Zero is the useful answer as often as the count is: it says the list is
+    complete, and "here are the four tote bags under $50" -- which really is
+    all four -- must stay sayable. The same phrasing over four of seventeen
+    jewellery pieces is the defect.
+    """
+
+    if not isinstance(diagnostics, dict):
+        return 0
+    matched = diagnostics.get("after_filter_count")
+    if not isinstance(matched, int) or matched <= shown:
+        return 0
+    return matched
 
 
 def _hard_filter_scopes_this(required_constraints: Any) -> bool:

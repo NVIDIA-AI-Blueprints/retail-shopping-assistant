@@ -1876,6 +1876,92 @@ def test_stale_retry_reuses_cart_mutation_idempotency_key(
         assert db.query(memory_main.CartMutation).count() == 1
 
 
+def test_reset_hands_back_everything_it_deletes(
+    conversation_db: TestClient,
+) -> None:
+    """A session can be thrown away without throwing away the evidence.
+
+    `DELETE /conversations/{id}` deliberately leaves the cart, which is right
+    for deleting one conversation and wrong for resetting a session: the caller
+    then needs a second endpoint and a user id it may never have held.
+    """
+
+    conversation_db.post(
+        "/user/7/cart/add",
+        json={
+            "product_id": "bag-1",
+            "item": "Structured Bag",
+            "amount": 1,
+            "idempotency_key": "reset-cart",
+        },
+    )
+    started = _start_turn(
+        conversation_db,
+        "conversation-reset",
+        request_id="request-reset",
+    ).json()
+    _finalize_turn(
+        conversation_db,
+        "conversation-reset",
+        started["turn_id"],
+        request_id="request-reset",
+        attempt_id=started["attempt_id"],
+        events=[
+            {
+                "event_key": "event-reset",
+                "event_type": "candidate_set_presented",
+                "source_kind": "catalog",
+                "payload": {},
+            }
+        ],
+    )
+
+    reset = conversation_db.post("/conversations/conversation-reset/reset")
+
+    assert reset.status_code == 200
+    body = reset.json()
+    assert body["deleted"] == {
+        "turns": 1,
+        "events": 1,
+        "projection": True,
+        "cart_lines": 1,
+    }
+
+    # The archive is the debug record, so it has to carry what the rows held
+    # rather than a count of them.
+    archive = body["archive"]
+    assert archive["cart_user_ids"] == [7]
+    assert [turn["shopper_text"] for turn in archive["turns"]] == ["Show me a bag"]
+    assert [event["event_key"] for event in archive["events"]] == ["event-reset"]
+    assert archive["projection"]["conversation_id"] == "conversation-reset"
+    assert [item["item"] for item in archive["cart_items"]] == ["Structured Bag"]
+
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationTurn).count() == 0
+        assert db.query(memory_main.ConversationEvent).count() == 0
+        assert db.query(memory_main.CartItem).count() == 0
+        # Shared, immutable, and bootstrap-owned: a reset that took one of
+        # these would take the persona out from under every other conversation.
+        assert db.query(memory_main.ShopperProfile).count() > 0
+
+
+def test_reset_of_an_unknown_conversation_deletes_nothing(
+    conversation_db: TestClient,
+) -> None:
+    reset = conversation_db.post("/conversations/conversation-absent/reset")
+
+    assert reset.status_code == 200
+    body = reset.json()
+    assert body["deleted"] == {
+        "turns": 0,
+        "events": 0,
+        "projection": False,
+        "cart_lines": 0,
+    }
+    assert body["archive"]["turns"] == []
+    assert body["archive"]["cart_user_ids"] == []
+
+
 def test_delete_cascades_conversation_rows_but_preserves_cart_and_context(
     conversation_db: TestClient,
 ) -> None:

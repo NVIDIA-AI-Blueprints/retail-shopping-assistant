@@ -251,6 +251,8 @@ request again.
 - `POST /user/{user_id}/cart/add`: Add cart item
 - `POST /user/{user_id}/cart/remove`: Remove cart item
 - `POST /user/{user_id}/cart/clear`: Clear cart
+- `DELETE /conversations/{conversation_id}`: Delete one conversation, leaving the cart
+- `POST /conversations/{conversation_id}/reset`: Return the conversation and its cart, then delete both
 - `GET /health`: Health check
 
 ### Guardrails (Port 8012)

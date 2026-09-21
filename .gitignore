@@ -87,3 +87,8 @@ shared/data/enriched_products_old.jsonl
 # Working notes written while tracing a run. Read alongside the code they
 # describe and superseded by the next run, so they are kept locally.
 docs/reports/
+
+# Conversations saved on the way out by `scripts/reset_a_conversation.py`.
+# The whole point is that they left the database; they should not arrive in
+# the repository instead.
+debug_archive/

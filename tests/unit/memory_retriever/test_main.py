@@ -794,6 +794,40 @@ class TestContextFlows:
             client.get("/user/99/context").json()["context"] == "brand-new"
         )
 
+    def test_clear_user_deletes_the_cart_it_says_it_deleted(
+        self, client: TestClient
+    ) -> None:
+        """`CartItem.user_id` has no foreign key onto `users`, so deleting the
+        user cascades nothing. This endpoint reported that it had cleared the
+        cart while leaving every line in place."""
+
+        _add_cart(client, 1, "A", 1, price=10.0)
+        client.post("/user/1/context/add", json={"new_context": "sticky"})
+
+        response = client.post("/user/1/clear")
+
+        assert response.status_code == 200
+        assert response.json()["deleted_cart_lines"] == 1
+        assert response.json()["deleted_context"] is True
+        assert client.get("/user/1/cart").json()["cart"] == []
+
+    def test_clear_user_clears_a_cart_with_no_stored_context(
+        self, client: TestClient
+    ) -> None:
+        _add_cart(client, 2, "A", 1, price=10.0)
+
+        response = client.post("/user/2/clear")
+
+        assert response.status_code == 200
+        assert response.json()["deleted_cart_lines"] == 1
+        assert response.json()["deleted_context"] is False
+        assert client.get("/user/2/cart").json()["cart"] == []
+
+    def test_clear_user_with_nothing_to_clear_returns_404(
+        self, client: TestClient
+    ) -> None:
+        assert client.post("/user/998/clear").status_code == 404
+
     def test_clear_context_deletes_user(self, client: TestClient) -> None:
         client.post("/user/1/context/add", json={"new_context": "sticky"})
         response = client.post("/user/1/context/clear")

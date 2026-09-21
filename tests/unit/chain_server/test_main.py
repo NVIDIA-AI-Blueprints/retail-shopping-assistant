@@ -2640,6 +2640,33 @@ class TestDeepAgentsRuntimeRefs:
             )
             or ""
         )
+        # A request that names no product type is searched on whatever else
+        # scopes it. Required unconditionally, this field had to be filled with
+        # a noun the shopper never said, and "nothing over $50" -- scoped by
+        # its price and by nothing else -- reached the vocabulary judge as a
+        # request for "items" and came back as a catalog that stocks none.
+        typeless_by_taxonomy = schema_model.model_validate(
+            {
+                **complete_request,
+                "requested_product_type": None,
+                "taxonomy_status": "agent_selected_type",
+            }
+        )
+        assert typeless_by_taxonomy.requested_product_type is None
+        typeless_by_price = schema_model.model_validate(
+            {
+                **complete_request,
+                "requested_product_type": None,
+                "taxonomy_status": "agent_selected_type",
+                "taxonomy": {"category": [], "subcategory": []},
+                "required_constraints": {"price": {"max": 50}},
+            }
+        )
+        assert typeless_by_price.requested_product_type is None
+        # Nothing to search by is still nothing to search by. "Looking for
+        # something nice" names no type, selects no taxonomy and sets no
+        # filter, and is a question to ask rather than the whole shop to
+        # return.
         with pytest.raises(
             ValueError,
             match="text catalog search requires requested_product_type",
@@ -2648,7 +2675,8 @@ class TestDeepAgentsRuntimeRefs:
                 {
                     **complete_request,
                     "requested_product_type": None,
-                    "taxonomy_status": "exact_requested_type",
+                    "taxonomy_status": "agent_selected_type",
+                    "taxonomy": {"category": [], "subcategory": []},
                 }
             )
         # An advertised category grounds a role the shopper did not name: the

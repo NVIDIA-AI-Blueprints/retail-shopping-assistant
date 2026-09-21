@@ -124,7 +124,12 @@ class SearchCatalogToolArguments(BaseModel):
             "If this type is not separately advertised and you select one faithful "
             "advertised parent category, keep this shopper-named type unchanged. "
             "This is provenance, not catalog taxonomy or a ranking query. Use null "
-            "only for image-only search."
+            "for image-only search, and for a request that names no product type "
+            "at all -- 'nothing over $50' is a complete request scoped by its "
+            "price, and inventing a noun for it makes this field say the shopper "
+            "asked for something they did not. Null here is not an unscoped "
+            "search: taxonomy or a hard filter still has to say which products "
+            "are meant."
         ),
     )
     # No description on either field. `_search_catalog_tool_input_model`
@@ -221,9 +226,26 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
             raise ValueError(
                 "catalog retrieval requires non-empty shopper_guidance"
             )
-        if self.taxonomy_status != "image_only" and not requested_product_type:
+        if (
+            self.taxonomy_status != "image_only"
+            and not requested_product_type
+            and not has_taxonomy
+            and not self._scoped_by_a_hard_filter()
+        ):
+            # Required unconditionally, this field had to be invented on the one
+            # request that has no product type to give it. "Nothing over $50"
+            # named none, so the model filled it with "items" -- and the
+            # vocabulary judge, whose question is whether a named product type
+            # is stocked, answered that this catalog carries no "items". The
+            # turn told the shopper the shop had nothing, with four bags under
+            # fifty dollars sitting behind a search that was never run.
+            #
+            # A scope still has to say which products are meant. Taxonomy says
+            # it, and so does an enforceable filter; what is not allowed is an
+            # unscoped search, and the rules below still refuse one.
             raise ValueError(
-                "text catalog search requires requested_product_type"
+                "text catalog search requires requested_product_type, an "
+                "advertised category or subcategory, or a hard filter"
             )
         if self.taxonomy_status == "image_only" and requested_product_type:
             raise ValueError(

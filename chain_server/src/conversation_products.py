@@ -24,6 +24,10 @@ from .turn_support import _a_list_written_as_json_text
 
 _DEFAULT_TIMEOUT_SECONDS = 10.0
 _DEFAULT_INDEX_MAX_CHARS = 12_000
+#: How many numbered rows stay countable. Wide enough for a whole outfit
+#: showing -- J01's widest is twenty-two across five roles -- and narrow enough
+#: that the showing before last drops out once a full one arrives.
+_HOT_ROW_BUDGET = 24
 
 
 class _ConversationProductModel(BaseModel):
@@ -609,47 +613,171 @@ def format_historical_product_index(
     # which -- over a reference the shopper could not have made clearer. The
     # resolver already answers a bare ordinal with the first group, but it is
     # never reached: the question is asked before any tool runs.
-    #
-    # Budgeted after the showings rather than with them. It is guidance and
-    # they are the facts it is about, so where the two do not both fit, an
-    # index of rules and no products is the worse half to keep.
     counting_rule = (
         "Numbered from 1 under each [heading]. A number with no kind named "
         "means the first heading here: take it and say which, do not ask."
     )
-    formatted_sets = []
-    for raw_set in reference_sets:
-        line = _format_reference_set(raw_set)
-        if line:
-            formatted_sets.append(line)
-    if not formatted_sets:
+    # Only the newest showings stay numbered, because only one showing at a
+    # time can be the one a shopper is counting from. Numbering all of them put
+    # the Vivienne Lace Dress at #1, #2, #3 and #4 at once by turn 19 of J01,
+    # with the rule above as the only thing arbitrating between them.
+    #
+    # Everything older keeps its name and loses its position. That is how a
+    # shopper reaches back anyway: the one long-range reference in J01, "add
+    # the black one in a 2", describes the dress rather than counting to it.
+    usable = [raw for raw in reference_sets if _format_reference_set(raw)]
+    if not usable:
         return ""
+    hot, cold = _split_hot_from_cold(usable)
 
-    remaining = max_chars - len(heading) - 1
-    selected_newest_first: list[str] = []
-    for line in reversed(formatted_sets):
-        separator = 1 if selected_newest_first else 0
-        if len(line) + separator > remaining:
+    # Exactly what is left, so every check below reads the same: a line costs
+    # its own length plus the newline that joins it.
+    remaining = max_chars - len(heading)
+    showings: list[str] = []
+    for index, raw_set in enumerate(hot):
+        line = _format_reference_set(raw_set)
+        if len(line) + 1 > remaining:
+            # A showing too wide for what is left keeps its identity in the
+            # roster instead. Skipping it to fit an older one would number the
+            # wrong showing, which is the confusion this split exists to end.
+            cold = hot[index:] + cold
+            hot = hot[:index]
             break
-        selected_newest_first.append(line)
-        remaining -= len(line) + separator
+        showings.append(line)
+        remaining -= len(line) + 1
 
-    omitted = len(selected_newest_first) < len(formatted_sets)
-    marker = "(earlier historical products omitted)"
-    if omitted:
-        while selected_newest_first and len(marker) + 1 > remaining:
-            removed = selected_newest_first.pop()
-            remaining += len(removed) + 1
     lines = [heading]
+    # Before the showings but budgeted after them: the rule is guidance and
+    # they are what it is about, so where both will not fit, an index of rules
+    # and no products is the worse half to keep.
     if len(counting_rule) + 1 <= remaining:
         lines.append(counting_rule)
         remaining -= len(counting_rule) + 1
-    lines.extend(selected_newest_first)
-    if omitted:
-        # At the end now: what was dropped is the oldest, and it belongs where
-        # the oldest entries would have been.
-        lines.append(marker)
+    lines.extend(showings)
+
+    numbered = {
+        product.get("ref") for raw in hot for product in _products_of(raw)
+    }
+    roster = _roster_of_earlier_products(cold, numbered, remaining - 1)
+    # A heading and a counting rule with nothing under them announce an index
+    # and then name no product, which is worse than saying nothing at all.
+    if not showings and not roster:
+        return ""
+    if roster:
+        lines.append(roster)
+    elif cold:
+        # No room to name the earlier products, but that they exist still beats
+        # silence: an index that simply ends is one the model reads as the whole
+        # history of the conversation.
+        marker = "(earlier historical products omitted)"
+        if len(marker) + 1 <= remaining:
+            lines.append(marker)
     return "\n".join(lines)
+
+
+def _split_hot_from_cold(
+    reference_sets: Sequence[Any],
+) -> tuple[list[Any], list[Any]]:
+    """Which showings a shopper could still be counting from, and the rest.
+
+    Both halves come back newest first, which is the order everything
+    downstream wants: the shopper means the most recent thing they were shown,
+    and a tight budget should keep that rather than the oldest.
+
+    A row budget rather than a fixed number of showings, because showings are
+    not the same size. One J01 run ended on a showing of a single product,
+    where "the last two" would have kept five rows against another run's
+    twenty-three. The newest showing is always hot however wide it is: the turn
+    straight after it has to be able to answer "the second one".
+    """
+
+    newest_first = list(reversed(reference_sets))
+    hot: list[Any] = []
+    rows = 0
+    for raw_set in newest_first:
+        length = len(_products_of(raw_set))
+        if hot and rows + length > _HOT_ROW_BUDGET:
+            break
+        hot.append(raw_set)
+        rows += length
+    return hot, newest_first[len(hot) :]
+
+
+def _products_of(value: Any) -> list[dict[str, Any]]:
+    products = value.get("products") if isinstance(value, dict) else None
+    return [item for item in (products or []) if isinstance(item, dict)]
+
+
+def _roster_of_earlier_products(
+    cold_sets: Sequence[Any],
+    numbered: set[Any],
+    budget: int,
+) -> str:
+    """Name what was shown before, without saying where in a list it sat.
+
+    Grouped by kind and carrying no refs, which is most of why this fits. Spelt
+    out per product the same 46 products cost 3,072 characters, 43% of it the
+    refs alone -- more than the names. A ref here would save the one resolver
+    call a cold reference needs, about once a journey, at the price of carrying
+    those characters through every model call, of which J01 makes eighty-four.
+
+    Deliberately unnumbered. A second run of ordinals in front of the model is
+    the ambiguity this whole split exists to remove.
+    """
+
+    # Cold sets arrive newest first, so a kind is placed by the last time it
+    # was shown and the names within it run newest first too. What survives a
+    # tight budget is then what the shopper is likeliest to reach for.
+    by_kind: dict[str, list[str]] = {}
+    seen: set[str] = set()
+    for raw_set in cold_sets:
+        for product in _products_of(raw_set):
+            ref = _one_line(product.get("ref"))
+            name = _one_line(product.get("name"))
+            if not ref or not name or ref in numbered or ref in seen:
+                continue
+            seen.add(ref)
+            by_kind.setdefault(_one_line(product.get("category")), []).append(name)
+    if not by_kind:
+        return ""
+
+    heading = (
+        "ALSO SHOWN EARLIER (identity only, no numbering -- refer to these by "
+        "description, not position):"
+    )
+    # Truncated rather than dropped whole. Dropping it lost every earlier
+    # product on a long conversation, which is worse than what it replaced:
+    # the flat list this grew out of would have packed twenty showings into
+    # the same budget.
+    kinds = [
+        (f"  {kind}: {', '.join(names)}" if kind else f"  {', '.join(names)}", names)
+        for kind, names in by_kind.items()
+    ]
+    kept = 0
+    length = len(heading)
+    for line, _ in kinds:
+        if length + len(line) + 1 > budget:
+            break
+        kept += 1
+        length += len(line) + 1
+
+    if kept == len(kinds):
+        return "\n".join([heading, *(line for line, _ in kinds)])
+
+    # Said rather than silent: an index that simply ends is one the model reads
+    # as the whole history of the conversation. The note has to fit, so the
+    # oldest kinds give way to it rather than the other way round -- and each
+    # one that does adds its products to what the note is counting.
+    while kept:
+        dropped = sum(len(names) for _, names in kinds[kept:])
+        note = f"  (+{dropped} more shown earlier)"
+        if length + len(note) + 1 <= budget:
+            return "\n".join(
+                [heading, *(line for line, _ in kinds[:kept]), note]
+            )
+        kept -= 1
+        length -= len(kinds[kept][0]) + 1
+    return ""
 
 
 def _format_reference_set(value: Any) -> str:

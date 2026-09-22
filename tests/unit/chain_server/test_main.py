@@ -2131,12 +2131,17 @@ class TestDeepAgentsRuntimeRefs:
             {"category": ["bags"], "subcategory": ["tote_bags"]},
             capabilities,
         ) is not None
+        # Placed by its last word rather than advertised whole, so this gate
+        # reads it as bags and leaves the choice between bags alone. The
+        # substitution is still refused mid-turn, by the gate holding a repair
+        # to the scope it is repairing: see, in the search-tool suite,
+        # test_a_modifier_does_not_license_the_substitution.
         assert catalog_vocabulary_mod._advertised_taxonomy_scope_issue(
             "formal crossbody bags",
             "member_of_requested_umbrella",
             {"category": ["bags"], "subcategory": ["tote_bags"]},
             capabilities,
-        ) is not None
+        ) is None
         assert catalog_vocabulary_mod._advertised_taxonomy_scope_issue(
             "formal crossbody bags",
             "exact_requested_type",

@@ -1839,6 +1839,68 @@ def test_a_scopeless_browse_is_shown_rather_than_refused(
     assert _rejection_codes(result) == []
 
 
+def test_a_name_placed_by_its_last_word_does_not_cancel_the_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P26 t2, "add the Ultra Soft Cashmere Blend Sweater Blouse".
+
+    A product's name is not a product type, but placed by its last word it
+    reads as one: this sweater's name ends in "Blouse", so it was read as
+    blouses and refused against the sweaters the model had correctly selected.
+    Twice, and then the turn gave up and told the shopper the search could not
+    be completed -- about a sweater on the shelf, which the retriever returns
+    first for its own name, and which no gate here had any part in finding.
+
+    Nothing this gate compares reaches the retriever. Refusing cost the answer
+    and bought nothing, so a phrase the catalog does not advertise no longer
+    settles which shelf was meant.
+    """
+
+    capabilities = _capabilities()
+    capabilities.taxonomy.categories["apparel"].subcategories = {
+        "sweaters": CatalogTaxonomySubcategory(product_count=1),
+        "blouses": CatalogTaxonomySubcategory(product_count=1),
+    }
+    capabilities.filters["product_type"].values = ["sweaters", "blouses"]
+
+    sweater = ProductSummary(
+        product_id="s1",
+        display_name="Ultra Soft Cashmere Blend Sweater Blouse",
+        category="sweaters",
+        price=Money(amount=39.99, currency="USD"),
+    )
+    monkeypatch.setattr(
+        catalog_search_mod,
+        "execute_catalog_search",
+        lambda *_a, **_k: SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[sweater]),
+            fallback_attempted=False,
+            fallback_used=False,
+        ),
+    )
+
+    ctx = _context(
+        "add the Ultra Soft Cashmere Blend Sweater Blouse to my cart",
+        capabilities=capabilities,
+    )
+
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="Ultra Soft Cashmere Blend Sweater Blouse",
+                requested_product_type="Ultra Soft Cashmere Blend Sweater Blouse",
+                taxonomy={"category": ["apparel"], "subcategory": ["sweaters"]},
+            )
+        ],
+    )
+
+    assert _rejection_codes(result) == []
+    assert sweater.display_name in (
+        result[0] if isinstance(result, tuple) else result
+    )
+
+
 def test_a_narrowed_role_is_not_told_to_widen() -> None:
     """A role with no filter behind it gets the narrowing advice only. The
     wider shapes are for a request that named no type at all."""

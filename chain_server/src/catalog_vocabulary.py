@@ -241,7 +241,30 @@ def _advertised_taxonomy_scope_issue(
     )
     if advertised_match is None:
         return None
-    scope_kind, advertised_name, category_name, _ = advertised_match
+    scope_kind, advertised_name, category_name, matched_text = advertised_match
+    # An inferred binding reaches a department, never a shelf. Where the
+    # catalog advertises the phrase itself, it is read whole and settles which
+    # shelf is meant. Where it does not, the phrase is placed by its last word,
+    # and that is sound about the broad kind -- "work bags" is bags, and a turn
+    # answering it with dresses has changed department -- while saying nothing
+    # dependable about which sibling is meant.
+    #
+    # The Ultra Soft Cashmere Blend Sweater Blouse is a sweater. Adjudicating
+    # siblings on a last word, that name bound to blouses, contradicted the
+    # sweaters the model had correctly chosen, and cancelled the search twice
+    # for a product the shop stocks and the retriever returns first for its own
+    # name. Nothing here reaches the retriever, which searches on the semantic
+    # query and the filters, so the refusal cost a shopper the answer and
+    # bought nothing.
+    #
+    # The trade is that a modifier on an advertised sibling -- "formal
+    # crossbody bags" answered with tote bags -- is no longer this gate's to
+    # refuse. Mid-turn that substitution is still caught, by the gate that
+    # holds a repair to the scope it is repairing.
+    if scope_kind == "subcategory" and _normalize_product_text(
+        requested_product_type or ""
+    ) != matched_text:
+        return None
     payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
     selected_categories = payload.get("category") or []
     selected_subcategories = payload.get("subcategory") or []

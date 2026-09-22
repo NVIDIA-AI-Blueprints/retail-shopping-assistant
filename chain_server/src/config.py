@@ -116,6 +116,14 @@ class ChainServerConfig(BaseModel):
         default="target_audience",
         description="Catalog filter naming who a product is for (prompt)",
     )
+    colour_field: str = Field(
+        default="primary_color",
+        description=(
+            "Catalog filter holding colour. Its unadvertised values are mapped "
+            "onto advertised ones rather than dropped. Naming no field, or one "
+            "this catalog does not advertise, leaves them to be ranked on"
+        ),
+    )
     max_catalog_searches_per_turn: int = Field(
         default=10,
         description="Maximum distinct catalog taxonomy scopes allowed per turn",

@@ -1,10 +1,3 @@
-
-from pathlib import Path
-
-# Resolved from this file, not the working directory: CI runs pytest with
-# `working-directory: tests`, where a path relative to the repo root does not
-# exist. The rest of the suite already does this.
-_REPO_ROOT = Path(__file__).resolve().parents[3]
 """One stalled model request must not cost the whole turn.
 
 J03 turn 5 -- "add the Southwest Bracelet", a turn that normally costs ten
@@ -14,14 +7,18 @@ calls. One request that never came back, with no deadline to stop it.
 """
 
 import types
+from pathlib import Path
 
 import pytest
-
 from chain_server.src.deepagents_runtime import (
-
     _MODEL_REQUEST_TIMEOUT_CEILING_SECONDS,
     DeepAgentsRuntime,
 )
+
+# Resolved from this file, not the working directory: CI runs pytest with
+# `working-directory: tests`, where a path relative to the repo root does not
+# exist. The rest of the suite already does this.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _timeout_for(budget: float, reserve: float = 15.0) -> float:
@@ -59,6 +56,12 @@ def test_a_tiny_budget_still_leaves_a_usable_deadline() -> None:
 
 
 def test_the_client_is_built_with_it() -> None:
-    source = open(_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read()
-    block = source[source.index("def _create_chat_model") :][:1600]
+    source = (_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read_text()
+    # The whole method, not its first 1600 characters. The window was a proxy
+    # for "inside this method" and any comment added above the argument broke
+    # it: documenting why sampling is settable moved `timeout=` past the cut
+    # and failed a test about the deadline, which had not changed.
+    start = source.index("def _create_chat_model")
+    end = source.index("\n    def ", start)
+    block = source[start:end]
     assert "timeout=self._model_request_timeout()" in block

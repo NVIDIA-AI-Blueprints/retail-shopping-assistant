@@ -15,14 +15,12 @@ the service never asks which database it is talking to.
 from __future__ import annotations
 
 import os
-from typing import Any
-
 from hashlib import sha256
+from typing import Any
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import declarative_base, sessionmaker
-
 
 DEFAULT_DATABASE_URL = "sqlite:///./context.db"
 DEFAULT_BUSY_TIMEOUT_MS = 5000

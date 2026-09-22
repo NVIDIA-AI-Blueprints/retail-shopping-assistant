@@ -1,6 +1,7 @@
 import os
-import yaml
+
 import matplotlib.pyplot as plt
+import yaml
 
 NVIDIA_GREEN = '#76B900'
 MUTED_RED = '#b97a7a'

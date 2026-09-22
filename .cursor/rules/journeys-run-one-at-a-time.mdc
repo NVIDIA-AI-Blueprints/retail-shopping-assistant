@@ -1,0 +1,43 @@
+---
+description: Journey replays run sequentially; parallel runs are rate-limited into silent nonsense
+alwaysApply: true
+---
+
+# Journeys run one at a time
+
+Always replay with `--sequential`. Never pass `--parallel`, and never raise
+`--concurrency` above 1.
+
+## Why
+
+The model endpoint rate-limits well below what six concurrent conversations
+ask of it. When it does, every affected turn returns
+
+    I encountered an error while helping with your shopping request.
+
+which the checks score as a normal failure. The report then reads as a quality
+collapse rather than an infrastructure one: 60 scenarios "finished" in five
+minutes, 176 of 257 turns errored on `openai.RateLimitError: Error code: 429`,
+and every journey showed `0 products shown`.
+
+Nothing in the report says "rate limited". The only way to tell a void run from
+a real regression is to go back to the container logs, so the cost of the
+mistake is paid twice -- once in the wasted run, once in diagnosing it.
+
+## Reading a suspect run
+
+Before treating failures as regressions, check:
+
+- **Wall-clock.** A full sequential pass is roughly an hour. Anything that
+  finishes in minutes did not run.
+- **The reply text** in `raw/*.json`. The generic error above means the turn
+  never reached the agent.
+- `docker logs chain-server --timestamps | rg "RateLimitError"`, scoped to the
+  run's window. Note `--since` is relative to now, so an overnight run needs a
+  timestamp filter rather than `--since 6h`.
+
+## Comparing across runs
+
+Timings are only comparable at equal concurrency, which is another reason to
+keep it at 1 always. Every stored baseline under
+`tests/evaluation/results/val/` was produced at concurrency 1.

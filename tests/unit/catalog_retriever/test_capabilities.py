@@ -8,7 +8,6 @@ from pathlib import Path
 
 from catalog_retriever.src.catalog import load_catalog
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 

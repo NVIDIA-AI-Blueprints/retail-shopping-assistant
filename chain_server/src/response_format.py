@@ -126,6 +126,56 @@ def _format_search_guidance_evidence(shopper_guidance: str) -> str:
     )
 
 
+def _format_words_this_catalog_cannot_filter_on(
+    set_aside: dict[str, list[str]],
+) -> str:
+    """Say which words were ranked on rather than filtered by, and what that means.
+
+    A filter this catalog does not advertise is dropped rather than refused,
+    and the words stay in the query where the index can rank on them. That is
+    a weaker promise than a filter: a colour filter guarantees every result is
+    that colour, ranking only makes them likelier to be near it. The
+    difference is the shopper's to know about, so it is said here rather than
+    left for them to find in a product page.
+    """
+
+    if not set_aside:
+        return ""
+    return (
+        "SEARCH_WORDS_RANKED_NOT_FILTERED: "
+        + json.dumps(set_aside, sort_keys=True, default=str)
+        + " -- this catalog does not advertise these, so they could not be "
+        "filters. The results were ranked on the words instead, which does "
+        "not guarantee any of them match. Check the results against what was "
+        "asked for, and if none of them is it, say so plainly rather than "
+        "offering the nearest thing as though it were."
+    )
+
+
+def _format_colour_words_read_as_advertised_ones(
+    colours_mapped: dict[str, list[str]],
+) -> str:
+    """Say which colour word was read as which advertised colours.
+
+    The shopper is owed this both ways. They did not get the word they said,
+    and what they did get is a real filter rather than a ranking -- so unlike
+    the note above, every result here genuinely is one of these colours. Saying
+    it in the same register as the results lets the reply pass it on plainly
+    instead of implying the shade was an exact match.
+    """
+
+    if not colours_mapped:
+        return ""
+    return (
+        "SEARCH_COLOUR_READ_AS: "
+        + json.dumps(colours_mapped, sort_keys=True, default=str)
+        + " -- this catalog does not list these colour words, so the closest "
+        "colours it does list were filtered on instead. Every result really "
+        "is one of those colours. Name the colour the shopper is seeing "
+        "rather than implying it is the word they used."
+    )
+
+
 def _format_search_taxonomy_evidence(taxonomy: dict[str, Any]) -> str:
     """Format the advertised taxonomy scope used by a successful search."""
 
@@ -653,7 +703,10 @@ def _format_weather_result(result: Any) -> str:
             parts.append(
                 f"{day.temperature_low_f:.0f}-{day.temperature_high_f:.0f}F"
             )
-        parts.append(f"precipitation {day.precipitation_probability_pct:.0f}%")
+        if day.precipitation_probability_pct is not None:
+            parts.append(
+                f"precipitation {day.precipitation_probability_pct:.0f}%"
+            )
         if day.precipitation_types:
             parts.append("as " + ", ".join(day.precipitation_types))
         lines.append("  " + "; ".join(parts))

@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from chain_server.src import grounding_evidence as grounding_evidence_mod
 from chain_server.src import response_format
 from chain_server.src import turn_support as runtime_mod_support
 from chain_server.src.tool_evidence import (
@@ -32,6 +33,21 @@ from chain_server.src.tool_evidence import (
     evidence_of,
 )
 from shared.commerce_contracts import Money, ProductDetail, ProductSummary
+
+
+# The shipped module composes these two calls where it needs the text. It
+# used to also carry a wrapper for each, which only these tests called.
+def _rendered_product(product):
+    return response_format._format_product_record(
+        runtime_mod_support._search_product_record(product)
+    )
+
+
+def _rendered_product_details(detail):
+    return response_format._format_product_detail_record(
+        runtime_mod_support._product_detail_record(detail)
+    )
+
 
 # A product record carries the product and nothing else. The attribute-limit
 # note is a fact about the search, so it is said once per result rather than
@@ -113,7 +129,7 @@ class _StubToolMessage:
 def test_search_result_text_the_model_reads(
     product: ProductSummary, expected: str
 ) -> None:
-    assert runtime_mod_support._format_product(product) == expected
+    assert _rendered_product(product) == expected
 
 
 @pytest.mark.parametrize(
@@ -183,7 +199,7 @@ def test_product_detail_text_the_model_reads(
 ) -> None:
     expected = f"{response_format._PRODUCT_DETAIL_GROUNDING_NOTE}\n{expected_body}"
 
-    assert runtime_mod_support._format_product_details(detail) == expected
+    assert _rendered_product_details(detail) == expected
 
 
 # --------------------------------------------------------------------------
@@ -222,7 +238,7 @@ def _results_evidence() -> SearchEvidence:
 def test_composer_summary_for_search_results() -> None:
     """Every fact the composer may repeat, and the limits placed on it."""
 
-    summary = runtime_mod_support._customer_safe_tool_evidence(
+    summary = grounding_evidence_mod._customer_safe_tool_evidence(
         "", _StubToolMessage(_results_evidence())
     )
 
@@ -307,7 +323,7 @@ def test_composer_may_state_a_confirmed_attribute() -> None:
     evidence = _results_evidence()
     evidence.products[0]["attributes"] = {"composition": "100% satin"}
 
-    summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+    summary = grounding_evidence_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
     assert "confirmed: composition: 100% satin" in summary
     assert "any attribute listed as confirmed for that specific product" in summary
@@ -326,7 +342,7 @@ def test_composer_summary_for_zero_results() -> None:
         advertised_category="Bags",
     )
 
-    summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+    summary = grounding_evidence_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
     assert summary.split('SPEAK AS A SHOP ASSISTANT')[0].rstrip() == (
         "CUSTOMER_SAFE_SCOPED_NO_MATCH_EVIDENCE: Zero products matched only "
@@ -339,13 +355,32 @@ def test_composer_summary_for_zero_results() -> None:
         "The broader advertised category Bags returned zero products for this "
         "search, so do not claim that the requested type is absent from the "
         "whole catalog.\n"
-        # Absence alone made the model ask which alternative the shopper wanted,
-        # showing none of them. When the relaxed retry also finds nothing there
-        # is still no menu to offer -- say so and name what the shop carries.
-        "NEXT: nothing was found with these constraints and nothing was found "
-        "without the optional ones either. Say so plainly, name what the "
-        "catalog does carry in this category, and do not answer with a "
-        "question alone."
+        # Absence alone made the model ask which alternative the shopper
+        # wanted, showing none of them. The retry that answered that ran here,
+        # on the server, and kept the size while dropping the product type --
+        # boots, for a tote bag in a size 8. So the retry is named as the
+        # model's to make, along with which filter may give and which may not.
+        #
+        # "Keep the size" then had to earn an exception. Asked for a tote in a
+        # size 8, the model had no optional filter to give up and obeyed: it
+        # showed nothing and asked whether to show the totes it had. A size
+        # that is the whole request is the one thing left to relax, and the
+        # sizes actually stocked are what the shopper is owed instead.
+        "NEXT: nothing in the catalog matched all of these at once. Search "
+        "again yourself, now, with one optional requirement dropped -- colour, "
+        "pattern, style or price. Keep the product type and keep the size: a "
+        "shopper asking for a dress is not answered with a skirt, and a size "
+        "is a fact about a body, not a preference. Then show what that finds "
+        "and say plainly which requirement could not be met. If the size is "
+        "the only requirement there is, drop the size instead and search "
+        "again: say first that nothing comes in the size they asked for, name "
+        "the sizes these do come in -- one size, or a range that excludes "
+        "theirs -- and never present them as the size they asked for. If the "
+        "product type itself is one this shop does not carry, say that instead "
+        "and search no further. Do not answer with a question alone, and never "
+        "offer a choice between things the shopper cannot see: asking \"shall "
+        "I show you the ones we do have\" is that refusal wearing a question "
+        "mark. Show them."
     )
 
 
@@ -362,7 +397,7 @@ def test_composer_summary_for_product_detail() -> None:
         "details": ["care: Machine wash cold.", "composition: 100% linen"],
     }
 
-    summary = runtime_mod_support._customer_safe_tool_evidence(
+    summary = grounding_evidence_mod._customer_safe_tool_evidence(
         "",
         _StubToolMessage(
             artifact=ProductDetailEvidence(products=[record]).as_artifact()
@@ -393,7 +428,7 @@ def test_no_direct_catalog_match_is_a_refusal_not_an_empty_search() -> None:
         requested_product_type="casual sneakers",
     )
 
-    summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+    summary = grounding_evidence_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
     assert summary.startswith("CUSTOMER_SAFE_NO_MATCH_EVIDENCE:")
     assert "No retrieval ran" in summary
@@ -409,7 +444,7 @@ def test_scope_relation_is_absent_when_no_parent_was_substituted() -> None:
     evidence = _results_evidence()
     evidence.advertised_category = None
 
-    summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+    summary = grounding_evidence_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
     assert "REQUESTED_SCOPE_RELATION" not in summary
 
@@ -420,7 +455,7 @@ def test_empty_results_do_not_append_a_blank_line() -> None:
     evidence = _results_evidence()
     evidence.products = []
 
-    summary = runtime_mod_support._customer_safe_tool_evidence("", _StubToolMessage(evidence))
+    summary = grounding_evidence_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
 
     assert not summary.endswith("\n")
 
@@ -480,7 +515,7 @@ def test_every_search_summary_tells_the_composer_to_drop_the_jargon() -> None:
     evidence = SearchEvidence(outcome="zero_results")
     message = SimpleNamespace(artifact=evidence.as_artifact())
 
-    summary = runtime_mod_support._customer_safe_tool_evidence("", message)
+    summary = grounding_evidence_mod._customer_safe_tool_evidence("", message)
 
     assert "SPEAK AS A SHOP ASSISTANT" in summary
     for banned in ("search", "filter", "scope", "taxonomy", "query", "results"):
@@ -489,81 +524,51 @@ def test_every_search_summary_tells_the_composer_to_drop_the_jargon() -> None:
     assert "pieces anyone can wear" in summary
 
 
-def test_a_zero_result_scope_shows_what_it_found_without_the_optional_filters() -> None:
+def test_a_zero_result_tells_the_model_to_relax_its_own_search() -> None:
     """Absence alone produced a menu of things the shopper could not see.
 
     "No green dress in a size 2 -- would you like size 4, or another colour?"
     on a turn where the catalog held plenty of size 2 dresses in other
-    colours. Telling the model to go and look did not hold; a model with
-    products in hand shows them.
+    colours. That was answered by running the search again on the server and
+    handing over what it found -- a retry that kept the size and dropped the
+    product type with everything else, so a tote bag in a size 8 came back as
+    boots. The model issues this retry correctly itself; what it needed was
+    to be told to, and told which filter may give.
     """
 
-    from chain_server.src.turn_support import _customer_safe_search_evidence
+    from chain_server.src.grounding_evidence import _customer_safe_search_evidence
 
     summary = _customer_safe_search_evidence(
         {
             "outcome": "zero_results",
             "taxonomy": {"subcategory": ["dresses"]},
             "confirmed_filters": {"primary_color": ["green"], "sizes": ["2"]},
-            "relaxed_dropped": ["primary_color"],
-            "relaxed_products": [
-                {
-                    "name": "Black Satin Lace-Up Dress",
-                    "product_ref": "generated:abc",
-                    "price": "$69.99 USD",
-                    "category": "dresses",
-                }
-            ],
         }
     )
 
-    assert "CUSTOMER_SAFE_RELAXED_SEARCH_EVIDENCE" in summary
-    assert "Black Satin Lace-Up Dress" in summary
-    assert "primary_color" in summary
-    assert "these are their size" in summary, "the kept size must be stated"
+    assert "Search again yourself" in summary
+    assert "Keep the product type and keep the size" in summary
+    assert "do not answer with a question alone" in summary.casefold()
+    # The two substitutions this exists to prevent, named rather than implied.
+    assert "not answered with a skirt" in summary
+    assert "not a preference" in summary
 
 
-def test_a_relaxation_that_had_to_drop_the_size_says_so_first() -> None:
-    """"a tote bag in a size 8": totes are one size, so the size was the only
-    filter and nothing else could give. Showing them is right; showing them as
-    though they were a size 8 is not."""
+def test_a_zero_result_does_not_hand_over_products_of_its_own() -> None:
+    """No second search runs here, so nothing can arrive that the reply
+    disowns. The heading its results used to land under is gone with it."""
 
-    from chain_server.src.turn_support import _customer_safe_search_evidence
+    from chain_server.src.grounding_evidence import _customer_safe_search_evidence
 
     summary = _customer_safe_search_evidence(
         {
             "outcome": "zero_results",
             "taxonomy": {"subcategory": ["tote_bags"]},
             "confirmed_filters": {"sizes": ["8"]},
-            "relaxed_dropped": ["sizes"],
-            "relaxed_kept_the_size": False,
-            "relaxed_products": [
-                {
-                    "name": "Ombre Canvas Tote Bag",
-                    "product_ref": "generated:abc",
-                    "price": "$49.99 USD",
-                    "category": "tote_bags",
-                }
-            ],
-        }
-    )
-
-    assert "Ombre Canvas Tote Bag" in summary
-    assert "SIZE WAS NOT KEPT" in summary
-    assert "never present" in summary
-
-
-def test_a_zero_result_with_no_alternatives_still_refuses_to_answer_with_a_question() -> None:
-    from chain_server.src.turn_support import _customer_safe_search_evidence
-
-    summary = _customer_safe_search_evidence(
-        {
-            "outcome": "zero_results",
-            "taxonomy": {"subcategory": ["dresses"]},
-            "confirmed_filters": {"sizes": ["2"]},
-            "relaxed_products": [],
         }
     )
 
     assert "CUSTOMER_SAFE_RELAXED_SEARCH_EVIDENCE" not in summary
-    assert "do not answer with a question alone" in summary
+    # An uncarried type is not a filter to relax, and saying so here is what
+    # keeps "dark blue jeans" from becoming a navy skirt on the retry.
+    assert "search no further" in summary

@@ -16,7 +16,6 @@ from typing import Any, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
-
 from shared.commerce_contracts import (
     Cart,
     CartLine,

@@ -25,7 +25,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
 from chain_server.src.deepagents_runtime import _relay_may_observe_but_not_decide
 
 

@@ -17,17 +17,15 @@ being one number.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
-from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
-
 from memory_retriever.src.database import (
     DEFAULT_MAX_CONCURRENT_REQUESTS,
     build_engine,
     configured_max_concurrent_requests,
 )
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 
 @pytest.fixture
@@ -81,7 +79,6 @@ def test_the_threadpool_is_matched_to_the_connection_pool(
 ) -> None:
     import anyio
     import anyio.to_thread
-
     from memory_retriever.src.main import _match_threadpool_to_the_connection_pool
 
     monkeypatch.setenv("MEMORY_MAX_CONCURRENT_REQUESTS", "9")

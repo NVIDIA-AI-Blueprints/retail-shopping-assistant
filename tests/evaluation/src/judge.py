@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from statistics import mean
-from typing import Any, Mapping, Optional, Protocol
 import argparse
 import json
 import sys
+from pathlib import Path
+from statistics import mean
+from collections.abc import Mapping
+from typing import Any, Optional, Protocol
 
 import yaml
 

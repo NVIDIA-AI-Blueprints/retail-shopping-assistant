@@ -14,10 +14,9 @@ from math import isfinite
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
-
-from .catalog_capabilities import effective_filter_capabilities
 from shared.commerce_contracts import CatalogCapabilities, CatalogFilterCapability
 
+from .catalog_capabilities import effective_filter_capabilities
 
 SearchMode = Literal["text", "image", "hybrid"]
 
@@ -29,7 +28,7 @@ class CatalogSearchIntent(BaseModel):
     search_mode: SearchMode | None = None
 
     @model_validator(mode="after")
-    def normalize_query_fields(self) -> "CatalogSearchIntent":
+    def normalize_query_fields(self) -> CatalogSearchIntent:
         self.semantic_query = self.semantic_query.strip()
         self.semantic_queries = [
             query.strip() for query in self.semantic_queries if query.strip()

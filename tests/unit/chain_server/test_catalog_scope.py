@@ -5,7 +5,7 @@
 
 
 def test_model_catalog_search_has_no_semantic_relation_label() -> None:
-    from chain_server.src.turn_support import SearchCatalogToolArguments
+    from chain_server.src.tool_schemas import SearchCatalogToolArguments
 
     assert "taxonomy_status" not in SearchCatalogToolArguments.model_fields
 
@@ -252,7 +252,7 @@ class TestEveryDescriptionReachesTheModel:
         )
 
     def test_an_overridden_field_carries_no_dead_description(self) -> None:
-        from chain_server.src.turn_support import SearchCatalogToolArguments
+        from chain_server.src.tool_schemas import SearchCatalogToolArguments
 
         for name in self._OVERRIDDEN:
             field = SearchCatalogToolArguments.model_fields[name]
@@ -265,9 +265,9 @@ class TestEveryDescriptionReachesTheModel:
     def test_every_rendered_description_is_non_empty(self) -> None:
         """The other half: the override must actually supply one."""
 
-        from chain_server.src.turn_support import (
-            _search_catalog_scopes_input_model,
-        )
+        from chain_server.src.tool_schemas import (
+    _search_catalog_scopes_input_model,
+)
 
         schema = _search_catalog_scopes_input_model(
             self._capabilities(), max_scopes=4
@@ -285,9 +285,9 @@ class TestEveryDescriptionReachesTheModel:
         months the text was unreachable.
         """
 
-        from chain_server.src.turn_support import (
-            _search_catalog_scopes_input_model,
-        )
+        from chain_server.src.tool_schemas import (
+    _search_catalog_scopes_input_model,
+)
 
         schema = _search_catalog_scopes_input_model(
             self._capabilities(), max_scopes=4
@@ -307,9 +307,9 @@ class TestEveryDescriptionReachesTheModel:
         field's own opening line.
         """
 
-        from chain_server.src.turn_support import (
-            _search_catalog_scopes_input_model,
-        )
+        from chain_server.src.tool_schemas import (
+    _search_catalog_scopes_input_model,
+)
 
         schema = _search_catalog_scopes_input_model(
             self._capabilities(), max_scopes=4

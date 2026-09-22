@@ -7,7 +7,6 @@ import json
 from types import SimpleNamespace
 
 import pytest
-
 from chain_server.src.agenttypes import State
 from chain_server.src.media_perception import MediaPerceptionClient
 

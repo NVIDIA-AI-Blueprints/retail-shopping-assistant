@@ -1,0 +1,24 @@
+id: P30_a_look_is_shopped_whole
+covers: [discovery, honesty, multi_scope]
+why: >
+  Reported live: a shopper showed a video of a sweater, jeans and boots, asked
+  to shop the look, and got boots. The other two roles carried words this
+  catalog cannot filter on -- a colour it does not advertise, and a
+  subcategory it does not have -- so both were refused, and a refused scope is
+  a scope in repair. The repair locks hold one scope at a time, so the two
+  retries were judged against each other's lock and repeated unchanged
+  thirty-one times each until the turn died.
+
+  Typed rather than shown, because the defect is in what the tool does with
+  three scopes, not in reading the video: the same three roles reach the same
+  call either way.
+
+  Asserted on products rather than wording, and the words are chosen from the
+  catalog's own vocabulary to be exactly the reported shape: it sells sweaters
+  and boots, it advertises beige and not cream, and it has no jeans at all. A
+  look with one role this shop does not stock must still return the two it
+  does.
+turns:
+  - say: I want a cream sweater, dark blue jeans and brown boots that go together
+    expect:
+      products_min: 4

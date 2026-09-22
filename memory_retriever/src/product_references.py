@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -15,8 +15,14 @@ from sqlalchemy import func
 
 from .models import ConversationEvent, ConversationProjection, ConversationTurn
 
-
 PRESENTED_PRODUCTS_EVENT_KEY = "runtime-presented-products"
+#: Where the product sat on the screen, kept beside it rather than recounted.
+_SCREEN_POSITION_KEY = "screen_position"
+#: The product itself, inside a recorded entry. Anything the record knows about
+#: how a turn presented a product is a sibling of this key, never a field
+#: within it: the runtime's product contract admits product fields only, and
+#: refuses -- for the whole object -- anything it does not recognise.
+_STORED_PRODUCT_KEY = "product"
 # Query safety bound only. The character budget below is the effective limit:
 # a compact set of eight products is roughly 1KB, so ~15 sets survive and this
 # row cap is never reached. Resolution itself is unbounded and still sees every
@@ -38,6 +44,11 @@ class ProductReferenceDescriptor(_ReferenceModel):
     turn_sequence: int | None = Field(default=None, ge=1)
     candidate_set_id: str | None = Field(default=None, min_length=1, max_length=64)
     ordinal: int | None = Field(default=None, ge=1)
+    #: The heading the shopper counted under: "the second shoes" is
+    #: ordinal 2 in group "shoes". An ordinal is numbered from one inside each
+    #: group, so without this it names one product per group rather than one
+    #: product.
+    group: str | None = Field(default=None, min_length=1, max_length=256)
     #: What the shopper described rather than named, in advertised attribute
     #: terms: "the black one" is {"primary_color": "black"}. Compared against
     #: the attributes the catalog confirmed when the product was shown, so the
@@ -53,6 +64,7 @@ class ProductReferenceDescriptor(_ReferenceModel):
             self.turn_sequence,
             self.candidate_set_id,
             self.ordinal,
+            self.group,
             self.attributes,
         )
         if not any(selector is not None for selector in selectors):
@@ -76,7 +88,14 @@ class ProductReferenceMatch(_ReferenceModel):
     product: dict[str, Any]
     candidate_set_id: str = Field(..., min_length=1, max_length=64)
     turn_sequence: int
+    #: Where this product sat under its heading. Numbered from one inside each
+    #: group, so it identifies a product only together with the group.
     position: int
+    #: The heading it was shown under, empty where the showing had none.
+    group: str = Field(default="", max_length=256)
+    #: Which group, in the order they were shown. Carried because a bare
+    #: ordinal with nothing to narrow it means the first group on screen.
+    group_index: int = 0
     catalog_revision: str | None = Field(default=None, max_length=512)
 
 
@@ -124,16 +143,39 @@ def append_presented_products_event(
     turn: ConversationTurn,
     product_results: list[dict[str, Any]],
     *,
+    product_groups: list[dict[str, Any]] | None = None,
     created_at: float,
 ) -> ConversationEvent | None:
-    """Append one event for the ordered products returned to the shopper."""
+    """Append one event for the groups of products returned to the shopper.
 
-    products = [
-        _persistable(product)
-        for product in product_results
-        if _is_referenceable_product(product)
-    ]
-    if not products:
+    A showing is a list of headed groups, because that is what the shopper
+    reads: dresses, then shoes, counted from one inside each. Stored as a flat
+    queue it was eight products in a row, and "the second shoes" was a question
+    with no structural answer -- only a guess from category strings, which two
+    scopes out of one category defeat.
+
+    The place each product holds under its heading is recorded beside it,
+    counted over everything that group presented and not over what survives
+    this filter. The number the shopper reads is stamped on the streamed list,
+    which is not filtered, so counting the kept ones would shift every position
+    after a dropped product: they would say "the fifth" and be handed the
+    sixth. Numbering first leaves a gap instead, and a gap resolves to nothing
+    rather than to the wrong garment.
+
+    Beside it, and not on it, because a product record holds product facts. The
+    position was previously stamped into the product itself and popped back off
+    by name when read, which works only while every annotation is remembered in
+    both places. One was not: a second annotation was added, the read path did
+    not know to remove it, and the product came back out of the record carrying
+    a field the runtime's product contract forbids. The runtime refused the
+    whole object, the refusal was read as "no such product", and a shopper
+    asking for a bag they had been shown four turns earlier was told the
+    reference was not valid. Nesting makes that leak unrepresentable rather
+    than remembered.
+    """
+
+    groups = _groups_as_shown(product_results, product_groups or [])
+    if not groups:
         return None
 
     logical_order = (
@@ -150,11 +192,75 @@ def append_presented_products_event(
         event_type="candidate_set_presented",
         source_kind="runtime",
         source_ref=turn.catalog_revision,
-        payload_json=_canonical_json({"products": products}),
+        payload_json=_canonical_json({"groups": groups}),
         created_at=created_at,
     )
     db.add(event)
     return event
+
+
+def _groups_as_shown(
+    product_results: list[dict[str, Any]],
+    product_groups: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """The showing, as headed groups of numbered products.
+
+    The groups name their products by id; the products themselves come from
+    the turn's ordered results. Anything no group claims is one unheaded group
+    at the end, which is what a name lookup produces and what a turn with no
+    groups at all becomes.
+    """
+
+    held = {
+        str(product.get("product_id") or ""): product
+        for product in product_results
+        if isinstance(product, Mapping) and str(product.get("product_id") or "")
+    }
+    groups: list[dict[str, Any]] = []
+    placed: set[str] = set()
+    for group in product_groups:
+        if not isinstance(group, Mapping):
+            continue
+        members = []
+        for product_id in group.get("product_ids") or []:
+            product = held.get(str(product_id))
+            if product is not None and str(product_id) not in placed:
+                members.append(product)
+                placed.add(str(product_id))
+        recorded = _numbered_under_a_heading(members)
+        if recorded:
+            groups.append(
+                {
+                    "heading": str(group.get("heading") or ""),
+                    "products": recorded,
+                }
+            )
+    unclaimed = _numbered_under_a_heading(
+        [
+            product
+            for product in product_results
+            if not isinstance(product, Mapping)
+            or str(product.get("product_id") or "") not in placed
+        ]
+    )
+    if unclaimed:
+        groups.append({"heading": "", "products": unclaimed})
+    return groups
+
+
+def _numbered_under_a_heading(
+    products: list[Any],
+) -> list[dict[str, Any]]:
+    """One group's products, each with the place it held under its heading."""
+
+    recorded = []
+    for position, product in enumerate(products, start=1):
+        if not _is_referenceable_product(product):
+            continue
+        recorded.append(
+            {_STORED_PRODUCT_KEY: _persistable(product), _SCREEN_POSITION_KEY: position}
+        )
+    return recorded
 
 
 def _system_identifications_by_turn(db, conversation_id: str) -> list[tuple[int, list[str]]]:
@@ -323,82 +429,249 @@ def _blocking_field(
     return blocking
 
 
-#: Fields that describe where a product was seen rather than which product it
-#: is. They stay part of the descriptor and are still checked -- but once an
-#: exact ``product_ref`` has identified a product, they can no longer overrule
-#: it, because a mismatch here is a vocabulary difference and not a different
-#: product.
-#:
-#: The assistant asked for a dress by ref, name, set, turn and position, all
-#: five correct, and added ``category: "apparel"`` -- the catalog's word for the
-#: department, where the index stores the subcategory ``"dresses"``. Matching
-#: was conjunctive, so the sixth field cancelled the other five and the answer
-#: came back not_found. Being more specific was what broke it.
-_CORROBORATING_FIELDS = (
-    "category",
-    "turn_sequence",
-    "candidate_set_id",
-    "ordinal",
-)
-
-
-def _matched_occurrences(
+def _identified(
     descriptor: ProductReferenceDescriptor,
     occurrences: list[ProductReferenceMatch],
-) -> list[ProductReferenceMatch]:
-    """Collapse matching occurrences to one per product, newest kept."""
+) -> tuple[list[ProductReferenceMatch], bool]:
+    """Occurrences the ref or the name points at, and whether they contradict.
 
-    # "The second one" counts within the showing the shopper is looking at.
-    # Left unscoped it counted within every showing at once, so a conversation
-    # with four of them offered four second ones and the reference that could
-    # not be clearer became a clarification. Occurrences arrive oldest first,
-    # so the last one names the newest set.
-    if (
-        descriptor.ordinal is not None
-        and descriptor.turn_sequence is None
-        and descriptor.candidate_set_id is None
-        and occurrences
-    ):
-        newest = _identifier(occurrences[-1].candidate_set_id)
-        occurrences = [
+    These two identify; nothing else in a descriptor does. A ``product_ref`` is
+    an identifier this system minted and printed into the prompt, and a
+    display_name is the catalog's own. Neither is the model's reading of what
+    the shopper wanted, which is what makes them worth trusting over every
+    other field.
+
+    Supplied together they are a checksum on each other, and disagreement is
+    reported rather than resolved. Reading the ref off the wrong line of a
+    numbered index is an ordinary mistake, and letting it win silently puts a
+    dress in the cart that the shopper named and did not ask for.
+    """
+
+    ref_hits = name_hits = None
+    if descriptor.product_ref is not None:
+        ref_hits = [
             occurrence
             for occurrence in occurrences
-            if _identifier(occurrence.candidate_set_id) == newest
+            if _same_reference(
+                occurrence.product["product_id"], descriptor.product_ref
+            )
         ]
+    if descriptor.display_name is not None:
+        name_hits = [
+            occurrence
+            for occurrence in occurrences
+            if _normalized(occurrence.product["display_name"])
+            == _normalized(descriptor.display_name)
+        ]
+    if ref_hits is not None and name_hits is not None:
+        # Offered both, they have to agree, and one of them finding nothing is
+        # a disagreement like any other: a ref that matches nothing is as much
+        # a confused caller as a ref that matches the wrong thing. Whichever
+        # way round it is, there is no rule for choosing between two
+        # identifiers neither of which the model authored -- only a caller to
+        # correct, and _blocking_field says which half to correct.
+        named = {
+            _identifier(occurrence.product["product_id"])
+            for occurrence in name_hits
+        }
+        agreed = [
+            occurrence
+            for occurrence in ref_hits
+            if _identifier(occurrence.product["product_id"]) in named
+        ]
+        return agreed, not agreed
+
+    hits = ref_hits if ref_hits is not None else name_hits
+    if hits is None:
+        # Nothing here identifies. Whatever describes the product does.
+        return [], False
+    if hits:
+        return hits, False
+    if descriptor.display_name is not None and descriptor.attributes:
+        # A phrase can be read as a name or as a description, and the model
+        # sends both readings of the same one: display_name "black one" beside
+        # {"primary_color": "black"}. Nothing is called "black one", so the
+        # reading that can match is the one meant, and the name steps aside.
+        return [], False
+    # An identifier was offered and matched nothing shown. With no description
+    # behind it there is nothing else to go on, and offering every product in
+    # the conversation instead would answer "the Missing Bag" with a menu.
+    return [], True
+
+
+def _narrowed_without_emptying(
+    descriptor: ProductReferenceDescriptor,
+    pool: list[ProductReferenceMatch],
+    *,
+    identified: bool,
+) -> tuple[list[ProductReferenceMatch], list[str]]:
+    """Apply every remaining field, in order, but never down to nothing.
+
+    These fields describe: where the product was seen, what it is called a
+    department at a time, what colour the model read into the request. They
+    are worth using to choose between several candidates and are not worth
+    losing a candidate over, because each is the model's account of the
+    shopper rather than the shopper's own words.
+
+    Conjunction made them vetoes. Asked for the first sweater it had shown one
+    turn earlier, the assistant sent the ref, the name, the set, the turn and
+    the position -- all five right -- and added a size run it invented. The
+    sixth field cancelled the other five, the answer came back not_found, and
+    the turn searched the catalog by name for the product whose ref it was
+    already holding. Being more specific was what broke it.
+
+    A field that would empty the pool is reported instead, so the reply is
+    told which of its own values the record does not share.
+    """
+
+    ignored: list[str] = []
+
+    def narrow(field: str, keep: Callable[[ProductReferenceMatch], bool]) -> None:
+        nonlocal pool
+        narrowed = [occurrence for occurrence in pool if keep(occurrence)]
+        if narrowed or not soft:
+            pool = narrowed
+        else:
+            ignored.append(field)
+
+    # Where a product was seen is this system's own bookkeeping, so while
+    # nothing has identified the product it is doing the identifying and a miss
+    # is a real miss: "the third one" over a showing of two is not the showing
+    # of two. Once a ref or a name has named the product, the same fields are
+    # only corroborating it, and a wrong one must not cancel it.
+    soft = identified
+
+    if descriptor.turn_sequence is not None:
+        narrow(
+            "turn_sequence",
+            lambda o: o.turn_sequence == descriptor.turn_sequence,
+        )
+    if descriptor.candidate_set_id is not None:
+        narrow(
+            "candidate_set_id",
+            lambda o: _identifier(o.candidate_set_id)
+            == _identifier(descriptor.candidate_set_id),
+        )
+    if descriptor.ordinal is not None:
+        # "The second one" counts within the showing the shopper is looking at,
+        # and restarts under each heading inside it. Unscoped it counted across
+        # every showing at once, so a conversation with four of them offered
+        # four second ones. Occurrences arrive oldest first.
+        if (
+            descriptor.turn_sequence is None
+            and descriptor.candidate_set_id is None
+            and pool
+        ):
+            newest = _identifier(pool[-1].candidate_set_id)
+            pool = [
+                occurrence
+                for occurrence in pool
+                if _identifier(occurrence.candidate_set_id) == newest
+            ]
+        if pool:
+            pool = _the_group_the_ordinal_counts_in(descriptor, pool)
+        narrow("ordinal", lambda o: o.position == descriptor.ordinal)
+    # From here the fields describe rather than identify: a department name and
+    # the colours and sizes the model read into the request. Those are worth
+    # choosing between candidates with, and never worth losing one over.
+    soft = True
+    if descriptor.category is not None:
+        narrow(
+            "category",
+            lambda o: isinstance(o.product.get("category"), str)
+            and _normalized(o.product["category"])
+            == _normalized(descriptor.category),
+        )
+    # Named one at a time, so the reply learns that sizes disagreed rather than
+    # that "attributes" did. The record's own values are printed with the
+    # match, so naming the field points straight at the correction.
+    for name, value in (descriptor.attributes or {}).items():
+        narrow(
+            f"attributes.{name}",
+            lambda o, n=name, v=value: _attributes_agree(o.product, {n: v}),
+        )
+
+    return pool, ignored
+
+
+def _one_per_product(
+    occurrences: list[ProductReferenceMatch],
+) -> list[ProductReferenceMatch]:
+    """Collapse occurrences to one per product, keeping the newest showing."""
 
     matches_by_ref: dict[str, ProductReferenceMatch] = {}
     for occurrence in occurrences:
-        if not _matches_descriptor(occurrence, descriptor):
-            continue
         product_ref = _identifier(occurrence.product["product_id"])
         matches_by_ref.pop(product_ref, None)
         matches_by_ref[product_ref] = occurrence
     return list(matches_by_ref.values())
 
 
-def _corroboration_mismatch(
+def _matched_occurrences(
     descriptor: ProductReferenceDescriptor,
-    match: ProductReferenceMatch,
-) -> list[str]:
-    """Name the supplied corroborating fields that disagree with the record."""
+    occurrences: list[ProductReferenceMatch],
+) -> list[ProductReferenceMatch]:
+    """Which products this descriptor refers to, one entry each."""
 
-    mismatched = []
-    if descriptor.category is not None and _normalized(
-        str(match.product.get("category") or "")
-    ) != _normalized(descriptor.category):
-        mismatched.append("category")
-    if (
-        descriptor.turn_sequence is not None
-        and match.turn_sequence != descriptor.turn_sequence
-    ):
-        mismatched.append("turn_sequence")
-    if descriptor.candidate_set_id is not None and _identifier(
-        match.candidate_set_id
-    ) != _identifier(descriptor.candidate_set_id):
-        mismatched.append("candidate_set_id")
-    if descriptor.ordinal is not None and match.position != descriptor.ordinal:
-        mismatched.append("ordinal")
-    return mismatched
+    matches, _ignored, _refused = _resolution_pool(descriptor, occurrences)
+    return matches
+
+
+def _resolution_pool(
+    descriptor: ProductReferenceDescriptor,
+    occurrences: list[ProductReferenceMatch],
+) -> tuple[list[ProductReferenceMatch], list[str], bool]:
+    """Resolve a reference: identify first, then narrow, never to nothing."""
+
+    identified, refused = _identified(descriptor, occurrences)
+    if refused:
+        return [], [], True
+    pool, ignored = _narrowed_without_emptying(
+        descriptor,
+        identified if identified else list(occurrences),
+        identified=bool(identified),
+    )
+    return _one_per_product(pool), ignored, False
+
+
+def _the_group_the_ordinal_counts_in(
+    descriptor: ProductReferenceDescriptor,
+    occurrences: list[ProductReferenceMatch],
+) -> list[ProductReferenceMatch]:
+    """Narrow one showing to the group the shopper is counting inside.
+
+    A number restarts under each heading, so "the first one" over a showing of
+    dresses and shoes names two products, and the reference that could not be
+    clearer came back as a question to ask.
+
+    Named, the group decides it: "the second shoes" is the shoes. Unnamed, the
+    first group on screen does, which is the one the reply anchors on and the
+    only group there is when the shopper asked for one kind. Assume and
+    disclose: guessing which of four dresses they meant is recoverable in
+    three words, and stopping to ask is not free.
+    """
+
+    if descriptor.group is not None:
+        wanted = _normalized(descriptor.group)
+        named = [
+            occurrence
+            for occurrence in occurrences
+            if _normalized(occurrence.group) == wanted
+        ]
+        # A heading this showing does not know falls through to the default
+        # below rather than narrowing to nothing. The shopper's word for a
+        # group is not always the word the search was asked for -- "frocks"
+        # over a group headed "dresses" -- and leaving it unnarrowed would
+        # answer a clearer reference with a question than a vaguer one.
+        if named:
+            return named
+    groups = {occurrence.group_index for occurrence in occurrences}
+    if len(groups) <= 1:
+        return occurrences
+    first = min(groups)
+    return [
+        occurrence for occurrence in occurrences if occurrence.group_index == first
+    ]
 
 
 def _resolve_descriptor(
@@ -406,31 +679,28 @@ def _resolve_descriptor(
     occurrences: list[ProductReferenceMatch],
 ) -> ProductResolutionResult:
     blocking_field: str | None = None
-    corroboration_mismatch: list[str] = []
-    matches = _matched_occurrences(descriptor, occurrences)
+    matches, corroboration_mismatch, refused = _resolution_pool(
+        descriptor, occurrences
+    )
 
-    if not matches and descriptor.attributes and descriptor.display_name:
-        # A phrase can be read as a name or as a description, and the model
-        # sent both readings of the same one: display_name "black one"
-        # alongside {"primary_color": "black", "sizes": "2"}. Selectors
-        # compose, so the reading that could never match took the one that
-        # could down with it, and the reference came back NOT FOUND with the
-        # dress it described sitting in the index.
-        #
-        # Nothing is called "black one". When the name finds nothing and a
-        # description was given too, the description is what the shopper meant.
-        # Only a descriptor that resolves nothing reaches here, so a name that
-        # does match is still the answer.
-        matches = _matched_occurrences(
-            descriptor.model_copy(update={"display_name": None}), occurrences
+    if refused:
+        return ProductResolutionResult(
+            reference_id=descriptor.reference_id,
+            status="not_found",
+            matches=[],
+            match_count=0,
+            blocking_field=_blocking_field(descriptor, occurrences),
+            corroboration_mismatch=[],
         )
 
-    if len(matches) > 1 and descriptor.attributes:
-        # Several showings fit the description, so the most recent one is the
-        # one the shopper is pointing at: "the black one" a turn after a black
-        # dress was shown does not mean the black dress from nine turns before.
-        # Within a single showing recency says nothing -- four black dresses on
-        # one screen are equally recent -- and those stay a question to ask.
+    if len(matches) > 1 and descriptor.turn_sequence is None and (
+        descriptor.candidate_set_id is None
+    ):
+        # Several still fit and the shopper never said which showing, so they
+        # mean the one in front of them: "the black one" a turn after a black
+        # dress was shown is not the black dress from nine turns before. Within
+        # one showing recency says nothing -- four black dresses on a screen are
+        # equally recent -- and those stay a question worth asking.
         newest = _identifier(
             max(matches, key=lambda match: match.turn_sequence).candidate_set_id
         )
@@ -439,37 +709,6 @@ def _resolve_descriptor(
             for match in matches
             if _identifier(match.candidate_set_id) == newest
         ]
-
-    if not matches and descriptor.product_ref is not None:
-        # Strictly a second chance: a descriptor that resolves today resolves
-        # identically above, and only one that resolves nothing gets here. The
-        # ref is an identifier this system minted and printed itself, so a ref
-        # that matches has identified the product; display_name is deliberately
-        # not relaxed, because a name that contradicts the ref is the confused
-        # assistant this gate was built to catch.
-        relaxed = descriptor.model_copy(
-            update={name: None for name in _CORROBORATING_FIELDS}
-        )
-        candidates = [
-            occurrence
-            for occurrence in occurrences
-            if _matches_descriptor(occurrence, relaxed)
-        ]
-        if candidates:
-            # A product shown more than once has an occurrence per showing, and
-            # they differ in exactly the fields just relaxed. Take the one the
-            # descriptor describes best, so the facts reported back belong to
-            # the showing the assistant referred to -- and so the mismatch names
-            # only what was really wrong. Taking the newest instead reported
-            # four wrong fields when one was.
-            best = min(
-                reversed(candidates),
-                key=lambda occurrence: len(
-                    _corroboration_mismatch(descriptor, occurrence)
-                ),
-            )
-            matches = [best]
-            corroboration_mismatch = _corroboration_mismatch(descriptor, best)
 
     if not matches:
         status = "not_found"
@@ -518,10 +757,8 @@ def _matches_descriptor(
         return False
     if descriptor.ordinal is not None and match.position != descriptor.ordinal:
         return False
-    if descriptor.attributes and not _attributes_agree(
-        match.product, descriptor.attributes
-    ):
-        return False
+    if descriptor.attributes:
+        return _attributes_agree(match.product, descriptor.attributes)
     return True
 
 
@@ -563,16 +800,21 @@ def _attributes_agree(product: Any, wanted: dict[str, str]) -> bool:
 def _product_occurrences(rows) -> list[ProductReferenceMatch]:
     occurrences = []
     for event, turn in rows:
-        for position, product in _event_products(event.payload_json):
-            occurrences.append(
-                ProductReferenceMatch(
-                    product=product,
-                    candidate_set_id=event.event_id,
-                    turn_sequence=turn.sequence,
-                    position=position,
-                    catalog_revision=turn.catalog_revision,
+        for group_index, (heading, products) in enumerate(
+            _event_groups(event.payload_json)
+        ):
+            for position, product in products:
+                occurrences.append(
+                    ProductReferenceMatch(
+                        product=product,
+                        candidate_set_id=event.event_id,
+                        turn_sequence=turn.sequence,
+                        position=position,
+                        group=heading,
+                        group_index=group_index,
+                        catalog_revision=turn.catalog_revision,
+                    )
                 )
-            )
     return occurrences
 
 
@@ -623,43 +865,102 @@ def _newest_reference_sets_within_budget(
 
 
 def _compact_products(payload_json: str) -> list[dict[str, Any]]:
+    """Every product of one showing, each naming its group and its number.
+
+    The number restarts under each heading, so a position without its group
+    names one product per group. Flattened without the heading, a showing of
+    dresses and shoes offered two first ones and "the first one" resolved to
+    neither.
+    """
+
     products = []
-    for position, product in _event_products(payload_json):
-        compact = {
-            "ref": product["product_id"],
-            "name": product["display_name"],
-            "position": position,
-        }
-        category = product.get("category")
-        if isinstance(category, str) and category.strip():
-            compact["category"] = category
-        # The sizes this product is sold in, so a later turn can tell which of
-        # the things on screen the shopper's "in a 2" could even mean. Whether
-        # a product comes in a 2 is a catalog fact; which one they meant is
-        # not, and only the first belongs in this record.
-        sizes = (product.get("attributes") or {}).get("sizes")
-        if isinstance(sizes, list):
-            kept = [str(value).strip() for value in sizes if str(value).strip()]
-            if kept:
-                compact["sizes"] = kept
-        products.append(compact)
+    for heading, numbered in _event_groups(payload_json):
+        for position, product in numbered:
+            compact = {
+                "ref": product["product_id"],
+                "name": product["display_name"],
+                "position": position,
+            }
+            if heading:
+                compact["group"] = heading
+            category = product.get("category")
+            if isinstance(category, str) and category.strip():
+                compact["category"] = category
+            # The sizes this product is sold in, so a later turn can tell which
+            # of the things on screen the shopper's "in a 2" could even mean.
+            # Whether a product comes in a 2 is a catalog fact; which one they
+            # meant is not, and only the first belongs in this record.
+            sizes = (product.get("attributes") or {}).get("sizes")
+            if isinstance(sizes, list):
+                kept = [str(value).strip() for value in sizes if str(value).strip()]
+                if kept:
+                    compact["sizes"] = kept
+            products.append(compact)
     return products
 
 
-def _event_products(payload_json: str) -> list[tuple[int, dict[str, Any]]]:
+def _event_groups(payload_json: str) -> list[tuple[str, list[tuple[int, dict[str, Any]]]]]:
+    """Each group the shopper was shown, with its heading and its products.
+
+    Two shapes of payload, because conversations already written keep theirs.
+    Groups are what is written now. A flat `products` list is what came before,
+    and it reads back as a single unheaded group -- which is honest: the turn
+    did show those products in that order, and nothing recorded where one kind
+    ended and the next began.
+    """
+
     try:
         payload = json.loads(payload_json)
     except (TypeError, ValueError):
         return []
-    raw_products = payload.get("products") if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        return []
+    raw_groups = payload.get("groups")
+    if isinstance(raw_groups, list):
+        groups = []
+        for group in raw_groups:
+            if not isinstance(group, dict):
+                continue
+            products = _entry_products(group.get("products"))
+            if products:
+                groups.append((str(group.get("heading") or ""), products))
+        return groups
+    products = _entry_products(payload.get("products"))
+    return [("", products)] if products else []
+
+
+def _entry_products(raw_products: Any) -> list[tuple[int, dict[str, Any]]]:
+    """One recorded list of products, each with the place it was shown in.
+
+    Three shapes of entry, because conversations already written keep theirs.
+    The product nested under its own key is what is written now. Before that it
+    was the product itself with the position stamped into it, and before that
+    the product alone. The two older shapes are read by taking the entry as the
+    product and lifting the position off it, which is also what keeps a product
+    recorded the old way from coming back out with a stray field on it.
+    """
+
     if not isinstance(raw_products, list):
         return []
 
     products: list[tuple[int, dict[str, Any]]] = []
-    for position, product in enumerate(raw_products, start=1):
+    for counted, entry in enumerate(raw_products, start=1):
+        if not isinstance(entry, dict):
+            continue
+        nested = entry.get(_STORED_PRODUCT_KEY)
+        if isinstance(nested, dict):
+            product, position = dict(nested), entry.get(_SCREEN_POSITION_KEY)
+        else:
+            product = dict(entry)
+            position = product.pop(_SCREEN_POSITION_KEY, None)
         if not _is_referenceable_product(product):
             continue
-        products.append((position, dict(product)))
+        # Recorded before the list was filtered, so it is the number the shopper
+        # was shown. Counting here is the fallback for a conversation written
+        # before the number was kept at all.
+        products.append(
+            (position if isinstance(position, int) and position > 0 else counted, product)
+        )
     return products
 
 

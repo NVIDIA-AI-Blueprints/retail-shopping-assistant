@@ -5,14 +5,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import os
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
 import pytest
 import yaml
-
 from guardrails.src.config_utils import apply_model_config
 
 

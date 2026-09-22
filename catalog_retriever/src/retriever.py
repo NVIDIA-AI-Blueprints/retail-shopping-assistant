@@ -8,28 +8,30 @@ The second model uses text embeddings to retrieve relevant products.
 Performs both of these in parallel and then re-ranks the results from bothmodels.
 """
 
-from openai import OpenAI
-from pydantic import BaseModel, Field
+import asyncio
+import json
+import logging
+import os
+import re
+import sys
 from dataclasses import dataclass, field
 from math import isfinite
-from typing import List, Tuple, Dict, Any
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.embeddings import Embeddings
-from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connections, utility
-import json
-import os
-import sys
-import re
-import numpy as np
-from numpy import mean
-from .utils import image_url_to_base64, is_url, is_path, image_path_to_base64, resize_base64_image
-import logging
-import asyncio
 from types import SimpleNamespace
-from shared.commerce_contracts import CatalogFilterCapability
-from .catalog import CatalogSnapshot
+from typing import Any
 
-# Set up logging 
+import numpy as np
+from langchain_core.embeddings import Embeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from numpy import mean
+from openai import OpenAI
+from pydantic import BaseModel, Field
+from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connections, utility
+from shared.commerce_contracts import CatalogFilterCapability
+
+from .catalog import CatalogSnapshot
+from .utils import image_path_to_base64, image_url_to_base64, is_path, is_url, resize_base64_image
+
+# Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -50,7 +52,7 @@ class RetrieverConfig(BaseModel):
     sim_threshold: float
     text_collection: str
     image_collection: str
-    filter_capabilities: Dict[str, CatalogFilterCapability] = Field(default_factory=dict)
+    filter_capabilities: dict[str, CatalogFilterCapability] = Field(default_factory=dict)
     catalog_size: int
     product_id_field: str
     name_field: str
@@ -58,8 +60,8 @@ class RetrieverConfig(BaseModel):
     fallback_description_field: str | None
     image_field: str
     price_field: str
-    taxonomy_fields: List[str]
-    detail_fields: List[str] = Field(default_factory=list)
+    taxonomy_fields: list[str]
+    detail_fields: list[str] = Field(default_factory=list)
 
 
 class CatalogFilterError(ValueError):
@@ -68,13 +70,13 @@ class CatalogFilterError(ValueError):
 
 @dataclass
 class RetrievalOutput:
-    texts: List[str] = field(default_factory=list)
-    ids: List[str] = field(default_factory=list)
-    similarities: List[float] = field(default_factory=list)
-    names: List[str] = field(default_factory=list)
-    images: List[str] = field(default_factory=list)
-    products: List[Dict[str, Any]] = field(default_factory=list)
-    diagnostics: Dict[str, Any] = field(default_factory=dict)
+    texts: list[str] = field(default_factory=list)
+    ids: list[str] = field(default_factory=list)
+    similarities: list[float] = field(default_factory=list)
+    names: list[str] = field(default_factory=list)
+    images: list[str] = field(default_factory=list)
+    products: list[dict[str, Any]] = field(default_factory=list)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
     no_result_reason: str | None = None
 
     def __iter__(self):
@@ -89,14 +91,14 @@ class TextEmbeddings(Embeddings):
     def __init__(self, retriever):
         self.retriever = retriever
 
-    def embed_query(self, text: str) -> List[float]:
+    def embed_query(self, text: str) -> list[float]:
         """Generate text embedding for a single text"""
         logging.info(f"TextEmbeddings | embed_query() | called.\n\t| input: {text[:50]}")
         res = self.retriever.embed_chunk(text)
         normed = res / np.linalg.norm(res)
         return normed
 
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Generate text embeddings for multiple texts"""
         logging.info("TextEmbeddings | embed_documents() | called.")
         res = self.retriever.text_embeddings(texts)
@@ -108,7 +110,7 @@ class ImageEmbeddings(Embeddings):
     def __init__(self, retriever):
         self.retriever = retriever
 
-    def embed_query(self, text: str) -> List[float]:
+    def embed_query(self, text: str) -> list[float]:
         """Generate image embedding for a single image"""
         logging.info(f"ImageEmbeddings | embed_query() | called.\n\t| input: {text[:50]}")
         embeddings = self.retriever.image_embeddings([text], verbose=True)
@@ -119,7 +121,7 @@ class ImageEmbeddings(Embeddings):
             logging.error("ImageEmbeddings | embed_query() | Failed to generate embedding for image")
             raise ValueError("Failed to generate image embedding")
 
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Generate image embeddings for multiple images"""
         logging.info("ImageEmbeddings | embed_query() | called.")
         return self.retriever.image_embeddings(texts)
@@ -143,9 +145,9 @@ class Milvus:
         self,
         embedding_function: Embeddings,
         collection_name: str,
-        connection_args: Dict[str, Any],
+        connection_args: dict[str, Any],
         auto_id: bool = True,
-        index_params: Dict[str, Any] | None = None,
+        index_params: dict[str, Any] | None = None,
     ) -> None:
         if not auto_id:
             raise ValueError("Catalog retriever Milvus adapter requires auto_id=True")
@@ -163,7 +165,7 @@ class Milvus:
         self.col = self._load_collection_if_exists()
 
     @staticmethod
-    def _connection_alias(collection_name: str, connection_args: Dict[str, Any]) -> str:
+    def _connection_alias(collection_name: str, connection_args: dict[str, Any]) -> str:
         uri = str(connection_args.get("uri", "default"))
         raw_alias = f"catalog_{collection_name}_{uri}"
         return re.sub(r"[^A-Za-z0-9_]", "_", raw_alias)[:255]
@@ -229,14 +231,14 @@ class Milvus:
         return value
 
     @classmethod
-    def _vector(cls, embedding: List[float]) -> List[float]:
+    def _vector(cls, embedding: list[float]) -> list[float]:
         return [float(value) for value in embedding]
 
     def add_embeddings(
         self,
-        texts: List[str],
-        embeddings: List[List[float]],
-        metadatas: List[Dict[str, Any]],
+        texts: list[str],
+        embeddings: list[list[float]],
+        metadatas: list[dict[str, Any]],
     ) -> None:
         records = []
         for text, embedding, metadata in zip(texts, embeddings, metadatas):
@@ -295,7 +297,7 @@ class Milvus:
         query: str,
         k: int = 4,
         expr: str = "",
-    ) -> List[Tuple[SimpleNamespace, float]]:
+    ) -> list[tuple[SimpleNamespace, float]]:
         if self.col is None:
             return []
 
@@ -403,7 +405,7 @@ class Retriever:
 
         logging.info("CATALOG RETRIEVER | Retriever.__init__() | Milvus collections initialized.")
 
-    def _embedding_counts(self) -> Tuple[int, int]:
+    def _embedding_counts(self) -> tuple[int, int]:
         """Return current text and image collection entity counts."""
         text_count = 0
         if self.text_db.col:
@@ -424,7 +426,7 @@ class Retriever:
         """
         try:
             text_count, image_count = self._embedding_counts()
-            
+
             logging.info(f"CATALOG RETRIEVER | embeddings_exist() | Text collection has {text_count} entities. Image collection has {image_count} entities.")
             # Check text and image collections
             image_ready = (not self.image_enabled) or image_count > 0
@@ -434,16 +436,16 @@ class Retriever:
             else:
                 logging.info("CATALOG RETRIEVER | embeddings_exist() | No embeddings found in either collection.")
                 return False
-            
+
         except Exception as e:
             logging.info(f"CATALOG RETRIEVER | embeddings_exist() | Error checking embeddings: {e}")
             return False
 
     def embed_chunk(
-        self, 
-        chunk: str, 
+        self,
+        chunk: str,
         query_type: str = "query"
-        ) -> List[float]:
+        ) -> list[float]:
         """
         Embed a chunk of text.
         """
@@ -456,14 +458,14 @@ class Retriever:
 
         logging.info("CATALOG RETRIEVER | Retriever.embed_chunk() | Chunk embedded.")
 
-        return response.data[0].embedding   
+        return response.data[0].embedding
 
     def text_embeddings(
         self,
-        texts: List[str],
+        texts: list[str],
         query_type: str = "query",
         verbose: bool = False
-    ) -> List[List[float] | None]:
+    ) -> list[list[float] | None]:
         """
         Generate text embeddings from a list of text strings, using chunking and batching.
         """
@@ -475,12 +477,12 @@ class Retriever:
             return [None] * len(texts)
 
         all_chunk_embeddings = self._embed_chunks_in_batches(all_chunks, query_type, verbose)
-        
+
         final_embeddings = self._reconstruct_embeddings(texts, all_chunk_embeddings, text_chunk_counts)
-        
+
         return final_embeddings
 
-    def _create_text_chunks(self, texts: List[str], verbose: bool = False) -> Tuple[List[str], List[int]]:
+    def _create_text_chunks(self, texts: list[str], verbose: bool = False) -> tuple[list[str], list[int]]:
         """
         Break all input texts into smaller chunks and return the chunks and their counts.
         """
@@ -497,11 +499,11 @@ class Retriever:
 
     def _embed_chunks_in_batches(
         self,
-        all_chunks: List[str],
+        all_chunks: list[str],
         query_type: str,
         verbose: bool = False,
         batch_size: int = 32
-    ) -> List[List[float] | None]:
+    ) -> list[list[float] | None]:
         """
         Embed all created chunks in efficient batches.
         """
@@ -527,10 +529,10 @@ class Retriever:
 
     def _reconstruct_embeddings(
         self,
-        texts: List[str],
-        all_chunk_embeddings: List[List[float] | None],
-        text_chunk_counts: List[int]
-    ) -> List[List[float] | None]:
+        texts: list[str],
+        all_chunk_embeddings: list[list[float] | None],
+        text_chunk_counts: list[int]
+    ) -> list[list[float] | None]:
         """
         Reconstruct a single embedding for each original text from chunk embeddings.
         """
@@ -552,14 +554,14 @@ class Retriever:
                 final_embeddings.append(average_embedding)
             else:
                 final_embeddings.append(None)
-        
+
         return final_embeddings
 
     def image_embeddings(
         self,
-        texts: List[str],
+        texts: list[str],
         verbose: bool = False
-    ) -> List[List[float] | None]:
+    ) -> list[list[float] | None]:
         """
         Generate image embeddings from a list of base64 image strings or image URLs using batching.
         Returns a list of embeddings, with None for failures, to maintain 1:1 mapping with input.
@@ -577,9 +579,9 @@ class Retriever:
 
             if verbose:
                 logging.info(f"CATALOG RETRIEVER | Retriever.image_embeddings() | Processing image batch {i//batch_size + 1}/{num_batches} with {len(batch_texts)} images.")
-            
+
             input_data_list = []
-            
+
             for text in batch_texts:
                 try:
                     input_data = text
@@ -601,7 +603,7 @@ class Retriever:
                         else:
                             if verbose:
                                 logging.warning("CATALOG RETRIEVER | Failed to resize image or still too large after resize")
-                            input_data = None 
+                            input_data = None
                 except Exception as e:
                     if verbose:
                         logging.error(f"CATALOG RETRIEVER | Error processing image for batching: {e}")
@@ -609,7 +611,7 @@ class Retriever:
                 input_data_list.append(input_data)
 
             valid_inputs = [data for data in input_data_list if data is not None]
-            
+
             try:
                 if valid_inputs:
                     response = self.image_client.embeddings.create(
@@ -770,9 +772,9 @@ class Retriever:
 
     async def retrieve(
         self,
-        query: List[str],
-        categories: List[str],
-        filters: Dict[str, Any] | None = None,
+        query: list[str],
+        categories: list[str],
+        filters: dict[str, Any] | None = None,
         image: str = "",
         k: int = 4,
         candidate_k: int | None = None,
@@ -783,7 +785,7 @@ class Retriever:
         Asynchronously retrieve relevant items from both text and image databases.
         """
         candidate_limit = max(k, candidate_k or self.catalog_size or (k * 5))
-        diagnostics: Dict[str, Any] = {
+        diagnostics: dict[str, Any] = {
             "requested_top_k": k,
             "candidate_k": candidate_limit,
             "search_mode": "image" if image_bool else "text",
@@ -895,7 +897,7 @@ class Retriever:
             # For text-only search, use interleaving as before
             interleaved_results = []
             # Store them in a regular list
-            active_iterators = [iter(lst) for lst in sorted_unformatted_results] 
+            active_iterators = [iter(lst) for lst in sorted_unformatted_results]
             while active_iterators:
                 current_it = active_iterators.pop(0)
                 try:
@@ -904,13 +906,13 @@ class Retriever:
                     active_iterators.append(current_it)
                 except StopIteration:
                     pass
-                
+
         # Deduplicate by source product identity. Display names are not IDs and
         # two legitimate products may share one.
         seen_ids = set()
-        final_results = [] 
+        final_results = []
         for res in interleaved_results:
-            pk_value = res[0].metadata.get("pk") 
+            pk_value = res[0].metadata.get("pk")
             product_id = res[0].metadata.get(self.product_id_field)
             id_ = str(product_id) if product_id is not None else (
                 str(pk_value) if pk_value is not None else None
@@ -918,7 +920,7 @@ class Retriever:
             if id_ is not None and id_ not in seen_ids:
                 seen_ids.add(id_)
                 final_results.append(res)
-        
+
         all_results = final_results
         diagnostics["deduped_count"] = len(all_results)
 
@@ -1051,12 +1053,12 @@ class Retriever:
 
     def _apply_structured_filters(
         self,
-        results: List[Tuple[Any, float]],
-        filters: Dict[str, Any] | None,
+        results: list[tuple[Any, float]],
+        filters: dict[str, Any] | None,
         verbose: bool = False,
         *,
         canonical: bool = False,
-    ) -> List[Tuple[Any, float]]:
+    ) -> list[tuple[Any, float]]:
         """
         Apply structured metadata filters before assembling final response payloads.
         """
@@ -1067,7 +1069,7 @@ class Retriever:
         if not canonical_filters:
             return results
 
-        filtered_results: List[Tuple[Any, float]] = []
+        filtered_results: list[tuple[Any, float]] = []
         for result in results:
             doc = result[0]
             if not self._metadata_matches_filters(doc.metadata, canonical_filters):
@@ -1082,7 +1084,7 @@ class Retriever:
 
         return filtered_results
 
-    def _canonical_filters(self, filters: Dict[str, Any]) -> Dict[str, Any]:
+    def _canonical_filters(self, filters: dict[str, Any]) -> dict[str, Any]:
         aliases = {
             alias
             for capability in self.filter_capabilities.values()
@@ -1094,7 +1096,7 @@ class Retriever:
                 "Unsupported catalog filter(s): " + ", ".join(unknown)
             )
 
-        canonical: Dict[str, Any] = {}
+        canonical: dict[str, Any] = {}
         for name, capability in self.filter_capabilities.items():
             if name in filters:
                 canonical[name] = self._validated_filter_value(
@@ -1189,15 +1191,15 @@ class Retriever:
 
     @staticmethod
     def _number_alias_filter(
-        filters: Dict[str, Any],
+        filters: dict[str, Any],
         name: str,
         capability: CatalogFilterCapability,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         aliases = {
             "min": capability.request_aliases.get("min") or f"min_{name}",
             "max": capability.request_aliases.get("max") or f"max_{name}",
         }
-        number_filter: Dict[str, Any] = {}
+        number_filter: dict[str, Any] = {}
         for bound, alias in aliases.items():
             if alias in filters:
                 number_filter[bound] = filters[alias]
@@ -1211,8 +1213,8 @@ class Retriever:
     _PUSHDOWN_TYPES = {"enum", "enum_list"}
 
     def _filter_expression(
-        self, canonical_filters: Dict[str, Any]
-    ) -> Tuple[str, set]:
+        self, canonical_filters: dict[str, Any]
+    ) -> tuple[str, set]:
         """A Milvus expression for the filters the database can decide exactly.
 
         The catalog declares each filter's type and its source fields, and every
@@ -1225,7 +1227,7 @@ class Retriever:
         when any of its source fields holds any of the requested values.
         """
 
-        clauses: List[str] = []
+        clauses: list[str] = []
         covered: set = set()
         for name in sorted(canonical_filters):
             capability = self.filter_capabilities.get(name)
@@ -1252,8 +1254,8 @@ class Retriever:
 
     def _metadata_matches_filters(
         self,
-        metadata: Dict[str, Any],
-        filters: Dict[str, Any],
+        metadata: dict[str, Any],
+        filters: dict[str, Any],
     ) -> bool:
         for name, value in filters.items():
             capability = self.filter_capabilities.get(name)
@@ -1271,7 +1273,7 @@ class Retriever:
 
     def _metadata_matches_number_filter(
         self,
-        metadata: Dict[str, Any],
+        metadata: dict[str, Any],
         value: Any,
         name: str,
         capability: CatalogFilterCapability,
@@ -1296,10 +1298,10 @@ class Retriever:
         return True
 
     @classmethod
-    def _normalize_number_filter(cls, value: Any) -> Dict[str, float]:
+    def _normalize_number_filter(cls, value: Any) -> dict[str, float]:
         if not isinstance(value, dict):
             return {}
-        bounds: Dict[str, float] = {}
+        bounds: dict[str, float] = {}
         lower = cls._coerce_float(value.get("min", value.get("gte")))
         upper = cls._coerce_float(value.get("max", value.get("lte")))
         if lower is not None:
@@ -1311,7 +1313,7 @@ class Retriever:
     @classmethod
     def _first_metadata_number(
         cls,
-        metadata: Dict[str, Any],
+        metadata: dict[str, Any],
         name: str,
         capability: CatalogFilterCapability,
     ) -> float | None:
@@ -1323,7 +1325,7 @@ class Retriever:
 
     def _metadata_matches_value_filter(
         self,
-        metadata: Dict[str, Any],
+        metadata: dict[str, Any],
         value: Any,
         name: str,
         capability: CatalogFilterCapability,
@@ -1363,9 +1365,9 @@ class Retriever:
 
     def _effective_filters(
         self,
-        filters: Dict[str, Any] | None,
-        categories: List[str],
-    ) -> Dict[str, Any]:
+        filters: dict[str, Any] | None,
+        categories: list[str],
+    ) -> dict[str, Any]:
         effective = dict(filters or {})
         if categories:
             explicit_taxonomy = sorted(
@@ -1398,7 +1400,7 @@ class Retriever:
     #: fields and must not reach the product contract.
     _INDEX_ONLY_FIELDS = ("pk", "text", "vector", "catalog_fingerprint")
 
-    def product_record(self, product_id: str) -> Dict[str, Any] | None:
+    def product_record(self, product_id: str) -> dict[str, Any] | None:
         """One product's stored fields, read from the index rather than memory.
 
         The index already holds every field the catalog declares, so the whole
@@ -1427,7 +1429,7 @@ class Retriever:
             if name not in self._INDEX_ONLY_FIELDS
         }
 
-    def _product_payload_from_result(self, result: Tuple[Any, float]) -> Dict[str, Any]:
+    def _product_payload_from_result(self, result: tuple[Any, float]) -> dict[str, Any]:
         doc, similarity = result
         metadata = doc.metadata
         price = Retriever._coerce_float(metadata.get(self.price_field))
@@ -1440,7 +1442,7 @@ class Retriever:
             if metadata.get(field) not in (None, "")
         }
         category = list(taxonomy.values())[-1] if taxonomy else ""
-        product: Dict[str, Any] = {
+        product: dict[str, Any] = {
             "product_id": str(
                 metadata.get(self.product_id_field) or metadata.get("pk") or ""
             ),

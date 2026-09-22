@@ -15,7 +15,6 @@ from openai import OpenAI
 
 from .agenttypes import State
 
-
 logger = logging.getLogger(__name__)
 
 MEDIA_ONLY_QUERY = "The user submitted visual media without additional text."
@@ -35,7 +34,7 @@ class MediaPerceptionClient:
         api_key_env = getattr(config, "vlm_api_key_env", None)
         api_key = os.environ.get(api_key_env, "") if api_key_env else "not-needed"
         self.client = (
-            OpenAI(base_url=getattr(config, "vlm_port"), api_key=api_key or "not-needed")
+            OpenAI(base_url=config.vlm_port, api_key=api_key or "not-needed")
             if self.enabled
             else None
         )

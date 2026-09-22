@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 import requests
-
 from chain_server.src.shopper_profiles import (
     ShopperProfilesClient,
     ShopperProfilesError,

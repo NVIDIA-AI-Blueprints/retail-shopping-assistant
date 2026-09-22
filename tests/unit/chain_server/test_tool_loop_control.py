@@ -11,7 +11,6 @@ from typing import Any, cast
 import pytest
 from chain_server.src.skill_activation import ShopperSkillActivationMiddleware
 from chain_server.src.tool_loop_control import (
-    CONSTRAINT_REVIEW_PREFIX,
     SEARCH_BUDGET_EXHAUSTED_PREFIX,
     SEARCH_TOOL_NAME,
     SEARCH_VALIDATION_ERROR_PREFIX,
@@ -229,7 +228,16 @@ def test_completed_search_after_non_search_tool_keeps_model_synthesis() -> None:
     assert response.result[0].content == "answer"
 
 
-def test_completed_scoped_no_match_removes_tools_from_next_model_step() -> None:
+def test_completed_scoped_no_match_keeps_every_tool_available() -> None:
+    """A zero-match closes the scope and nothing else.
+
+    The name of this test said "removes tools" for as long as it has asserted
+    the opposite, and the gap it hides is real: the note a zero-match carries
+    asks for another search with a filter given up, so the tools have to stay.
+    What stops the search that gives up nothing is the identical-call cap
+    below, not this.
+    """
+
     middleware = ToolLoopControlMiddleware()
     result = _tool_result(
         "SEARCH_NO_MATCH_GROUNDING_NOTE: Zero products matched this exact scope.\n\n"
@@ -243,6 +251,169 @@ def test_completed_scoped_no_match_removes_tools_from_next_model_step() -> None:
 
     assert prepared.tools == TOOLS
     assert "## Search Complete" in prepared.system_prompt
+
+
+_NO_MATCH_RESULT = (
+    "SEARCH_NO_MATCH_GROUNDING_NOTE: Zero products matched this exact "
+    "advertised taxonomy and filter scope.\n\n"
+    "SEARCH_SCOPE_COMPLETE: The current role is complete."
+)
+
+
+def _search_call(call_id: str, args: dict[str, Any]) -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {"id": call_id, "name": "search_catalog_tool", "args": args}
+        ],
+    )
+
+
+def test_the_same_empty_scope_sent_twice_closes_the_loop() -> None:
+    """A zero-match repeated unchanged cannot come out differently.
+
+    This was uncounted, because a clean zero-match is neither an error nor a
+    refusal: it is a `completed` result whose text says the scope held no
+    products, so it read as usable and the cap never saw it. Live, "now show
+    me some skirts" filtered to an audience no skirt carries matched nothing
+    and was sent 22 times.
+    """
+
+    middleware = ToolLoopControlMiddleware()
+    scope = {
+        "requested_product_type": "skirts",
+        "required_constraints": {"target_audience": "adult_all_genders"},
+    }
+    first_call = _search_call("call-a", scope)
+    first_empty = _tool_result(_NO_MATCH_RESULT, tool_call_id="call-a")
+    second_call = _search_call("call-b", scope)
+    second_empty = _tool_result(_NO_MATCH_RESULT, tool_call_id="call-b")
+
+    _capture_model_request(
+        middleware,
+        [HumanMessage(content="now show me some skirts"), first_call, first_empty],
+    )
+    closed = _capture_model_request(
+        middleware,
+        [
+            HumanMessage(content="now show me some skirts"),
+            first_call,
+            first_empty,
+            second_call,
+            second_empty,
+        ],
+    )
+
+    assert closed.tools == []
+
+
+def test_an_identical_pair_of_call_and_result_closes_the_loop() -> None:
+    """The model failure this exists for: it copies its own last exchange.
+
+    J01 turn 16 produced twelve assistant messages with empty text content,
+    each carrying a byte-identical tool call, each answered by a byte-identical
+    result that already held all sixteen products asked for. The turn died on
+    the recursion limit after 98 seconds. Nothing in the result was being read,
+    so this cannot be fixed by what the result says -- only by refusing to let
+    the pair repeat.
+    """
+
+    middleware = ToolLoopControlMiddleware()
+    scope = {"requested_product_type": "dress", "semantic_query": "a Cancun wedding"}
+    found = "SEARCH_RESULT_GROUNDING_NOTE: grounded candidates\nPRODUCT_REF: p1"
+    first_call = _search_call("call-a", scope)
+    first_result = _tool_result(found, tool_call_id="call-a")
+    second_call = _search_call("call-b", scope)
+    second_result = _tool_result(found, tool_call_id="call-b")
+
+    said = HumanMessage(content="another wedding in Cancun in three months")
+    _capture_model_request(middleware, [said, first_call, first_result])
+    closed = _capture_model_request(
+        middleware,
+        [said, first_call, first_result, second_call, second_result],
+    )
+
+    assert closed.tools == []
+
+
+def test_a_repair_sending_the_same_arguments_is_not_the_loop() -> None:
+    """Identical arguments with a different result is the call that worked.
+
+    A repair restores the locked fields and re-issues, so its arguments can
+    match the call it is fixing. Counting that ended turns that were
+    succeeding, which is why the pair is what gets counted and not the call.
+    """
+
+    middleware = ToolLoopControlMiddleware()
+    scope = {"requested_product_type": "dress", "semantic_query": "a Cancun wedding"}
+    first_call = _search_call("call-a", scope)
+    refused = _tool_result(
+        SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: invalid taxonomy",
+        tool_call_id="call-a",
+        status="error",
+    )
+    repair_call = _search_call("call-b", scope)
+    repaired = _tool_result(
+        "SEARCH_RESULT_GROUNDING_NOTE: grounded candidates\nPRODUCT_REF: p1",
+        tool_call_id="call-b",
+    )
+
+    said = HumanMessage(content="a dress for a Cancun wedding")
+    _capture_model_request(middleware, [said, first_call, refused])
+    after_repair = _capture_model_request(
+        middleware,
+        [said, first_call, refused, repair_call, repaired],
+    )
+
+    assert _tool_names(after_repair.tools) == _tool_names(TOOLS)
+
+
+def test_an_empty_scope_retried_with_a_filter_given_up_stays_open() -> None:
+    """The retry the zero-match note asks for must survive the cap.
+
+    "No black dress runs to a 2 -- here are dresses in a 2 in other colours"
+    is the behaviour that note exists to produce, and it needs a second
+    search. Giving up a filter changes the arguments, so it is a different
+    call and never the repeat being counted.
+    """
+
+    middleware = ToolLoopControlMiddleware()
+    first_call = _search_call(
+        "call-a",
+        {
+            "requested_product_type": "dresses",
+            "required_constraints": {"primary_color": "black", "sizes": "2"},
+        },
+    )
+    first_empty = _tool_result(_NO_MATCH_RESULT, tool_call_id="call-a")
+    without_the_colour = _search_call(
+        "call-b",
+        {
+            "requested_product_type": "dresses",
+            "required_constraints": {"sizes": "2"},
+        },
+    )
+    found = _tool_result(
+        "SEARCH_RESULT_GROUNDING_NOTE: grounded candidates",
+        tool_call_id="call-b",
+    )
+
+    _capture_model_request(
+        middleware,
+        [HumanMessage(content="a black dress in a 2"), first_call, first_empty],
+    )
+    still_open = _capture_model_request(
+        middleware,
+        [
+            HumanMessage(content="a black dress in a 2"),
+            first_call,
+            first_empty,
+            without_the_colour,
+            found,
+        ],
+    )
+
+    assert _tool_names(still_open.tools) == _tool_names(TOOLS)
 
 
 def test_a_closed_search_reports_the_catalog_context_as_spent() -> None:
@@ -748,7 +919,7 @@ def test_incomplete_success_does_not_reset_repair_for_the_same_scope() -> None:
     ).tools == []
 
 
-def test_constraint_review_after_schema_repair_closes_the_scope() -> None:
+def test_a_second_error_after_a_schema_repair_closes_the_scope() -> None:
     middleware = ToolLoopControlMiddleware()
     invalid_call = AIMessage(
         content="",
@@ -778,7 +949,7 @@ def test_constraint_review_after_schema_repair_closes_the_scope() -> None:
         ],
     )
     constraint_review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX + "Remove the inferred requirement.",
+        SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: invalid taxonomy",
         tool_call_id="call-b",
     )
     constraint_messages = [*messages, constraint_call, constraint_review]
@@ -788,7 +959,7 @@ def test_constraint_review_after_schema_repair_closes_the_scope() -> None:
     assert prepared.tool_choice == "none"
 
     repeated_review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX + "Still present.",
+        SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: still invalid",
         tool_call_id="call-c",
     )
     repeated_call = AIMessage(
@@ -807,7 +978,7 @@ def test_constraint_review_after_schema_repair_closes_the_scope() -> None:
     ).tools == []
 
 
-def test_constraint_repair_cannot_reopen_with_scope_modifiers() -> None:
+def test_a_repair_cannot_reopen_by_adding_scope_modifiers() -> None:
     middleware = ToolLoopControlMiddleware()
     first_call = AIMessage(
         content="",
@@ -820,7 +991,7 @@ def test_constraint_repair_cannot_reopen_with_scope_modifiers() -> None:
         ],
     )
     first_review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX + "Remove the inferred requirement.",
+        SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: invalid taxonomy",
     )
     messages = [HumanMessage(content="show me bags"), first_call, first_review]
     drifted_call = AIMessage(
@@ -841,7 +1012,7 @@ def test_constraint_repair_cannot_reopen_with_scope_modifiers() -> None:
     assert [tool.name for tool in prepared.tools] == ["search_catalog_tool"]
 
     drifted_review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX + "Still present.",
+        SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: still invalid",
         tool_call_id="call-b",
     )
     drifted_messages = [*messages, drifted_call, drifted_review]
@@ -858,7 +1029,7 @@ def test_constraint_repair_cannot_reopen_with_scope_modifiers() -> None:
         ],
     )
     repeated_review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX + "Still present.",
+        SEARCH_VALIDATION_ERROR_PREFIX + "{} with error: still invalid",
         tool_call_id="call-c",
     )
     assert _capture_model_request(
@@ -1969,28 +2140,6 @@ def test_native_repair_scope_lock_clears_after_incomplete_success() -> None:
     assert next_response.result[0].tool_calls[0]["args"] == {
         "requested_product_type": "boots"
     }
-
-
-def test_constraint_review_uses_the_single_search_repair() -> None:
-    middleware = ToolLoopControlMiddleware()
-    review = _tool_result(
-        CONSTRAINT_REVIEW_PREFIX
-        + " Remove requirements inferred only from weather context."
-    )
-
-    prepared = _capture_model_request(middleware, _messages_with_result(review))
-
-    assert [tool.name for tool in prepared.tools] == ["search_catalog_tool"]
-    assert prepared.tool_choice == "auto"
-    normalized_prompt = " ".join(prepared.system_prompt.split())
-    assert "Remove requirements inferred only from weather context" not in (
-        normalized_prompt
-    )
-    assert prepared.messages[0] == HumanMessage(content="shopper request")
-    assert "Remove requirements inferred only from weather context" in (
-        prepared.messages[1].content
-    )
-    assert "legacy runtime prompt" not in normalized_prompt
 
 
 def test_native_validation_feedback_does_not_replay_rejected_kwargs() -> None:

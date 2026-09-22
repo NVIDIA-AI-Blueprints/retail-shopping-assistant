@@ -1,6 +1,6 @@
+import sys
 from dataclasses import replace
 from pathlib import Path
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -10,7 +10,6 @@ sys.path.insert(0, str(EVAL_ROOT))
 
 import src.challenger as challenger_module
 import src.judge as judge_module
-
 from src.challenger import (
     OpenAICompatibleChallenger,
     ScenarioContext,
@@ -26,6 +25,7 @@ from src.challenger import (
     run_challenger,
     run_scenario,
 )
+
 from src.config import ModelRuntime, chat_completion_options, load_eval_config
 
 

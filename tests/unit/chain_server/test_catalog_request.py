@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import pytest
-
 from chain_server.src.catalog_request import (
     CatalogSearchIntent,
     build_catalog_search_plan,

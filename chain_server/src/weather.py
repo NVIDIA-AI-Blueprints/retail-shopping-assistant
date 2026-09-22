@@ -9,13 +9,14 @@ import json
 import math
 import os
 import re
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime, timedelta
 from datetime import date as CalendarDate
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Literal, Mapping, Protocol
+from typing import Any, Literal, Protocol
+from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
-from urllib.parse import quote
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -26,7 +27,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-
 
 VISUAL_CROSSING_BASE_URL = (
     "https://weather.visualcrossing.com/"
@@ -209,7 +209,7 @@ class WeatherRequest(BaseModel):
             raise ValueError("weather dates must be valid calendar dates") from exc
 
     @model_validator(mode="after")
-    def validate_date_mode(self) -> "WeatherRequest":
+    def validate_date_mode(self) -> WeatherRequest:
         if self.date is not None and (
             self.start_date is not None or self.end_date is not None
         ):
@@ -252,7 +252,15 @@ class WeatherDay(BaseModel):
 
     date: CalendarDate
     condition: WeatherCondition
-    precipitation_probability_pct: float = Field(ge=0, le=100)
+    #: Absent on plenty of sound forecasts. Visual Crossing sends it as null
+    #: for days it will not put a number on, and it did so for every day of
+    #: every forecast this shop asked for -- so requiring it discarded whole
+    #: usable responses, temperatures and all, and the shopper flying to
+    #: Cancun was told no forecast was available for a place and a date the
+    #: provider had answered in full.
+    precipitation_probability_pct: float | None = Field(
+        default=None, ge=0, le=100
+    )
     precipitation_types: list[PrecipitationType]
     temperature_low_f: float | None = None
     temperature_high_f: float | None = None
@@ -355,7 +363,7 @@ class VisualCrossingWeatherClient:
         self._config = config
         self._api_key = api_key
         self._session = session or requests.Session()
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     def get_forecast(self, request: WeatherRequest) -> WeatherOutcome:
         explicit_window = request.explicit_window()
@@ -426,7 +434,7 @@ class VisualCrossingWeatherClient:
         window = request.explicit_window()
         if window is None:
             return None
-        utc_today = self._clock().astimezone(timezone.utc).date()
+        utc_today = self._clock().astimezone(UTC).date()
         horizon = self._config.max_forecast_horizon_days
         if window[1] < utc_today - timedelta(days=1):
             return weather_failure("weather_outside_forecast_horizon")
@@ -477,7 +485,7 @@ class VisualCrossingWeatherClient:
             fetched_at = self._clock()
             if fetched_at.tzinfo is None or fetched_at.utcoffset() is None:
                 return weather_failure("weather_response_invalid")
-            fetched_at = fetched_at.astimezone(timezone.utc)
+            fetched_at = fetched_at.astimezone(UTC)
             local_today = fetched_at.astimezone(location_zone).date()
         except (ZoneInfoNotFoundError, ValueError, OverflowError, OSError):
             return weather_failure("weather_response_invalid")
@@ -501,7 +509,10 @@ class VisualCrossingWeatherClient:
         ]
         normalized_days: list[WeatherDay] = []
         seen_dates: set[CalendarDate] = set()
-        for raw_day, expected_date in zip(raw_days, expected_dates):
+        # Equal length by construction: a response whose day count does not
+        # match the window is refused above, and `expected_dates` is built to
+        # that same length. Strict so that stops being an assumption.
+        for raw_day, expected_date in zip(raw_days, expected_dates, strict=True):
             normalized = _normalize_day(raw_day, expected_date, local_today)
             if isinstance(normalized, WeatherFailure):
                 return normalized
@@ -624,8 +635,12 @@ def _normalize_day(
             return weather_failure("weather_outside_forecast_horizon")
         return weather_failure("weather_response_invalid")
 
-    probability = _finite_number(raw_day.get("precipprob"))
-    if probability is None or not 0 <= probability <= 100:
+    # Missing is allowed, out of range is not -- the same treatment the
+    # temperatures below already get.
+    probability = _optional_finite_number(raw_day.get("precipprob"))
+    if isinstance(probability, WeatherFailure):
+        return weather_failure("weather_response_invalid")
+    if probability is not None and not 0 <= probability <= 100:
         return weather_failure("weather_response_invalid")
 
     precipitation_types = _normalize_precipitation_types(raw_day.get("preciptype"))

@@ -1,9 +1,8 @@
+import sys
 from dataclasses import replace
 from pathlib import Path
-import sys
 
 import pytest
-
 
 EVAL_ROOT = Path(__file__).resolve().parents[2] / "evaluation"
 sys.path.insert(0, str(EVAL_ROOT))

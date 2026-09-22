@@ -96,7 +96,7 @@ def test_a_quotation_is_checked_against_what_the_shopper_actually_said() -> None
     the words.
     """
 
-    from chain_server.src.turn_support import a_place_the_shopper_named
+    from chain_server.src.lexical_provenance import a_place_the_shopper_named
 
     snow = "it's going to snow when we get back, what should I wear"
     assert not a_place_the_shopper_named([snow], "Italy")

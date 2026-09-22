@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Mapping
 import html
 import re
+from pathlib import Path
+from collections.abc import Mapping
+from typing import Any
 
 import yaml
 

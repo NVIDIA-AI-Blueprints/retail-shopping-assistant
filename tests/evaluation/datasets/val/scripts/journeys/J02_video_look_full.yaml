@@ -7,7 +7,12 @@ why: >
 turns:
   - say: I love this look, can you find me something similar
     attach: casual_lady_fall.mp4
-    expect: {products_min: 1}
+    # The look is a sweater, jeans and boots. This shop has no jeans, so the
+    # jeans are named as not covered and nothing is shown for them -- a skirt
+    # is not the dark denim, and neither is a dress or a blouse.
+    expect:
+      products_min: 1
+      products_within: [sweaters, boots]
   - say: do you have that first one in a size 6
     expect: {cart_unchanged: true}
   - say: I also have a wedding in Cancun around mid next week, what should I wear

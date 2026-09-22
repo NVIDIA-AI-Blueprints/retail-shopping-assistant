@@ -18,6 +18,7 @@ from memory_retriever.src.product_references import (
     ProductReferenceDescriptor,
     ProductReferenceMatch,
     _matched_occurrences,
+    _resolve_descriptor,
 )
 
 
@@ -61,6 +62,19 @@ def _resolved(**selectors: object) -> list[str]:
     ]
 
 
+def _resolution(**selectors: object) -> tuple[str, list[str], list[str]]:
+    """The whole answer: what it decided, which products, what it set aside."""
+
+    result = _resolve_descriptor(
+        ProductReferenceDescriptor(reference_id="ref", **selectors), _OCCURRENCES
+    )
+    return (
+        result.status,
+        [match.product["display_name"] for match in result.matches],
+        result.corroboration_mismatch,
+    )
+
+
 def test_one_shown_product_fits_the_description() -> None:
     assert _resolved(attributes={"primary_color": "pink"}) == [
         "Coral Silk Maxi Dress"
@@ -87,11 +101,36 @@ def test_several_fit_so_both_come_back_to_be_asked_about() -> None:
     ]
 
 
-def test_nothing_shown_fits_so_it_is_a_search() -> None:
-    assert _resolved(attributes={"primary_color": "green"}) == []
-    assert _resolved(attributes={"primary_color": "black", "sizes": "14"}) == []
-    # An attribute the record does not carry cannot be claimed to match.
-    assert _resolved(attributes={"heel_height": "low"}) == []
+def test_a_description_nothing_fits_asks_about_what_is_on_screen() -> None:
+    """Asked about the green one with nothing green shown, ask which.
+
+    A description is the model's reading of the shopper, not the shopper's own
+    words, so it is worth choosing between candidates with and not worth
+    losing every candidate over. Answering not_found sent the turn off to
+    search the catalog for something the shopper had not asked to be searched
+    for, with the products they were looking at still on the screen.
+
+    What was set aside is named, so the reply can say the record holds no
+    green one rather than inventing agreement.
+    """
+
+    status, names, ignored = _resolution(attributes={"primary_color": "green"})
+    assert status == "ambiguous"
+    assert ignored == ["attributes.primary_color"]
+    assert names == ["Coral Silk Maxi Dress", "Vivienne Lace Dress"]
+
+    # An attribute the record does not carry cannot narrow anything either.
+    status, _names, ignored = _resolution(attributes={"heel_height": "low"})
+    assert status == "ambiguous"
+    assert ignored == ["attributes.heel_height"]
+
+    # One description can fit while another does not: black narrows to the two
+    # black dresses, the invented size is set aside, and the newer one wins.
+    status, names, ignored = _resolution(
+        attributes={"primary_color": "black", "sizes": "14"}
+    )
+    assert (status, names) == ("resolved", ["Vivienne Lace Dress"])
+    assert ignored == ["attributes.sizes"]
 
 
 def test_an_ordinal_alone_counts_within_the_most_recent_showing() -> None:
@@ -116,10 +155,23 @@ def test_an_ordinal_given_a_scope_still_obeys_it() -> None:
     ]
 
 
-def test_a_description_narrows_an_exact_reference_rather_than_widening_it() -> None:
-    """Selectors still compose: every one supplied has to agree."""
+def test_a_description_cannot_cancel_the_ref_that_identified_the_product() -> None:
+    """The shape that lost J02 turn 2, from the other side.
 
-    assert _resolved(
-        product_ref="d1", attributes={"primary_color": "black"}
-    ) == ["Black Satin Lace-Up Dress"]
-    assert _resolved(product_ref="d1", attributes={"primary_color": "pink"}) == []
+    A ref is an identifier this system minted and printed into the prompt; a
+    colour or a size run is the model's account of the request. Composing them
+    let the second cancel the first, so a descriptor that named the product
+    correctly resolved nothing, and the turn searched the catalog by name for
+    the product whose ref it was already holding.
+    """
+
+    assert _resolution(product_ref="d1", attributes={"primary_color": "black"}) == (
+        "resolved",
+        ["Black Satin Lace-Up Dress"],
+        [],
+    )
+    assert _resolution(product_ref="d1", attributes={"primary_color": "pink"}) == (
+        "resolved",
+        ["Black Satin Lace-Up Dress"],
+        ["attributes.primary_color"],
+    )

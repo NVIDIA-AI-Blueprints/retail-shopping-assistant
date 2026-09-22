@@ -16,7 +16,6 @@ from typing import Any, Dict, List, Tuple
 from unittest.mock import MagicMock
 
 import pytest
-
 from catalog_retriever.src import retriever as retriever_mod
 from catalog_retriever.src.retriever import (
     CatalogFilterError,
@@ -25,7 +24,6 @@ from catalog_retriever.src.retriever import (
     RetrieverConfig,
 )
 from shared.commerce_contracts import CatalogFilterCapability
-
 
 # --------------------------------------------------------------------------->
 # Fixtures

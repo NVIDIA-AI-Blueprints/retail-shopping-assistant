@@ -28,9 +28,6 @@ class ControlSignal(StrEnum):
     BUDGET_EXHAUSTED = "budget_exhausted"
     UNSUPPORTED_TAXONOMY = "unsupported_taxonomy"
     UNSUPPORTED_CONSTRAINT = "unsupported_constraint"
-    CONSTRAINT_REVIEW = "constraint_review"
-    REQUEST_REJECTED = "request_rejected"
-    SEARCH_SUCCEEDED = "search_succeeded"
 
 
 class SearchRejection(StrEnum):
@@ -51,12 +48,16 @@ class SearchRejection(StrEnum):
     CAPABILITIES_SCHEMA_MISMATCH = "capabilities_schema_mismatch"
 
     # Provenance review: what the repair had to preserve, and what it changed.
-    REPAIR_CHANGED_CONSTRAINTS = "repair_changed_constraints"
+    # Two codes that policed the repair itself are gone. They asked whether a
+    # re-issued call kept what it was told to keep, and across 14,150 recorded
+    # turns it always had. `_retired_gate_reached` now logs those conditions
+    # instead of refusing, so a code with nothing to produce it would only be
+    # something to explain.
     TAXONOMY_NOT_ADVERTISED_FOR_SCOPE = "taxonomy_not_advertised_for_scope"
-    CONSTRAINT_REPAIR_CHANGED_REQUEST = "constraint_repair_changed_request"
     SHOPPER_SCOPE_TAXONOMY_MISMATCH = "shopper_scope_taxonomy_mismatch"
-    REQUIREMENT_PROVENANCE_UNESTABLISHED = "requirement_provenance_unestablished"
-    CONSTRAINT_REVIEW_REQUIRED = "constraint_review_required"
+    # The two codes for the constraint review are gone with the review. An
+    # unadvertised requirement is disclosed and ranked on now, never sent back
+    # to be justified, so neither code has anything left that can raise it.
     EXACT_TAXONOMY_NOT_ADVERTISED = "exact_taxonomy_not_advertised"
     ADVERTISED_MATCH_REPORTED_AS_GAP = "advertised_match_reported_as_gap"
 

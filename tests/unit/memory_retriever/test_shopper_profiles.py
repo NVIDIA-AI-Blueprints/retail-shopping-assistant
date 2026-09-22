@@ -12,16 +12,14 @@ from pathlib import Path
 import pytest
 import yaml
 from fastapi.testclient import TestClient
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-
 from memory_retriever.src import main as memory_main
 from memory_retriever.src.shopper_profiles import (
     ShopperProfileBootstrapError,
     load_shopper_profile_seed,
 )
-
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CONFIG_ROOT = REPO_ROOT / "shared" / "configs"

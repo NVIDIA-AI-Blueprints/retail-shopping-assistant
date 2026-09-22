@@ -19,9 +19,8 @@ from __future__ import annotations
 import json
 
 import pytest
+from chain_server.src.tool_schemas import _search_catalog_scopes_input_model
 from pydantic import ValidationError
-
-from chain_server.src.turn_support import _search_catalog_scopes_input_model
 from shared.commerce_contracts import (
     CatalogCapabilities,
     CatalogFilterCapability,

@@ -12,15 +12,13 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from memory_retriever.src import main as memory_main
+from memory_retriever.src import product_references
+from memory_retriever.src.migrations import _MIGRATIONS
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-
-from memory_retriever.src import main as memory_main
-from memory_retriever.src.migrations import _MIGRATIONS
-from memory_retriever.src import product_references
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -104,6 +102,7 @@ def _present_products(
     *,
     request_id: str,
     products: list[dict],
+    product_groups: list[dict] | None = None,
 ) -> tuple[dict, str]:
     started = _start_turn(
         client,
@@ -121,6 +120,7 @@ def _present_products(
             "product_results": products,
             "retrieved": {},
             "agent_diagnostics": {},
+            "product_groups": product_groups or [],
         },
     )
     assert finalized.status_code == 200
@@ -474,6 +474,7 @@ def test_start_is_idempotent_and_rejects_active_or_conflicting_reuse(
         "retrieved": {"Structured Bag": "/images/bag.png"},
         "agent_diagnostics": {"final_termination_reason": "completed"},
         "selected_skill_names": [],
+        "product_groups": [],
     }
     assert conflict.status_code == 409
 
@@ -670,15 +671,27 @@ def test_finalize_indexes_ordered_presented_products_once(
         assert events[0].logical_order == 1
         # Everything the shopper was shown, minus the two keys nothing reads
         # back: the prose serialisation and the retrieval score.
-        stored = json.loads(events[0].payload_json)["products"]
-        assert [p["display_name"] for p in stored] == [
+        #
+        # Each entry holds the product under its own key, with what this record
+        # knows about the showing -- the place on the screen -- beside it rather
+        # than within it. The runtime parses that product against a contract
+        # that refuses unrecognised fields, so a presentation fact stored on a
+        # product comes back as a refused product.
+        # One group here, unheaded: this turn declared no scopes, which is
+        # also the shape every conversation recorded before groups existed
+        # reads back as.
+        groups = json.loads(events[0].payload_json)["groups"]
+        assert [group["heading"] for group in groups] == [""]
+        stored = groups[0]["products"]
+        assert [entry["product"]["display_name"] for entry in stored] == [
             p["display_name"] for p in products
         ]
-        assert stored[0]["attributes"] == {
+        assert [entry["screen_position"] for entry in stored] == [1, 2]
+        assert stored[0]["product"]["attributes"] == {
             "taxonomy": {"category": "bags"},
             "primary_color": "black",
         }
-        assert "catalog_text" not in stored[0]["attributes"]
+        assert "catalog_text" not in stored[0]["product"]["attributes"]
         candidate_set_id = events[0].event_id
 
     next_turn = _start_turn(
@@ -861,6 +874,8 @@ def test_product_resolution_batches_unique_ambiguous_and_missing_results(
                 "candidate_set_id": candidate_set_id,
                 "turn_sequence": 1,
                 "position": 1,
+                "group": "",
+                "group_index": 0,
                 "catalog_revision": "catalog-v1",
             }
         ],
@@ -918,6 +933,428 @@ def test_product_resolution_uses_candidate_set_ordinal(
     assert result["matches"][0]["position"] == 2
 
 
+def test_the_record_hands_back_a_product_the_runtime_can_read(
+    conversation_db: TestClient,
+) -> None:
+    """Whatever this service records, the runtime has to be able to parse.
+
+    The runtime's product contract admits product fields and refuses the whole
+    object over anything else. So a field this service keeps about how a turn
+    presented a product -- the place on the screen, the heading it was shown
+    under -- reaches the runtime as a refusal, and the refusal was read there as
+    "no such reference". A shopper asking for a bag they had been shown four
+    turns earlier was told the reference was not valid, with the bag sitting in
+    the record and having been returned.
+
+    So this asserts the round trip rather than a field list: present a product,
+    resolve it, and parse what comes back with the contract itself. It is the
+    only test that fails if a new annotation is stored on a product instead of
+    beside one.
+    """
+
+    from shared.commerce_contracts import ProductSummary
+
+    _, candidate_set_id = _present_products(
+        conversation_db,
+        "conversation-contract",
+        request_id="request-contract",
+        products=[
+            {
+                "product_id": "tote-1",
+                "display_name": "Jade Tone Canvas Tote Bag",
+                "category": "tote_bags",
+                "price": {"amount": 39.99, "currency": "USD"},
+                "attributes": {"sizes": ["onesize"], "primary_color": "green"},
+            }
+        ],
+    )
+
+    resolved = conversation_db.post(
+        "/conversations/conversation-contract/products/resolve",
+        json={
+            "references": [
+                {
+                    "reference_id": "by-ref",
+                    "product_ref": "tote-1",
+                    "candidate_set_id": candidate_set_id,
+                }
+            ]
+        },
+    ).json()["results"][0]
+
+    assert resolved["status"] == "resolved"
+    match = resolved["matches"][0]
+    ProductSummary.model_validate(match["product"])
+    # The position still travels -- beside the product, where the runtime reads
+    # it as a presentation coordinate rather than as a product field.
+    assert match["position"] == 1
+
+
+def test_a_product_recorded_the_old_way_still_resolves(
+    conversation_db: TestClient,
+) -> None:
+    """Conversations already written keep the shape they were written in.
+
+    Two older shapes exist: the product with its screen position stamped into
+    it, and, before positions were kept at all, the product alone. Both have to
+    resolve, and neither may hand the stamped field back to the runtime.
+    """
+
+    from shared.commerce_contracts import ProductSummary
+
+    started = _start_turn(
+        conversation_db,
+        "conversation-legacy",
+        request_id="request-legacy",
+        shopper_text="show me bags",
+    ).json()
+    _finalize_turn(
+        conversation_db,
+        "conversation-legacy",
+        started["turn_id"],
+        request_id="request-legacy",
+        attempt_id=started["attempt_id"],
+        output={
+            "product_results": [{"product_id": "bag-1", "display_name": "Only Bag"}],
+            "retrieved": {},
+            "agent_diagnostics": {},
+        },
+    )
+
+    with memory_main.SessionLocal() as db:
+        event = (
+            db.query(memory_main.ConversationEvent)
+            .filter_by(turn_id=started["turn_id"], event_type="candidate_set_presented")
+            .one()
+        )
+        # Rewritten as the two shapes that predate nesting.
+        event.payload_json = json.dumps(
+            {
+                "products": [
+                    {
+                        "product_id": "bag-1",
+                        "display_name": "Only Bag",
+                        "screen_position": 1,
+                    },
+                    {"product_id": "bag-2", "display_name": "Second Bag"},
+                ]
+            }
+        )
+        candidate_set_id = event.event_id
+        db.commit()
+
+    resolved = conversation_db.post(
+        "/conversations/conversation-legacy/products/resolve",
+        json={
+            "references": [
+                {"reference_id": "a", "candidate_set_id": candidate_set_id, "ordinal": 1},
+                {"reference_id": "b", "candidate_set_id": candidate_set_id, "ordinal": 2},
+            ]
+        },
+    ).json()["results"]
+
+    assert [result["status"] for result in resolved] == ["resolved", "resolved"]
+    for result in resolved:
+        product = result["matches"][0]["product"]
+        assert "screen_position" not in product
+        ProductSummary.model_validate(product)
+
+
+def test_a_showing_is_recorded_as_the_groups_the_shopper_saw(
+    conversation_db: TestClient,
+) -> None:
+    """Two headed groups, each numbered from one, as the screen showed them.
+
+    Recorded flat, "the second shoes" had no structural answer: the shoes
+    began at position three, and the only way back to the group was guessing
+    from category strings that two scopes out of one category defeat.
+    """
+
+    products = [
+        {"product_id": "dress-1", "display_name": "Vivienne Lace"},
+        {"product_id": "dress-2", "display_name": "Coral Silk Maxi"},
+        {"product_id": "shoe-1", "display_name": "Wine Red Pumps"},
+    ]
+    _present_products(
+        conversation_db,
+        "conversation-groups",
+        request_id="request-groups",
+        products=products,
+        product_groups=[
+            {"heading": "dresses", "product_ids": ["dress-1", "dress-2"]},
+            {"heading": "shoes", "product_ids": ["shoe-1"]},
+        ],
+    )
+
+    with memory_main.SessionLocal() as db:
+        event = (
+            db.query(memory_main.ConversationEvent)
+            .filter_by(event_type="candidate_set_presented")
+            .one()
+        )
+        groups = json.loads(event.payload_json)["groups"]
+
+    assert [
+        (
+            group["heading"],
+            [
+                (entry["screen_position"], entry["product"]["display_name"])
+                for entry in group["products"]
+            ],
+        )
+        for group in groups
+    ] == [
+        ("dresses", [(1, "Vivienne Lace"), (2, "Coral Silk Maxi")]),
+        ("shoes", [(1, "Wine Red Pumps")]),
+    ]
+
+
+def test_a_product_in_the_second_group_still_resolves_and_still_parses(
+    conversation_db: TestClient,
+) -> None:
+    """Grouping changes the record's shape, so the runtime's read is retested.
+
+    A showing stored one way and read another is how a shopper asking for a
+    bag they had been shown was told the reference was not valid.
+    """
+
+    from shared.commerce_contracts import ProductSummary
+
+    _, candidate_set_id = _present_products(
+        conversation_db,
+        "conversation-groups-resolve",
+        request_id="request-groups-resolve",
+        products=[
+            {"product_id": "dress-1", "display_name": "Vivienne Lace"},
+            {"product_id": "shoe-1", "display_name": "Wine Red Pumps"},
+        ],
+        product_groups=[
+            {"heading": "dresses", "product_ids": ["dress-1"]},
+            {"heading": "shoes", "product_ids": ["shoe-1"]},
+        ],
+    )
+
+    resolved = conversation_db.post(
+        "/conversations/conversation-groups-resolve/products/resolve",
+        json={
+            "references": [
+                {
+                    "reference_id": "a",
+                    "candidate_set_id": candidate_set_id,
+                    "display_name": "Wine Red Pumps",
+                }
+            ]
+        },
+    ).json()["results"]
+
+    assert [result["status"] for result in resolved] == ["resolved"]
+    product = resolved[0]["matches"][0]["product"]
+    assert product["display_name"] == "Wine Red Pumps"
+    assert "screen_position" not in product
+    ProductSummary.model_validate(product)
+
+
+def _a_dresses_and_shoes_showing(client: TestClient, conversation_id: str) -> str:
+    _, candidate_set_id = _present_products(
+        client,
+        conversation_id,
+        request_id=f"request-{conversation_id}",
+        products=[
+            {"product_id": "dress-1", "display_name": "Coral Silk Maxi"},
+            {"product_id": "dress-2", "display_name": "Vivienne Lace"},
+            {"product_id": "shoe-1", "display_name": "Buckled Heels"},
+            {"product_id": "shoe-2", "display_name": "Wine Red Pumps"},
+        ],
+        product_groups=[
+            {"heading": "dresses", "product_ids": ["dress-1", "dress-2"]},
+            {"heading": "shoes", "product_ids": ["shoe-1", "shoe-2"]},
+        ],
+    )
+    return candidate_set_id
+
+
+def _resolved(client: TestClient, conversation_id: str, **descriptor) -> dict:
+    return client.post(
+        f"/conversations/{conversation_id}/products/resolve",
+        json={"references": [{"reference_id": "r", **descriptor}]},
+    ).json()["results"][0]
+
+
+def test_a_named_group_decides_which_number_the_shopper_meant(
+    conversation_db: TestClient,
+) -> None:
+    """"The second shoes" is the shoes, not the second thing on the screen."""
+
+    _a_dresses_and_shoes_showing(conversation_db, "conversation-second-shoes")
+
+    result = _resolved(
+        conversation_db, "conversation-second-shoes", ordinal=2, group="shoes"
+    )
+
+    assert result["status"] == "resolved"
+    assert result["matches"][0]["product"]["display_name"] == "Wine Red Pumps"
+
+
+def test_a_bare_ordinal_takes_the_first_group_rather_than_asking(
+    conversation_db: TestClient,
+) -> None:
+    """Numbering restarts per group, so "the first one" named two products.
+
+    It came back ambiguous, which is the assistant stopping to ask over a
+    reference the shopper could not have made clearer. The first group is the
+    one the reply anchors on, and it is the only group there is when they
+    asked for one kind.
+    """
+
+    _a_dresses_and_shoes_showing(conversation_db, "conversation-bare-ordinal")
+
+    result = _resolved(conversation_db, "conversation-bare-ordinal", ordinal=1)
+
+    assert result["status"] == "resolved"
+    assert result["matches"][0]["product"]["display_name"] == "Coral Silk Maxi"
+
+
+def test_naming_the_showing_does_not_stop_the_number_finding_its_group(
+    conversation_db: TestClient,
+) -> None:
+    """Saying which turn is the helpful thing to do, and it cost the answer.
+
+    Which showing a number counts in depends on whether the shopper named one.
+    Which group it counts in does not. Narrowing the group only when neither
+    the turn nor the set was given meant the model volunteering either --
+    both are offered to it -- came back ambiguous over a showing of dresses
+    and shoes, and "that first one" turned into a question.
+    """
+
+    candidate_set_id = _a_dresses_and_shoes_showing(
+        conversation_db, "conversation-qualified-ordinal"
+    )
+
+    by_turn = _resolved(
+        conversation_db, "conversation-qualified-ordinal", ordinal=1, turn_sequence=1
+    )
+    by_set = _resolved(
+        conversation_db,
+        "conversation-qualified-ordinal",
+        ordinal=1,
+        candidate_set_id=candidate_set_id,
+    )
+
+    for result in (by_turn, by_set):
+        assert result["status"] == "resolved"
+        assert result["matches"][0]["product"]["display_name"] == "Coral Silk Maxi"
+
+
+def test_a_named_group_still_wins_when_the_showing_is_named_too(
+    conversation_db: TestClient,
+) -> None:
+    """"The second shoes, from that first lot" is still the shoes."""
+
+    _a_dresses_and_shoes_showing(conversation_db, "conversation-qualified-group")
+
+    result = _resolved(
+        conversation_db,
+        "conversation-qualified-group",
+        ordinal=2,
+        group="shoes",
+        turn_sequence=1,
+    )
+
+    assert result["status"] == "resolved"
+    assert result["matches"][0]["product"]["display_name"] == "Wine Red Pumps"
+
+
+def test_a_heading_the_record_does_not_know_still_resolves_by_number(
+    conversation_db: TestClient,
+) -> None:
+    """The shopper's word for a group is not always the search's word for it.
+
+    An unrecognised heading narrows nothing rather than resolving nothing.
+    """
+
+    _a_dresses_and_shoes_showing(conversation_db, "conversation-odd-heading")
+
+    result = _resolved(
+        conversation_db, "conversation-odd-heading", ordinal=1, group="frocks"
+    )
+
+    assert result["status"] == "resolved"
+    assert result["matches"][0]["product"]["display_name"] == "Coral Silk Maxi"
+
+
+def test_the_index_a_later_turn_reads_names_each_product_s_group(
+    conversation_db: TestClient,
+) -> None:
+    """Without the heading the index offered two first ones and no way to pick."""
+
+    _a_dresses_and_shoes_showing(conversation_db, "conversation-index-groups")
+    started = _start_turn(
+        conversation_db,
+        "conversation-index-groups",
+        request_id="request-index-groups-next",
+        shopper_text="and the first one?",
+    ).json()
+
+    shown = [
+        (product["group"], product["position"], product["name"])
+        for reference_set in started["projection"]["product_reference_index"]
+        for product in reference_set["products"]
+    ]
+
+    assert shown == [
+        ("dresses", 1, "Coral Silk Maxi"),
+        ("dresses", 2, "Vivienne Lace"),
+        ("shoes", 1, "Buckled Heels"),
+        ("shoes", 2, "Wine Red Pumps"),
+    ]
+
+
+def test_an_unreferenceable_product_does_not_shift_the_rest(
+    conversation_db: TestClient,
+) -> None:
+    """The shopper counts what is on the screen, and nothing filters that.
+
+    The streamed list carries the number, unfiltered. This record drops a
+    product with no name, so counting what survived made every position after
+    it point one place too early: "the third" was handed the fourth garment,
+    with nothing to say it had happened.
+    """
+
+    products = [
+        {"product_id": "bag-1", "display_name": "First Bag"},
+        {"product_id": "bag-2", "display_name": ""},
+        {"product_id": "bag-3", "display_name": "Third Bag"},
+    ]
+    _, candidate_set_id = _present_products(
+        conversation_db,
+        "conversation-gap",
+        request_id="request-gap",
+        products=products,
+    )
+
+    def resolve(ordinal: int) -> dict:
+        return conversation_db.post(
+            "/conversations/conversation-gap/products/resolve",
+            json={
+                "references": [
+                    {
+                        "reference_id": f"n{ordinal}",
+                        "candidate_set_id": candidate_set_id,
+                        "ordinal": ordinal,
+                    }
+                ]
+            },
+        ).json()["results"][0]
+
+    third = resolve(3)
+    assert third["status"] == "resolved"
+    assert third["matches"][0]["product"]["product_id"] == "bag-3"
+
+    # The dropped one leaves a hole rather than pulling the next into its
+    # place. Nothing resolves there, which is the honest answer.
+    assert resolve(2)["status"] != "resolved"
+
+
 def test_product_resolution_deduplicates_repeated_ref_using_latest_occurrence(
     conversation_db: TestClient,
 ) -> None:
@@ -959,6 +1396,8 @@ def test_product_resolution_deduplicates_repeated_ref_using_latest_occurrence(
             "candidate_set_id": latest_set_id,
             "turn_sequence": 2,
             "position": 1,
+            "group": "",
+            "group_index": 0,
             "catalog_revision": "catalog-v1",
         }
     ]
@@ -1871,8 +2310,14 @@ class TestProductReferenceResolutionIsForgivingButNeverGuesses:
         assert result.matches == []
         assert result.corroboration_mismatch == []
 
-    def test_a_descriptor_with_no_ref_is_unchanged(self) -> None:
-        """Relaxation is earned by an identifier, not granted to every call."""
+    def test_the_catalog_s_own_name_identifies_as_well_as_the_ref(self) -> None:
+        """Relaxation is earned by an identifier -- and a name is one.
+
+        Neither a ref nor a display_name is the model's reading of the
+        shopper: one this system minted, the other the catalog's own. So the
+        name carries a descriptor with no ref exactly as far, and the
+        department named in the other vocabulary is set aside either way.
+        """
 
         from memory_retriever.src.product_references import _resolve_descriptor
 
@@ -1881,7 +2326,9 @@ class TestProductReferenceResolutionIsForgivingButNeverGuesses:
             [self._occurrence()],
         )
 
-        assert result.status == "not_found"
+        assert result.status == "resolved"
+        assert result.matches[0].product["display_name"] == "Ravenna Crossbody Bag"
+        assert result.corroboration_mismatch == ["category"]
 
     def test_diagnosis_never_resolves_the_product_it_found(self) -> None:
         from memory_retriever.src.product_references import _resolve_descriptor

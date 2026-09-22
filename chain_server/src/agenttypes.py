@@ -8,9 +8,9 @@ This module defines the core data structures used throughout the shopping assist
 including the main State object that flows through the LangGraph and supporting models.
 """
 from operator import ior
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-from typing import Annotated, Dict, List, Any
+from typing import Annotated, Any
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SHOPPER_PROFILE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
 
@@ -60,20 +60,20 @@ class Cart(BaseModel):
     Attributes:
         contents: List of cart items with their quantities and metadata
     """
-    contents: List[Dict[str, Any]] = Field(
+    contents: list[dict[str, Any]] = Field(
         default_factory=list,
         description="List of items in the cart with their quantities and metadata"
     )
-    
+
     def is_empty(self) -> bool:
         """Check if the cart is empty."""
         return len(self.contents) == 0
-    
+
     def get_item_count(self) -> int:
         """Get the total number of items in the cart."""
         return sum(item.get('amount', 0) for item in self.contents)
-    
-    def get_items(self) -> List[str]:
+
+    def get_items(self) -> list[str]:
         """Get a list of unique item names in the cart."""
         return list(set(item.get('item', '') for item in self.contents))
 
@@ -98,27 +98,27 @@ class State(BaseModel):
     #: Audience most recently declared for who is being shopped for, carried
     #: from earlier turns. Dialogue establishes intent, never fact, so a wearer
     #: named a turn ago has no standing until it arrives as a value.
-    wearer_audience: List[str] = Field(default_factory=list)
+    wearer_audience: list[str] = Field(default_factory=list)
     #: An audience nobody asked for, disclosed on an earlier turn of this
     #: conversation. Carried so the shop states its assumption once rather than
     #: reopening every reply with it. Read-only within a turn.
-    assumed_audience: List[str] = Field(default_factory=list)
+    assumed_audience: list[str] = Field(default_factory=list)
     #: The assumption this turn made, if it is the first to make one. Catalog
     #: search writes it; finalize records it so the next turn inherits it.
-    disclosed_audience: List[str] = Field(default_factory=list)
+    disclosed_audience: list[str] = Field(default_factory=list)
     shopper_context: ShopperContext | None = Field(
         default=None,
         description="Server-resolved current-turn shopper guidance",
     )
-    dialogue: List[DialogueTurn] = Field(
+    dialogue: list[DialogueTurn] = Field(
         default_factory=list,
         description="Typed prior turns; authoritative for shopper intent context"
     )
     #: Products the record itself picked this turn, by ref. Written where the
     #: resolutions land and read at finalization, so the choice can be recorded
     #: durably instead of expiring with the message that made it.
-    system_identified_products: List[str] = Field(default_factory=list)
-    historical_product_sets: List[Dict[str, Any]] = Field(
+    system_identified_products: list[str] = Field(default_factory=list)
+    historical_product_sets: list[dict[str, Any]] = Field(
         default_factory=list,
         description=(
             "Typed historical product reference sets; identity authority only, "
@@ -144,7 +144,7 @@ class State(BaseModel):
     )
     response: str = Field(default="", description="Generated response from agents")
     image: str = Field(default="", description="Base64 encoded image data")
-    media: List[Dict[str, Any]] = Field(
+    media: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Normalized media attachments for the current turn"
     )
@@ -152,19 +152,29 @@ class State(BaseModel):
         default="",
         description="Structured VLM analysis for the current turn's media"
     )
-    retrieved: Dict[str, str] = Field(
+    retrieved: dict[str, str] = Field(
         default_factory=dict,
         description="Dictionary of retrieved product information"
     )
-    product_results: List[Dict[str, Any]] = Field(
+    product_results: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Structured product summaries returned during the current turn"
     )
-    token_usage: Dict[str, int] = Field(
+    product_groups: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "How this turn's products divide into the groups the shopper sees. "
+            "One entry per search scope, in the order they were published, "
+            "each naming the scope's heading and the products it put on "
+            "screen. Recorded where the boundary already exists rather than "
+            "recovered afterwards by comparing category strings."
+        ),
+    )
+    token_usage: dict[str, int] = Field(
         default_factory=dict,
         description="Normalized model token usage for the current turn"
     )
-    model_usage: Dict[str, Dict[str, Any]] = Field(
+    model_usage: dict[str, dict[str, Any]] = Field(
         default_factory=dict,
         description="Per-role model usage summary for the current turn"
     )
@@ -172,37 +182,37 @@ class State(BaseModel):
         default_factory=list,
         description="Sanitized input and output guardrail decisions for the current turn"
     )
-    agent_diagnostics: Dict[str, Any] = Field(
+    agent_diagnostics: dict[str, Any] = Field(
         default_factory=dict,
         description="Ordered Deep Agents tool and termination diagnostics"
     )
-    previous_selected_skill_names: List[str] = Field(
+    previous_selected_skill_names: list[str] = Field(
         default_factory=list,
         description="Prior turn skill-selection hint loaded from durable memory"
     )
-    selected_skill_names: List[str] = Field(
+    selected_skill_names: list[str] = Field(
         default_factory=list,
         description="Shopper skills selected during the current turn"
     )
     next_agent: str = Field(default="", description="Next agent to route to")
     guardrails: bool = Field(default=True, description="Enable content safety checks")
-    timings: Annotated[Dict[str, float], ior] = Field(
+    timings: Annotated[dict[str, float], ior] = Field(
         default_factory=dict,
         description="Performance timing information for each step"
     )
-    
+
     def add_timing(self, step: str, duration: float) -> None:
         """Add timing information for a processing step."""
         self.timings[step] = duration
-    
+
     def get_total_time(self) -> float:
         """Get the total processing time."""
         return sum(self.timings.values())
-    
+
     def has_image(self) -> bool:
         """Check if the state contains an image."""
         return bool(self.image.strip())
-    
+
     def is_empty_query(self) -> bool:
         """Check if the query is empty."""
         return not bool(self.query.strip())
@@ -220,21 +230,21 @@ class Rail(BaseModel):
         rail_timings: Timing information for the safety check
     """
     is_safe: bool = Field(default=True, description="Whether content passed safety checks")
-    rail_timings: Dict[str, float] = Field(
+    rail_timings: dict[str, float] = Field(
         default_factory=dict,
         description="Timing information for safety checks"
     )
-    
+
     def add_timing(self, check_type: str, duration: float) -> None:
         """Add timing information for a specific safety check."""
         self.rail_timings[check_type] = duration
-    
+
     def get_total_rail_time(self) -> float:
         """Get the total time spent on safety checks."""
         return sum(self.rail_timings.values())
 
 
 # Type aliases for better code readability
-AgentResponse = Dict[str, Any]
-ProductInfo = Dict[str, Any]
-TimingInfo = Dict[str, float]
+AgentResponse = dict[str, Any]
+ProductInfo = dict[str, Any]
+TimingInfo = dict[str, float]

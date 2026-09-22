@@ -76,6 +76,13 @@ class TurnResult:
     #: turn rather than summed, because the turns that grow are the ones with
     #: many tool calls and an average hides them.
     token_usage: dict[str, Any] = field(default_factory=dict)
+    #: Why the turn stopped, and what it spent getting there. Declared here
+    #: because the artifact is `vars(turn)`: a key the stream carries and this
+    #: class does not declare is computed and then silently dropped, which is
+    #: how `token_usage` above went twenty-one runs unmeasured.
+    ended: str = ""
+    rejected: list[str] = field(default_factory=list)
+    repeated: dict[str, int] = field(default_factory=dict)
 
 
 def scenario_identity(label: str, scenario_id: str, repeat: int) -> dict[str, Any]:
@@ -197,6 +204,7 @@ class Assistant:
                 str(call.get("tool_name") or "")
                 for call in (diagnostics.get("tool_calls") or [])
             ],
+            **_how_the_turn_ended(diagnostics),
             # What the turn asked the catalog for, not only what came back. A
             # filter the shopper never gave returns nothing and is then reported
             # as though the shop were empty, so the request is the thing to
@@ -222,6 +230,93 @@ class Assistant:
         return _cart_lines(response.json())
 
 
+def _how_the_turn_ended(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
+    """What a failed turn needs said about it, beyond a list of tool names.
+
+    A turn that hit the graph's recursion limit recorded 24 tool names, a
+    generic apology and nothing else, so it read as an ordinary quality
+    failure. The reason had been computed and was dropped here, and diagnosing
+    it meant opening the database.
+
+    Rejections are read off `tool_calls`, which carries the name and the
+    reason. `rejected_tool_calls` holds sequence numbers pointing back into
+    that list and nothing else, so it cannot answer "rejected why".
+    """
+
+    calls = [
+        call
+        for call in (diagnostics.get("tool_calls") or [])
+        if isinstance(call, Mapping)
+    ]
+    return {
+        "ended": str(diagnostics.get("final_termination_reason") or ""),
+        "rejected": [
+            f"{call.get('tool_name') or '?'}"
+            f" ({call.get('rejection_reason') or 'no reason given'})"
+            for call in calls
+            if call.get("status") == "rejected"
+        ],
+        "repeated": _identical_repeats(calls),
+    }
+
+
+#: Endings that mean the turn ran out of something rather than finished.
+#: `recursion_limit` is the graph's step ceiling and `agent_timeout` the clock;
+#: both leave the shopper a generic apology in place of an answer.
+_RAN_OUT = frozenset({"recursion_limit", "agent_timeout"})
+
+
+def _the_turn_reached_an_end(turn: TurnResult) -> list[Check]:
+    """Assert the turn finished, on every turn, whatever the script asked.
+
+    Not declared per scenario, because the failure it catches is the one nobody
+    thinks to write an expectation for. J01 reported 24 passing checks on a run
+    where turn 17 sent 21 identical searches and died on the graph's recursion
+    limit, and again on a run where the same turn showed the shopper *zero*
+    products. The scripted checks read the final reply, and "This request took
+    too long to complete. Please retry." satisfied them.
+
+    So a scenario can go green while a turn is comprehensively broken, which is
+    how three separate loops survived a passing suite. A turn that ran out of
+    steps or time did not answer, and that is a failure regardless of what the
+    text looks like.
+    """
+
+    if turn.ended not in _RAN_OUT:
+        return []
+    repeats = sum(turn.repeated.values())
+    return [
+        Check(
+            "turn_completed",
+            "fail",
+            f"ended on {turn.ended}"
+            + (f" after {repeats} identical repeated calls" if repeats else ""),
+        )
+    ]
+
+
+def _identical_repeats(calls: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    """How many calls repeated an earlier call's name *and* arguments, by name.
+
+    A retry with different arguments is the model working. A retry with the same
+    arguments is the model stuck, and only the second kind is worth a line in a
+    transcript.
+    """
+
+    seen: set[tuple[str, str]] = set()
+    repeats: dict[str, int] = {}
+    for call in calls:
+        name = str(call.get("tool_name") or "")
+        key = (
+            name,
+            json.dumps(call.get("arguments"), sort_keys=True, default=str),
+        )
+        if key in seen:
+            repeats[name] = repeats.get(name, 0) + 1
+        seen.add(key)
+    return repeats
+
+
 def _cart_lines(cart: Any) -> list[dict[str, Any]]:
     contents = (
         cart.get("cart", cart.get("contents")) if isinstance(cart, dict) else cart
@@ -236,6 +331,7 @@ def _cart_lines(cart: Any) -> list[dict[str, Any]]:
 _SUPPORTED_EXPECTATIONS = {
     "any_of",
     "cart",
+    "cart_holds_shown",
     "cart_lines",
     "cart_unchanged",
     "every_product",
@@ -245,6 +341,8 @@ _SUPPORTED_EXPECTATIONS = {
     "product_named",
     "products_max",
     "products_min",
+    "products_new_since",
+    "products_within",
     "reply_asks",
     "reply_must_not_say",
     "tools_not_used",
@@ -257,6 +355,7 @@ def check_turn(
     expect: Mapping[str, Any],
     turn: TurnResult,
     previous_cart: Sequence[Mapping[str, Any]],
+    earlier_turns: Sequence[TurnResult] = (),
 ) -> list[Check]:
     """Every assertion answered from state, never from the reply's wording."""
 
@@ -264,6 +363,77 @@ def check_turn(
 
     def record(name: str, ok: bool, detail: str = "") -> None:
         checks.append(Check(name, "pass" if ok else "fail", detail))
+
+    if "cart_holds_shown" in expect:
+        # What an ordinal resolved to, which nothing else here asserts. The
+        # only ordinal add in the suite is checked by counting cart lines,
+        # because a script cannot name the product: "add the second one" points
+        # at whatever retrieval ranked second that run.
+        #
+        # The run knows, though. The turn that showed them recorded them in the
+        # order the shopper saw, so the product is looked up there rather than
+        # pinned here -- which is the difference between asserting that a
+        # reference resolved and asserting that something reached the cart.
+        wanted = expect["cart_holds_shown"] or {}
+        shown_on = int(wanted.get("turn") or 0)
+        position = int(wanted.get("position") or 0)
+        # Numbered from one under each heading, so a number alone names one
+        # product per group. Read off the product's own recorded group and
+        # position rather than counted along the list, which is the same
+        # arithmetic the shopper is not doing.
+        group = str(wanted.get("group") or "")
+        showing = next(
+            (earlier.products for earlier in earlier_turns if earlier.index == shown_on),
+            [],
+        )
+        expected_name = next(
+            (
+                str(product.get("display_name") or "")
+                for product in showing
+                if int(product.get("position") or 0) == position
+                and (not group or str(product.get("group") or "") == group)
+            ),
+            "",
+        )
+        in_cart = [str(line.get("item") or "") for line in turn.cart]
+        record(
+            "cart_holds_shown",
+            bool(expected_name) and expected_name in in_cart,
+            f"turn {shown_on} {group + ' ' if group else ''}position {position} was "
+            f"{expected_name or '(nothing shown there)'}, cart holds {in_cart}",
+        )
+
+    if "products_new_since" in expect:
+        # Whether "show me more" moved. A search repeated with the same query
+        # and the same filters returns the same ranked products, so a turn
+        # asking for more can show four the shopper has already seen and read,
+        # in a transcript, as an ordinary turn that showed four products.
+        #
+        # Compared by product_id rather than name, because the catalog gives
+        # two products the same display name and a name comparison would call
+        # a genuinely new product a repeat.
+        wanted = expect["products_new_since"] or {}
+        shown_on = int(wanted.get("turn") or 0)
+        earlier_ids = {
+            str(product.get("product_id") or "")
+            for earlier in earlier_turns
+            if earlier.index == shown_on
+            for product in earlier.products
+            if product.get("product_id")
+        }
+        now_ids = {
+            str(product.get("product_id") or "")
+            for product in turn.products
+            if product.get("product_id")
+        }
+        repeated = now_ids & earlier_ids
+        record(
+            "products_new_since",
+            bool(now_ids) and not repeated,
+            f"{len(repeated)} of {len(now_ids)} already shown on turn {shown_on}"
+            if now_ids
+            else "no products shown",
+        )
 
     if "any_of" in expect:
         # A turn with more than one right answer. "Add the black one in a 2"
@@ -274,7 +444,8 @@ def check_turn(
         # passing is the turn passing.
         branches = expect["any_of"] or []
         outcomes = [
-            check_turn(branch, turn, previous_cart) for branch in branches
+            check_turn(branch, turn, previous_cart, earlier_turns)
+            for branch in branches
         ]
         passed = [
             index
@@ -370,6 +541,36 @@ def check_turn(
                 not offenders,
                 f"not {value}: {offenders[:4]}",
             )
+
+    if "products_within" in expect:
+        # A role this shop cannot cover is disclosed and then answered anyway,
+        # with whatever ranked nearest presented as the closest version of the
+        # thing asked for. Every check a turn like that runs stays true --
+        # the covered roles are found, the uncovered one is named -- so the
+        # substitution has never been able to fail a journey. Naming the
+        # subcategories a turn is allowed to show is what makes it able to.
+        allowed = {
+            " ".join(str(value).casefold().split())
+            for value in expect["products_within"] or []
+        }
+        offenders = sorted(
+            {
+                f"{_attribute(product, 'subcategory')}:"
+                f" {product.get('display_name') or product.get('name') or '?'}"
+                for product in turn.products
+                if " ".join(
+                    str(_attribute(product, "subcategory") or "")
+                    .casefold()
+                    .split()
+                )
+                not in allowed
+            }
+        )
+        record(
+            "products_within",
+            not offenders,
+            f"outside {sorted(allowed)}: {offenders[:5]}",
+        )
 
     for name in expect.get("no_product_named", []) or []:
         shown = [
@@ -525,8 +726,14 @@ def run_scenario(
             scopes=answered.get("scopes") or [],
             seconds=answered["seconds"],
             token_usage=answered.get("token_usage") or {},
+            ended=str(answered.get("ended") or ""),
+            rejected=answered.get("rejected") or [],
+            repeated=answered.get("repeated") or {},
         )
-        turn.checks = check_turn(step.get("expect") or {}, turn, previous_cart)
+        turn.checks = [
+            *check_turn(step.get("expect") or {}, turn, previous_cart, turns),
+            *_the_turn_reached_an_end(turn),
+        ]
         previous_cart = turn.cart
         turns.append(turn)
 
@@ -596,6 +803,41 @@ def write_transcript(
             f"> {turn['seconds']}s · {len(turn['products'])} products · "
             f"tools {turn['tools'] or '—'}"
         )
+        # Only when abnormal. A line on every turn saying "completed" is a line
+        # every reader learns to skip, and then misses the one that says
+        # recursion_limit.
+        if turn.get("ended") and turn["ended"] != "completed":
+            lines.append(f"> ended: **{turn['ended']}**")
+        if turn.get("repeated"):
+            lines.append(
+                "> identical repeats: "
+                + "; ".join(
+                    f"{name} x{count}" for name, count in turn["repeated"].items()
+                )
+            )
+        if turn.get("rejected"):
+            lines.append(f"> rejected: {turn['rejected']}")
+        # Named, not counted. A turn answering "do you have a tote bag in a
+        # size 8" wrote four tote bags into its reply and handed the shopper
+        # eight products: two ankle boots and two pairs of heels came along
+        # with them, on the screen and into the index that resolves "the red
+        # one" later. The reply disowned them and the transcript said "8
+        # products", so every human who read that turn read it as correct.
+        if turn["products"]:
+            by_type: dict[str, list[str]] = {}
+            for product in turn["products"]:
+                kind = str(_attribute(product, "subcategory") or "?")
+                name = (
+                    product.get("display_name") or product.get("name") or "?"
+                )
+                by_type.setdefault(kind, []).append(str(name))
+            lines.append(
+                "> shown: "
+                + "; ".join(
+                    f"{kind} — {', '.join(names)}"
+                    for kind, names in by_type.items()
+                )
+            )
         for check in turn["checks"]:
             mark = {"pass": "ok", "fail": "**FAILED**", "error": "error"}[check["outcome"]]
             detail = f" — {check['detail']}" if check["outcome"] != "pass" else ""

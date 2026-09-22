@@ -8,11 +8,10 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from pydantic import BaseModel
+from shared.commerce_contracts import SearchCatalogInput, SearchCatalogResult
 
 from .catalog_request import CatalogSearchPlan
 from .commerce_tools import search_catalog
-from shared.commerce_contracts import SearchCatalogInput, SearchCatalogResult
-
 
 SearchCatalogFn = Callable[..., SearchCatalogResult]
 

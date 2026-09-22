@@ -13,7 +13,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import AsyncIterator, Collection
+from collections.abc import AsyncIterator, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from datetime import date as CalendarDate
@@ -28,18 +28,20 @@ from pydantic import (
     field_validator,
 )
 from shared.commerce_contracts import (
-    AddCartItemInput,
     CatalogCapabilities,
     CheckProductAvailabilityInput,
     GetCartInput,
     GetProductDetailsInput,
     GetStorePolicyInput,
     ProductSummary,
-    RemoveCartItemInput,
-    UpdateCartItemInput,
 )
 
 from .agenttypes import Cart, ShopperContext, State
+from .cart_operations import (
+    add_items_to_the_cart,
+    remove_a_cart_line,
+    update_a_cart_line,
+)
 from .catalog_capabilities import (
     CatalogCapabilitiesClient,
     format_catalog_capabilities_for_prompt,
@@ -49,19 +51,15 @@ from .catalog_request import CatalogSearchPlan
 from .catalog_scope import CATALOG_SEARCH_RULES
 from .catalog_search import SearchContext, search_catalog
 from .commerce_tools import (
-    add_cart_item,
     check_active_promotions,
     check_product_availability,
     get_cart,
     get_product_details,
     get_store_policy,
-    remove_cart_item,
-    update_cart_item,
 )
+from .config import ChainServerConfig
 from .control_signals import (
-    EFFECTS_KEY,
     ControlSignal,
-    committed_effect,
     committed_effects_in,
     control,
     normalize_tool_result,
@@ -84,20 +82,35 @@ from .conversation_products import (
 )
 from .fencing import MEDIA_FENCE
 from .guardrails import GuardrailDecision, GuardrailServiceClient, stops_turn
+from .grounding_evidence import (
+    _collect_tool_grounding_evidence,
+)
+from .lexical_provenance import (
+    a_place_the_shopper_named,
+)
 from .media_perception import MEDIA_ONLY_QUERY, MediaPerceptionClient
+from .media_summary import summarize_media_analysis
 from .message_shape import (
     _content_to_text,
     _extract_final_text,
     _result_messages,
     _value,
 )
+from .model_usage import (
+    _add_model_usage,
+    _collect_token_usage,
+    _merge_token_usage,
+    _normalized_token_usage,
+    _record_language_model_failure,
+    _record_media_model_usage,
+    _record_safety_model_usage,
+    _should_short_circuit_media_failure,
+)
 from .response_format import (
     WEATHER_BUDGET_EXHAUSTED,
     WEATHER_NO_DATE,
     _format_availability_result,
     _format_cart,
-    _format_cart_add_result,
-    _format_cart_remove_result,
     _format_cart_total,
     _format_media_summary,
     _format_policy_result,
@@ -105,9 +118,7 @@ from .response_format import (
     _format_promotions_result,
     _format_retrieved_images,
     _format_shopper_context,
-    _format_size_change_result,
     _format_store_date,
-    _format_update_cart_result,
     _format_wearer_audience,
     _format_weather_result,
     claim_weather_call,
@@ -117,6 +128,12 @@ from .response_format import (
 )
 from .response_format import (
     WeatherForecastInput as _WeatherForecastInput,
+)
+from .search_replies import (
+    _format_search_only_response,
+    _partial_product_results_response,
+    _scrub_internal_shopper_language,
+    _search_guidance_evidence,
 )
 from .skill_activation import (
     SKILL_ACTIVATION_COMPLETE,
@@ -138,6 +155,17 @@ from .tool_policy import (
 from .tool_policy import (
     load_shopper_skill_registry as _shopper_skill_registry,
 )
+from .tool_schemas import (
+    _search_catalog_scopes_input_model,
+    _search_catalog_tool_input_model,
+)
+from .turn_diagnostics import (
+    _catalog_repair_clarification_response,
+    _empty_agent_diagnostics,
+    _has_successful_non_search_tool_evidence,
+    _rejected_catalog_search_response,
+    _safe_collect_agent_diagnostics,
+)
 from .turn_scope import TurnScope
 from .turn_support import (
     _ONE_SIZE,
@@ -145,60 +173,32 @@ from .turn_support import (
     AddCartItemsToolItemInput,
     RequestIdentity,
     _a_list_written_as_json_text,
-    _add_model_usage,
     _advertised_sizes,
     _append_product_results,
     _build_checkpointer,
-    _cart_add_scope_failures,
-    _cart_line_by_id,
-    _cart_product_choice_note,
-    _cart_resize_issue,
-    _cart_size_issue,
-    _catalog_repair_clarification_response,
-    _collect_token_usage,
-    _collect_tool_grounding_evidence,
     _committed_effect_receipt,
     _conversation_turn_status,
     _detail_fields_already_held,
-    _empty_agent_diagnostics,
-    _format_search_only_response,
     _has_grounding_authority,
     _has_search_only_tool_evidence,
-    _has_successful_non_search_tool_evidence,
-    _identified_in_the_current_showing,
     _images_in_product_order,
     _in_presentation_order,
     _media_failure_response,
-    _merge_token_usage,
-    _most_recently_shown,
     _no_direct_taxonomy_response,
-    _normalize_cart_add_tool_items,
-    _normalized_token_usage,
     _partial_graph_messages,
-    _partial_product_results_response,
     _product_detail_failure_message,
     _product_detail_record,
     _products_found_receipt,
-    _record_language_model_failure,
-    _record_media_model_usage,
-    _record_safety_model_usage,
-    _rejected_catalog_search_response,
-    _safe_collect_agent_diagnostics,
     _same_product_display_name,
-    _scrub_internal_shopper_language,
-    _search_catalog_scopes_input_model,
-    _search_catalog_tool_input_model,
-    _search_guidance_evidence,
-    _shopper_words_this_conversation,
-    _should_short_circuit_media_failure,
     _skill_activation_input_model,
     _store_policies_path,
     _system_identification_events,
     _trusted_catalog_images,
     _turn_audience_events,
-    a_place_the_shopper_named,
+    _where_a_product_was_already_shown,
     format_most_recent_subject,
 )
+from .vocabulary_judge import CatalogVocabularyJudge
 from .weather import WeatherConfig, WeatherRequest, build_weather_client
 
 logger = logging.getLogger(__name__)
@@ -351,9 +351,11 @@ except Exception:  # pragma: no cover - dependency import is validated at runtim
 
 
 
+# Must not invite a retry. This path is reached after the turn's tools have
+# already run, so a cart change may have completed; retrying duplicates it.
 _GROUNDING_FAILURE_RESPONSE = (
-    "I couldn't safely verify the final response. Please retry; if this involved "
-    "a cart change, check your cart first."
+    "I ran into a problem writing that reply. Ask me what's in your cart to see "
+    "where things stand -- any change I made will show there."
 )
 _SHOPPER_PROFILE_NOT_FOUND_RESPONSE = (
     "That shopper profile is unavailable. Please choose another shopper and "
@@ -375,6 +377,121 @@ _SHOPPER_CONTEXT_SYSTEM_RULES = """Representative-shopper precedence and safety:
 - Cart, catalog, product-detail, and store-policy evidence remain authoritative.
 - Never infer a shopper's location, the weather, or a seasonal need. Nothing in
   this context establishes any of them, and naming one is an invented fact."""
+def the_showing(
+    products: Sequence[Any],
+    groups: Sequence[Mapping[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """This turn's products as the shopper sees them: a list of headed groups.
+
+    A showing is not a queue. Asked for dresses and shoes, the shopper reads
+    two headed lists and counts from one inside each, so "the second shoes" is
+    a question the structure can answer. Stored flat, it was eight products in
+    a row and that question had no answer at all.
+
+    Numbering restarts inside each group, because that is how the shopper
+    counts. Everything downstream -- the screen, the reply, resolution -- is
+    handed this same structure, so none of them has to derive an order and
+    none of them can derive a different one.
+
+    Products no group claims are one unheaded group at the end, which is also
+    how a conversation recorded before groups existed reads back.
+    """
+
+    held = {
+        str(product.get("product_id") or ""): product
+        for product in products
+        if isinstance(product, Mapping) and str(product.get("product_id") or "")
+    }
+    shown: list[dict[str, Any]] = []
+    placed: set[str] = set()
+    for group in groups or []:
+        members = []
+        for product_id in group.get("product_ids") or []:
+            product = held.get(str(product_id))
+            if product is not None and str(product_id) not in placed:
+                members.append(product)
+                placed.add(str(product_id))
+        if members:
+            shown.append(
+                {
+                    "heading": _a_heading_that_is_not_a_product(
+                        str(group.get("heading") or ""), products
+                    ),
+                    "products": _numbered_within_the_group(members),
+                }
+            )
+    unclaimed = [
+        product
+        for product in products
+        if isinstance(product, Mapping)
+        and str(product.get("product_id") or "") not in placed
+    ]
+    if unclaimed:
+        shown.append(
+            {"heading": "", "products": _numbered_within_the_group(unclaimed)}
+        )
+    return shown
+
+
+def _streamed_in_group_order(
+    showing: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """The showing flattened for the wire, every product naming its group."""
+
+    return [
+        {**product, "group": group.get("heading") or ""}
+        for group in showing
+        for product in group.get("products") or []
+    ]
+
+
+def _a_heading_that_is_not_a_product(heading: str, products: Sequence[Any]) -> str:
+    """This heading, unless it is the name of a product being shown under it.
+
+    Asked to add one tote by name, the model sends that name as the product
+    type, and the group of four totes comes out headed "Ombre Canvas Tote Bag"
+    -- three of which are not that. An equality check against the showing's own
+    products, not a word list: the data to settle it is already in hand.
+    """
+
+    wanted = _normalized_display_name(heading)
+    if not wanted:
+        return ""
+    for product in products:
+        if not isinstance(product, Mapping):
+            continue
+        if _normalized_display_name(str(product.get("display_name") or "")) == wanted:
+            return ""
+    return heading
+
+
+def _normalized_display_name(name: str) -> str:
+    return " ".join(name.split()).casefold()
+
+
+def _numbered_within_the_group(
+    products: Sequence[Any],
+) -> list[dict[str, Any]]:
+    """The group's products, each carrying the place it holds under its heading.
+
+    So the client renders a given order instead of deriving one. It had been
+    deriving one: the chat row was built from a name-keyed image map, the
+    product list was matched back into it by display name, and the panel kept
+    its own ordering state. Three mechanisms standing in for a number.
+
+    Stamped here rather than on `state.product_results` because that list is
+    re-parsed as `ProductSummary`, which forbids unknown fields. It belongs at
+    this boundary regardless: where a product sits on a screen is a fact about
+    how this turn was presented, not a fact about the product.
+    """
+
+    return [
+        {**product, "position": position}
+        for position, product in enumerate(products, 1)
+        if isinstance(product, dict)
+    ]
+
+
 _GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.
 
 Rewrite the draft response only as needed so every factual claim is supported
@@ -387,6 +504,13 @@ Rules:
 - For a styling request, answer the styling question rather than returning a raw
   product list. Connect candidates to the shopper's goal or direct antecedent
   using category/role, exact confirmed filters, and general styling judgment.
+  Answering the styling question is not licence to shrink or reorder the
+  screen. Every candidate in CURRENT-TURN TOOL EVIDENCE is already displayed to
+  the shopper as a picture, in that order, so keep all of them and keep that
+  order, with the styling judgement alongside. Never cut the list down to a
+  favourite: a shopper reading about two while looking at six reads it as the
+  shop having two, and a reordered list changes what their "the first one"
+  refers to.
   Keep styling judgment visibly separate from catalog facts and never derive it
   from words parsed out of a display name.
 - Labeling text as styling judgment does not permit display-name inference. If
@@ -783,11 +907,30 @@ class _AvailabilityItemInput(BaseModel):
     )
 
 
+"""Ceiling on one availability batch, tied to what one search hands over.
+
+These are two halves of one rule and were two independent numbers. A search
+returns up to `search_products_per_call` products; the field below asks for
+every product in one call. When the ceiling was the smaller of the two, the
+call that obeyed the instruction was the call that failed validation.
+
+It cost a turn. A shopper dressing for a wedding got twenty-one products back,
+the model batched all twenty-one exactly as asked, and pydantic refused it for
+holding one more than twenty. Recovering, the model split the batch and then
+re-sent one half eighteen times until the graph hit its recursion limit and
+the turn died before composing -- so a search that had found four dresses and
+confirmed every one of them in stock returned a fallback with no dresses in it.
+"""
+_MAX_AVAILABILITY_ITEMS: int = int(
+    ChainServerConfig.model_fields["search_products_per_call"].default
+)
+
+
 class _CheckAvailabilityInput(BaseModel):
     items: list[_AvailabilityItemInput] = Field(
         ...,
         min_length=1,
-        max_length=20,
+        max_length=_MAX_AVAILABILITY_ITEMS,
         description=(
             "Every product the shopper asked about, in one call. They are "
             "checked together, so four products cost one round trip, not four."
@@ -1158,6 +1301,9 @@ class DeepAgentsRuntime:
             config.guardrails_url,
             timeout_seconds=config.guardrails_timeout_seconds,
         )
+        # Built once with the runtime, like the perception client: it holds an
+        # endpoint and no turn state, so a per-turn instance would buy nothing.
+        self._vocabulary_judge = CatalogVocabularyJudge(config)
         self._catalog_capabilities = CatalogCapabilitiesClient(
             config.retriever_port,
             timeout_seconds=config.catalog_search_timeout_seconds,
@@ -1229,8 +1375,18 @@ class DeepAgentsRuntime:
         output = await turn
         products = output.product_results or []
         if products:
+            # Flat, still, and in group order: the client renders a sequence,
+            # and a payload that changed shape would blank the panel. Each
+            # product names its group and its number under that group, which
+            # is what the client needs to draw the headings.
             yield json.dumps(
-                {"type": "products", "payload": products, "timestamp": time.time()}
+                {
+                    "type": "products",
+                    "payload": _streamed_in_group_order(
+                        the_showing(products, output.product_groups)
+                    ),
+                    "timestamp": time.time(),
+                }
             )
         images = output.retrieved or {}
         yield json.dumps({"type": "images", "payload": images, "timestamp": time.time()})
@@ -1800,6 +1956,7 @@ class DeepAgentsRuntime:
             capabilities=turn_capabilities,
             search_input_model=search_input_model,
             constraint_input_model=constraint_input_model,
+            vocabulary_judge=self._vocabulary_judge,
         )
 
         def _search_catalog_impl(scopes, not_covered=None):
@@ -1852,6 +2009,12 @@ class DeepAgentsRuntime:
             returned.
             """
 
+            held = scope.answer_already_given(
+                "get_product_details_tool",
+                product_ref,
+            )
+            if held is not None:
+                return held
             if (
                 scope.product_detail_reads
                 >= self.config.max_product_detail_reads_per_turn
@@ -1877,10 +2040,13 @@ class DeepAgentsRuntime:
                 # carries identity only, so it fails this check and still reads.
                 record = _product_detail_record(cached_product)
                 evidence = ProductDetailEvidence(products=[record])
-                return (
-                    _format_product_detail_record(record),
-                    evidence.as_artifact(),
+                answer = _format_product_detail_record(record)
+                scope.remember_answer(
+                    "get_product_details_tool",
+                    product_ref,
+                    answer,
                 )
+                return (answer, evidence.as_artifact())
             scope.product_detail_reads += 1
             detail_result = get_product_details(
                 GetProductDetailsInput(product_id=cached_product.product_id),
@@ -1905,10 +2071,13 @@ class DeepAgentsRuntime:
                 scope.retrieved[product.display_name] = product.image_url
             record = _product_detail_record(product)
             evidence = ProductDetailEvidence(products=[record])
-            return (
-                _format_product_detail_record(record),
-                evidence.as_artifact(),
+            answer = _format_product_detail_record(record)
+            scope.remember_answer(
+                "get_product_details_tool",
+                product_ref,
+                answer,
             )
+            return (answer, evidence.as_artifact())
 
         @tool(return_direct=False, response_format="content_and_artifact")
         def get_product_details_tool(product_ref: str):
@@ -2046,11 +2215,24 @@ class DeepAgentsRuntime:
                 for product in found.products:
                     if product.image_url:
                         scope.retrieved[product.display_name] = product.image_url
+                # Whether a product was shown is a fact this record holds, so
+                # it is read rather than assumed. This path used to open by
+                # stating none of these had been shown and to instruct the
+                # reply to repeat it. Reached for a product an earlier turn
+                # did show -- a resolvable reference that came here instead --
+                # it told the shopper the assistant had never shown them the
+                # sweater it had shown them first.
+                shown_before = {
+                    product.product_id: _where_a_product_was_already_shown(
+                        state.historical_product_sets, product.product_id
+                    )
+                    for product in found.products
+                }
                 lines = [
-                    f'CATALOG NAME LOOKUP "{name}": not shown earlier in this '
-                    "conversation. The catalog was searched by that name; these "
-                    "are the closest matches in rank order, none previously "
-                    "shown.",
+                    f'CATALOG NAME LOOKUP "{name}": the catalog was searched '
+                    "by that name; these are the closest matches in rank "
+                    "order. Each line records whether you had already shown "
+                    "it, and only what the line says is true.",
                 ]
                 for rank, product in enumerate(found.products, start=1):
                     price = (
@@ -2058,9 +2240,18 @@ class DeepAgentsRuntime:
                         if getattr(product, "price", None)
                         else ""
                     )
+                    seen = shown_before.get(product.product_id)
+                    if seen:
+                        under = f" under {seen['group']}" if seen["group"] else ""
+                        where = (
+                            f" -- SHOWN EARLIER, turn {seen['turn_sequence']} "
+                            f"as #{seen['position']}{under}"
+                        )
+                    else:
+                        where = " -- not shown earlier"
                     lines.append(
                         f"{rank}. {product.display_name}{price} "
-                        f"[PRODUCT_REF {product.product_id}]"
+                        f"[PRODUCT_REF {product.product_id}]{where}"
                     )
                 exact = [
                     product
@@ -2081,8 +2272,13 @@ class DeepAgentsRuntime:
                     lines.append(
                         f"'{match.display_name}' is the product they named, by "
                         "the catalog's own name for it. They have chosen it. "
-                        "Say plainly that it was not among the ones you had "
-                        "shown, then "
+                        + (
+                            "You showed it earlier; do not suggest otherwise. "
+                            "Then "
+                            if shown_before.get(match.product_id)
+                            else "Say plainly that it was not among the ones "
+                            "you had shown, then "
+                        )
                         + (
                             # Only a catalog that says "onesize" settles it.
                             # Silence about sizes is not evidence of having
@@ -2103,12 +2299,19 @@ class DeepAgentsRuntime:
                     )
                 else:
                     lines.append(
-                        "Say plainly that this was not something you had shown. "
-                        "If one of these is the product the shopper named, offer "
-                        "it and ask which size before adding. If none is, say "
-                        "you do not carry that one and name the closest you do "
-                        "-- never present a different product as the one they "
-                        "asked for."
+                        (
+                            "Some of these you have already shown -- the lines "
+                            "above say which. Do not claim otherwise about "
+                            "those. "
+                            if any(shown_before.values())
+                            else "Say plainly that this was not something you "
+                            "had shown. "
+                        )
+                        + "If one of these is the product the shopper named, "
+                        "offer it and ask which size before adding. If none "
+                        "is, say you do not carry that one and name the "
+                        "closest you do -- never present a different product "
+                        "as the one they asked for."
                     )
                 sections.append("\n".join(lines))
             return "\n\n".join(section for section in sections if section)
@@ -2238,257 +2441,6 @@ class DeepAgentsRuntime:
                 _resolve_conversation_products_impl(references)
             )
 
-        def _add_cart_items_impl(items: list[AddCartItemsToolItemInput]):
-            """Add products to the cart. Use ONLY on explicit shopper intent to
-            add, buy, or put items in the cart. Requires PRODUCT_REF values from
-            current-turn search or historical-product resolution — not names.
-            Call once with every item the shopper asked to add, not once
-            per item. "All items" means the ones they asked for, not
-            everything in play this turn: "add the black one in a 2 and
-            show me a clutch to go with it" adds the dress and shows the
-            clutch. A product the shopper asked to see is not an item.
-            """
-
-            try:
-                requested_items = _normalize_cart_add_tool_items(items)
-                choices_from_a_description: list[str] = []
-            except ValueError as exc:
-                return f"Cart add failed: {exc}"
-            if not requested_items:
-                return "Cart add failed: provide at least one PRODUCT_REF to add."
-
-            def _resolve_from_conversation_index(product_ref: str):
-                """Look one ref up in the conversation's durable product index."""
-
-                descriptors = [
-                    ProductReferenceDescriptor(
-                        reference_id="cart-add",
-                        product_ref=product_ref,
-                    )
-                ]
-                try:
-                    result = self._conversation_products.resolve(
-                        identity.conversation_id,
-                        descriptors,
-                    )
-                except (ConversationProductsError, ValidationError):
-                    return None
-                scope.product_evidence.add_resolutions(result.results, descriptors)
-                state.system_identified_products = list(
-                    scope.product_evidence.system_identified()
-                )
-                return scope.product_evidence.get(product_ref)
-
-            resolved: list[tuple[str, ProductSummary, int]] = []
-            failed: list[str] = []
-            blocked: list[str] = []
-            for (product_ref, size), request in requested_items.items():
-                product = scope.product_evidence.get(product_ref)
-                if product is None:
-                    # The conversation's product index is the identity lane: it
-                    # is durable, scoped to this conversation, and printed into
-                    # the prompt every turn -- which is where the model read
-                    # this ref. Evidence is rebuilt per turn, so a ref shown two
-                    # turns ago is absent from it, and refusing on that basis
-                    # rejected a ref the shopper had genuinely been shown.
-                    # This is a lookup in the conversation's own record, not a
-                    # catalog search.
-                    product = _resolve_from_conversation_index(product_ref)
-                if product is None:
-                    # Two different situations reach here, and naming only one
-                    # of them stranded the other.
-                    #
-                    # A ref the shopper was never shown: the model passes the
-                    # product's name, and told only that a name is not a ref it
-                    # asked the shopper for the exact catalogue name -- the
-                    # assistant's own job, with a search budget unspent.
-                    #
-                    # A ref shown in an *earlier* turn: evidence is rebuilt per
-                    # turn, so a real ref from last turn is absent from this
-                    # one. "Add it in a 10 as well" carried the correct ref for
-                    # a dress added moments earlier, was told to go searching,
-                    # and gave up -- so a shopper asking for a second size got
-                    # "the add didn't go through".
-                    failed.append(
-                        f"- PRODUCT_REF '{product_ref}': not established in "
-                        "this turn. If this product was shown earlier in the "
-                        "conversation, resolve it first and add the PRODUCT_REF "
-                        "that comes back -- evidence is per turn, so a "
-                        "reference from an earlier turn has to be resolved "
-                        "again. If it is a product name rather than a "
-                        "reference, or was never shown at all, search the "
-                        "catalog now and show the closest matches, then ask "
-                        "which to add. Never add a product the shopper has not "
-                        "been shown, and do not ask them for a catalogue name, "
-                        "a link, or a price."
-                    )
-                    continue
-                expected_name = request.get("expected_display_name") or ""
-                if expected_name and not _same_product_display_name(
-                    expected_name,
-                    product.display_name,
-                ):
-                    blocked.append(
-                        f"- PRODUCT_REF '{product_ref}': expected "
-                        f"'{expected_name}', but that ref resolves to "
-                        f"'{product.display_name}'. Use the matching PRODUCT_REF "
-                        "for the intended product before adding."
-                    )
-                    continue
-                active_detail = get_product_details(
-                    GetProductDetailsInput(product_id=product.product_id),
-                    self.config.retriever_port,
-                    timeout_seconds=self.config.catalog_search_timeout_seconds,
-                )
-                if not active_detail.ok or active_detail.product is None:
-                    failed.append(
-                        f"- PRODUCT_REF '{product_ref}': "
-                        + _product_detail_failure_message(
-                            active_detail.error,
-                            cart_validation=True,
-                        )
-                    )
-                    continue
-                if not _same_product_display_name(
-                    active_detail.product.display_name,
-                    product.display_name,
-                ):
-                    blocked.append(
-                        f"- PRODUCT_REF '{product_ref}': That reference now "
-                        "resolves to a different product. Search again and use "
-                        "the new PRODUCT_REF before adding it."
-                    )
-                    continue
-                # Whether the catalog sells this size is a fact and is still
-                # checked. Whether the shopper chose it is a reading, and the
-                # model reads the conversation better than any matcher here
-                # could: it resolved the right heel and picked size 7 from "add
-                # the Jade Suede Heels in a 7", then was refused for not also
-                # quoting the shopper back into a field. The size and quantity
-                # now travel into the result instead, where a wrong one is
-                # visible on the turn it happens.
-                size_issue = _cart_size_issue(active_detail.product, size)
-                if size_issue:
-                    blocked.append(f"- PRODUCT_REF '{product_ref}': {size_issue}")
-                    continue
-                # Disclosed, not refused. A description the model read one way
-                # is added and said out loud, because the cart is on screen and
-                # a wrong line is one click away -- where a refusal costs a
-                # turn on every request it misjudges, and it misjudged plenty.
-                choice_note = _cart_product_choice_note(
-                    active_detail.product,
-                    _shopper_words_this_conversation(state),
-                    scope.product_evidence,
-                    _most_recently_shown(state),
-                    _identified_in_the_current_showing(state),
-                    size,
-                )
-                if choice_note:
-                    choices_from_a_description.append(
-                        f"- {active_detail.product.display_name}: {choice_note}"
-                    )
-                resolved.append(
-                    (
-                        product_ref,
-                        active_detail.product,
-                        int(request["quantity"]),
-                        size,
-                    )
-                )
-
-            scope_failures = _cart_add_scope_failures(
-                state.query,
-                [(product_ref, product) for product_ref, product, _, _ in resolved],
-                scope.product_evidence.values(),
-            )
-            blocked.extend(message for _ref, message in scope_failures)
-            out_of_scope = {ref for ref, _message in scope_failures}
-            if blocked:
-                state.cart = self._read_cart(identity.cart_user_id)
-                self._append_product_images(
-                    scope.retrieved,
-                    state.cart,
-                    scope.product_evidence.values(),
-                )
-                # Nothing is written -- the add is all or nothing. But the items
-                # that were established travel with the refusal, so the question
-                # put to the shopper is only the one still open.
-                # An item can pass every per-item gate and still be refused
-                # below as outside this turn's request. Listing it as settled
-                # would tell the shopper not to ask again about the very thing
-                # that failed.
-                ready = [
-                    f"- {product.display_name}"
-                    + (f", size {size}" if size else "")
-                    + f", qty {quantity}"
-                    for ref, product, quantity, size in resolved
-                    if ref not in out_of_scope
-                ]
-                return _format_cart_add_result(
-                    [], failed + blocked, state.cart, ready
-                )
-
-            added: list[str] = []
-            committed: list[dict[str, Any]] = []
-            for product_ref, product, quantity, size in resolved:
-                result = add_cart_item(
-                    AddCartItemInput(
-                        user_id=str(identity.cart_user_id),
-                        product_id=product.product_id,
-                        display_name=product.display_name,
-                        quantity=quantity,
-                        size=size,
-                        unit_price=product.price,
-                        image_url=product.image_url,
-                        # Size is part of the key: adding a 6 and an 8 in one
-                        # turn are two mutations, not a retry of one.
-                        idempotency_key=(
-                            f"{identity.request_id}:add:{product.product_id}"
-                            f":{size or 'onesize'}:{quantity}"
-                        ),
-                    ),
-                    self.config.memory_port,
-                )
-                if result.ok:
-                    committed.append(
-                        {
-                            "operation": "added to cart",
-                            "idempotency_key": (
-                                f"{identity.request_id}:add:"
-                                f"{product.product_id}:{quantity}"
-                            ),
-                            "product_id": product.display_name,
-                            "quantity": quantity,
-                        }
-                    )
-                    # The size travels with the line it went in as. Nothing
-                    # now refuses a size the shopper did not choose, so the
-                    # whole safety story is that it is visible -- to the model
-                    # writing the reply, and through it to the shopper, on the
-                    # turn it happens rather than at checkout.
-                    added.append(
-                        f"- {quantity} x {product.display_name}"
-                        + (f", size {size}" if size else "")
-                        + f" (PRODUCT_REF: {product.product_id})"
-                    )
-                else:
-                    message = (
-                        result.error.message if result.error else "Cart add failed."
-                    )
-                    failed.append(f"- PRODUCT_REF '{product_ref}': {message}")
-
-            state.cart = self._read_cart(identity.cart_user_id)
-            self._append_product_images(
-                scope.retrieved,
-                state.cart,
-                scope.product_evidence.values(),
-            )
-            rendered = _format_cart_add_result(added, failed, state.cart)
-            if choices_from_a_description:
-                rendered += "\n\n" + "\n".join(choices_from_a_description)
-            if not committed:
-                return rendered
-            return rendered, {EFFECTS_KEY: committed}
 
         @tool(
             args_schema=AddCartItemsToolInput,
@@ -2506,58 +2458,8 @@ class DeepAgentsRuntime:
             clutch. A product the shopper asked to see is not an item.
             """
 
-            return normalize_tool_result(_add_cart_items_impl(items))
+            return normalize_tool_result(add_items_to_the_cart(self, state, identity, scope, items))
 
-        # Not a tool. `remove_cart_item_tool` calls this directly, and a
-        # decorated function is a StructuredTool, which is not callable -- so
-        # every removal raised `'StructuredTool' object is not callable` and
-        # the turn died. Its sibling `_add_cart_items_impl` is undecorated for
-        # the same reason.
-        def _remove_cart_item_impl(cart_line_id: str, quantity: int = 1):
-            """Remove a cart line. Use ONLY on explicit shopper intent to remove
-            an item. Requires CART_LINE_ID from get_cart_tool — do not guess.
-            Use update_cart_items_tool to change quantity instead of removing
-            and re-adding.
-            """
-
-            quantity = max(1, int(quantity or 1))
-            cart = self._read_cart(identity.cart_user_id)
-            line = _cart_line_by_id(cart_line_id, cart)
-            if line is None:
-                return f"No cart line with CART_LINE_ID '{cart_line_id}' could be found."
-            result = remove_cart_item(
-                RemoveCartItemInput(
-                    user_id=str(identity.cart_user_id),
-                    cart_line_id=line["cart_line_id"],
-                    product_id=line.get("product_id"),
-                    display_name=line["item"],
-                    quantity=quantity,
-                    idempotency_key=f"{identity.request_id}:remove:{line['cart_line_id']}:{quantity}",
-                ),
-                self.config.memory_port,
-            )
-            state.cart = self._read_cart(identity.cart_user_id)
-            self._append_product_images(
-                scope.retrieved,
-                state.cart,
-                scope.product_evidence.values(),
-            )
-            rendered = _format_cart_remove_result(
-                result,
-                fallback=f"Removed {quantity} {line['item']} from cart.",
-            )
-            if not result.ok:
-                return rendered
-            return committed_effect(
-                rendered,
-                operation="removed from cart",
-                idempotency_key=(
-                    f"{identity.request_id}:remove:{line['cart_line_id']}:{quantity}"
-                ),
-                cart_line_id=line["cart_line_id"],
-                product_id=line["item"],
-                quantity=quantity,
-            )
 
         @tool(return_direct=False, response_format="content_and_artifact")
         def remove_cart_item_tool(cart_line_id: str, quantity: int = 1):
@@ -2568,227 +2470,10 @@ class DeepAgentsRuntime:
             """
 
             return normalize_tool_result(
-                _remove_cart_item_impl(cart_line_id, quantity)
+                remove_a_cart_line(self, state, identity, scope, cart_line_id, quantity)
             )
 
-        def _change_a_line_size_impl(
-            cart_line_id: str,
-            quantity: int,
-            size: str,
-        ):
-            """Move a cart line to another size, in the call that asked for it.
 
-            A size is a separate cart line rather than a property of one, and
-            the cart has no operation that changes it, so the change is an add
-            followed by a remove -- in that order, because a failure between
-            the two must leave the shopper an extra line rather than nothing.
-
-            That protocol used to be prose in this tool's own refusal: send a
-            size and it told the model to add the new size, confirm it, then
-            remove the old line. Two readers never got it right. A turn that
-            went straight to `add_cart_items_tool` never saw the refusal at
-            all, so "change the heels to an 8" added the 8, narrated that the
-            cart now held both, and asked the shopper which to keep -- ending
-            with a pair they had just replaced still in the cart, and no
-            CART_LINE_ID to remove it with, having had no reason to read the
-            cart. A turn that did see it had three calls to sequence, each of
-            which could be the one that dropped.
-
-            Nothing in that sequence needed the model. It had already said
-            everything there is to say -- this line, that size, that many --
-            and the rest is bookkeeping this code can do without asking. So it
-            does, and reports the cart it actually left behind.
-            """
-
-            line = _cart_line_by_id(cart_line_id, state.cart)
-            if line is None:
-                return (
-                    "CART_UPDATE_REFUSED: no line with CART_LINE_ID "
-                    f"'{cart_line_id}' is in this cart. Call get_cart_tool and "
-                    "use a CART_LINE_ID it reports. Nothing was changed."
-                )
-
-            held = str(line.get("size") or "").strip()
-            if held and size.casefold() == held.casefold():
-                # The size asked for is the size they have, so this is a
-                # quantity change that happens to name a size. Answering it as
-                # one keeps the cart to a single line: routing it through the
-                # add below would put a second line on the same size.
-                return _update_cart_items_impl(cart_line_id, quantity)
-            if quantity == 0:
-                return (
-                    "CART_UPDATE_REFUSED: quantity 0 and a new size contradict "
-                    "each other -- one deletes the line, the other replaces it. "
-                    "Send the quantity the shopper is keeping to change the "
-                    "size, or use remove_cart_item_tool to remove the line. "
-                    "Nothing was changed."
-                )
-
-            product_id = str(line.get("product_id") or "")
-            detail = get_product_details(
-                GetProductDetailsInput(product_id=product_id),
-                self.config.retriever_port,
-                timeout_seconds=self.config.catalog_search_timeout_seconds,
-            )
-            if not detail.ok or detail.product is None:
-                return "CART_UPDATE_FAILED: " + _product_detail_failure_message(
-                    detail.error,
-                    cart_validation=True,
-                )
-            # Whether the catalog sells the new size is a fact, and mostly the
-            # same fact the add path checks. A resize that skipped it would
-            # seat a size the shop does not sell by a route the add refuses --
-            # and this is the route a shopper naming a size reaches.
-            size_issue = _cart_resize_issue(detail.product, size)
-            if size_issue:
-                return f"CART_UPDATE_REFUSED: {size_issue}"
-
-            product = detail.product
-            add = add_cart_item(
-                AddCartItemInput(
-                    user_id=str(identity.cart_user_id),
-                    product_id=product_id,
-                    display_name=product.display_name,
-                    quantity=quantity,
-                    size=size,
-                    unit_price=product.price,
-                    image_url=product.image_url,
-                    idempotency_key=(
-                        f"{identity.request_id}:resize:add:{product_id}"
-                        f":{size}:{quantity}"
-                    ),
-                ),
-                self.config.memory_port,
-            )
-            if not add.ok:
-                # Adding first is what makes this failure safe: the line the
-                # shopper has is untouched, so there is nothing half-done to
-                # explain and nothing lost.
-                message = add.error.message if add.error else "Cart add failed."
-                return (
-                    f"CART_UPDATE_FAILED: {message} The cart still holds "
-                    f"{product.display_name} in size {held or 'onesize'}, and "
-                    "nothing was removed."
-                )
-
-            remove = remove_cart_item(
-                RemoveCartItemInput(
-                    user_id=str(identity.cart_user_id),
-                    cart_line_id=cart_line_id,
-                    quantity=int(line.get("amount") or 1),
-                    product_id=product_id,
-                    display_name=product.display_name,
-                    idempotency_key=(
-                        f"{identity.request_id}:resize:remove:{cart_line_id}"
-                    ),
-                ),
-                self.config.memory_port,
-            )
-
-            state.cart = self._read_cart(identity.cart_user_id)
-            self._append_product_images(
-                scope.retrieved,
-                state.cart,
-                scope.product_evidence.values(),
-            )
-            # Two mutations, recorded as two. A turn that dies after this still
-            # has to be able to say what the cart holds, and on the unhappy
-            # path what it holds is both sizes.
-            committed: list[dict[str, Any]] = [
-                {
-                    "operation": "added to cart",
-                    "idempotency_key": (
-                        f"{identity.request_id}:resize:add:{product_id}"
-                        f":{size}:{quantity}"
-                    ),
-                    "product_id": product.display_name,
-                    "quantity": quantity,
-                }
-            ]
-            if remove.ok:
-                committed.append(
-                    {
-                        "operation": "removed from cart",
-                        "idempotency_key": (
-                            f"{identity.request_id}:resize:remove:{cart_line_id}"
-                        ),
-                        "cart_line_id": cart_line_id,
-                        "product_id": product.display_name,
-                    }
-                )
-            rendered = _format_size_change_result(
-                display_name=product.display_name,
-                from_size=held,
-                to_size=size,
-                quantity=quantity,
-                cart=state.cart,
-                old_line_removed=remove.ok,
-                old_line_id=cart_line_id,
-            )
-            return rendered, {EFFECTS_KEY: committed}
-
-        def _update_cart_items_impl(
-            cart_line_id: str,
-            quantity: int,
-            size: str | None = None,
-        ):
-            """Change the quantity or the size of an item already in the cart.
-            Use ONLY when the shopper explicitly asks for the change. Do NOT
-            use for initial adds — use add_cart_items_tool. Do NOT guess the
-            CART_LINE_ID; call get_cart_tool first if you do not have one.
-            """
-
-            if size is not None and str(size).strip():
-                return _change_a_line_size_impl(
-                    cart_line_id,
-                    quantity,
-                    str(size).strip(),
-                )
-
-            if quantity == 0:
-                # Deleting is a different intent from setting a quantity, and
-                # it has its own tool. The size case used to be routed through
-                # here too, and the model reached for the only move available
-                # -- quantity 0 -- which deleted the line and never added the
-                # replacement: the shopper corrected their size and lost the
-                # item. A size now has a route of its own, above.
-                return (
-                    "CART_UPDATE_REFUSED: quantity 0 would delete this line, and "
-                    "this tool sets quantities. If the shopper wants the line "
-                    "gone, use remove_cart_item_tool. If they are changing a "
-                    "SIZE, send the new size in `size` with the quantity to "
-                    "keep, and this tool makes the change."
-                )
-
-            result = update_cart_item(
-                UpdateCartItemInput(
-                    user_id=str(identity.cart_user_id),
-                    cart_line_id=cart_line_id,
-                    quantity=quantity,
-                    idempotency_key=(
-                        f"{identity.request_id}:update:{cart_line_id}:{quantity}"
-                    ),
-                ),
-                self.config.memory_port,
-            )
-            state.cart = self._read_cart(identity.cart_user_id)
-            self._append_product_images(
-                scope.retrieved,
-                state.cart,
-                scope.product_evidence.values(),
-            )
-            rendered = _format_update_cart_result(result, state.cart)
-            if not result.ok:
-                return rendered
-            return committed_effect(
-                rendered,
-                operation="cart quantity updated",
-                idempotency_key=(
-                    f"{identity.request_id}:update:{cart_line_id}:{quantity}"
-                ),
-                cart_line_id=cart_line_id,
-                quantity=quantity,
-            )
 
         @tool(
             args_schema=_UpdateCartItemsInput,
@@ -2802,11 +2487,14 @@ class DeepAgentsRuntime:
         ):
             """Change one cart line: its quantity, its size, or both. One call
             moves the line, so never add a size and remove a line to change
-            one. Requires CART_LINE_ID from get_cart_tool.
+            one. Moving replaces: the line stops holding the size it held. A
+            size the shopper wants as well as that one is a second line, so
+            that is add_cart_items_tool and not this.
+            Requires CART_LINE_ID from get_cart_tool.
             """
 
             return normalize_tool_result(
-                _update_cart_items_impl(cart_line_id, quantity, size)
+                update_a_cart_line(self, state, identity, scope, cart_line_id, quantity, size)
             )
 
         @tool(args_schema=_DescribeCatalogInput, return_direct=False)
@@ -2974,8 +2662,18 @@ class DeepAgentsRuntime:
                 )
             )
 
-        @tool(args_schema=_CheckAvailabilityInput, return_direct=False)
-        def check_product_availability_tool(items) -> str:
+        # ``content_and_artifact`` because a repeat is refused with a typed
+        # control signal, and a signal rides on the artifact. Returning the
+        # tuple from a tool declared without it put the pair in the content
+        # instead: the model read ``["STOP_TOOL_USE: ...", {...}]``, the
+        # runtime saw no signal at all, and one turn made this call sixteen
+        # times.
+        @tool(
+            args_schema=_CheckAvailabilityInput,
+            return_direct=False,
+            response_format="content_and_artifact",
+        )
+        def check_product_availability_tool(items):
             """Check whether products are available or in stock. Use ONLY when
             the shopper explicitly asks about availability, stock, or a specific
             size. Requires a PRODUCT_REF established by search or
@@ -2989,6 +2687,13 @@ class DeepAgentsRuntime:
                 item if isinstance(item, dict) else item.model_dump()
                 for item in items
             ]
+            asked = json.dumps(requests, sort_keys=True)
+            held = scope.answer_already_given(
+                "check_product_availability_tool",
+                asked,
+            )
+            if held is not None:
+                return normalize_tool_result(held)
 
             def _one(entry: dict[str, Any]) -> str:
                 product_ref = entry.get("product_ref") or ""
@@ -3014,12 +2719,21 @@ class DeepAgentsRuntime:
             # roughly 8.7s each -- enough to exhaust a turn's step budget before
             # the shopper got an answer.
             if len(requests) == 1:
-                return _one(requests[0])
-            with ThreadPoolExecutor(max_workers=len(requests)) as pool:
-                return "\n\n".join(pool.map(_one, requests))
+                answer = _one(requests[0])
+            else:
+                with ThreadPoolExecutor(
+                    max_workers=min(len(requests), 8)
+                ) as pool:
+                    answer = "\n\n".join(pool.map(_one, requests))
+            scope.remember_answer(
+                "check_product_availability_tool",
+                asked,
+                answer,
+            )
+            return normalize_tool_result(answer)
 
-        @tool(return_direct=False)
-        def check_active_promotions_tool() -> str:
+        @tool(return_direct=False, response_format="content_and_artifact")
+        def check_active_promotions_tool():
             """Check whether a sale, discount, or promotion is currently active.
             Use ONLY when the shopper explicitly asks about promotion status. Do
             NOT use for ordinary affordable browsing, a price ceiling, price
@@ -3027,7 +2741,12 @@ class DeepAgentsRuntime:
             sale status.
             """
 
-            return _format_promotions_result(check_active_promotions())
+            held = scope.answer_already_given("check_active_promotions_tool", "")
+            if held is not None:
+                return normalize_tool_result(held)
+            answer = _format_promotions_result(check_active_promotions())
+            scope.remember_answer("check_active_promotions_tool", "", answer)
+            return normalize_tool_result(answer)
 
         @tool(return_direct=False)
         def view_cart_total_tool() -> str:
@@ -3285,11 +3004,24 @@ class DeepAgentsRuntime:
 
         api_key_env = getattr(self.config, "llm_api_key_env", None)
         api_key = os.environ.get(api_key_env, "") if api_key_env else "not-needed"
+        # Sampling is settable so the repetition failure can be bisected.
+        #
+        # J01 turn 16 emitted twelve model steps with empty text content, each
+        # a byte-identical tool call against a byte-identical result, and died
+        # on the recursion limit. That is degenerate repetition under
+        # likelihood-maximising decoding, and at `temperature=0` with no
+        # penalty it cannot be told apart from a model that will not stop. The
+        # default stays 0 so every measurement taken at 0 still holds.
+        sampling: dict[str, Any] = {}
+        frequency_penalty = os.environ.get("APP_LLM_FREQUENCY_PENALTY", "")
+        if frequency_penalty:
+            sampling["frequency_penalty"] = float(frequency_penalty)
         return ChatOpenAI(
             model=self.config.llm_name,
             base_url=self.config.llm_port,
             api_key=api_key or "not-needed",
-            temperature=0,
+            temperature=float(os.environ.get("APP_LLM_TEMPERATURE", "0")),
+            **sampling,
             # Uncapped output let one call run to the model's own ceiling.
             # Callers pick a smaller one where that fits; this is the default.
             max_tokens=(
@@ -3836,6 +3568,16 @@ Rules:
   semantic wording. For outfit requests
   with multiple required item types, send one focused role per distinct
   taxonomy scope in the same call, then stop and synthesize from those results.
+- Every product this turn's search returned is already on the shopper's screen
+  as a picture, in the order the evidence lists it. Name all of them, in that
+  same order, and give the styling guidance after the list rather than instead
+  of part of it. Two reasons, and both are about the shopper rather than
+  completeness for its own sake. A reply that writes up two of six reads as
+  though the shop held two, while six pictures sit beside the words. And the
+  shopper says "the first one" about what they can see, so a list that skips or
+  reorders makes their next sentence mean something you did not intend. Say
+  what each one is; then say which suits the occasion and why, and say plainly
+  if only one or two really do.
 - Advice is not an answer on its own either. A layering formula, a packing list
   or a list of what to look for, with no pieces from this shop beside it, is a
   wardrobe lecture rather than shopping. Search and show real items in every
@@ -4151,7 +3893,7 @@ Rules:
         # one" meaning the second shown to the shopper and the second ranked to
         # the resolver.
         state.product_results = _in_presentation_order(
-            state.product_results or [], state.response or ""
+            state.product_results or [], state.response or "", state.product_groups
         )
         state.retrieved = _images_in_product_order(
             state.retrieved or {}, state.product_results
@@ -4171,6 +3913,7 @@ Rules:
             output = TurnReplayOutput(
                 product_results=(state.product_results if present_products else []),
                 retrieved=(state.retrieved if present_products else {}),
+                product_groups=(state.product_groups if present_products else []),
                 agent_diagnostics=state.agent_diagnostics,
                 selected_skill_names=state.selected_skill_names,
             )
@@ -4395,7 +4138,6 @@ Rules:
 #: lane. catalog_text is the prose serialisation of the same attributes and is
 #: deliberately not forwarded -- it carries a marketing summary, and separating
 #: the two would mean parsing prose.
-
 
 
 

@@ -91,7 +91,7 @@ def a_catalog_like_the_real_one() -> CatalogCapabilities:
 def search_tool_schema(capabilities: CatalogCapabilities | None = None) -> str:
     """The search tool's JSON schema, exactly as the model receives it."""
 
-    from chain_server.src.turn_support import _search_catalog_scopes_input_model
+    from chain_server.src.tool_schemas import _search_catalog_scopes_input_model
 
     return json.dumps(
         _search_catalog_scopes_input_model(

@@ -7,8 +7,6 @@ from typing import Any
 
 import pytest
 import requests
-from pydantic import ValidationError
-
 from chain_server.src.conversation_products import (
     ConversationProductMatch,
     ConversationProductsClient,
@@ -21,6 +19,7 @@ from chain_server.src.conversation_products import (
     format_historical_product_index,
     format_product_resolution,
 )
+from pydantic import ValidationError
 from shared.commerce_contracts import Money, ProductSummary
 
 
@@ -220,13 +219,13 @@ def test_clarification_carries_the_facts_that_tell_candidates_apart() -> None:
     answer was already held -- it just was not handed back.
     """
 
-    from shared.commerce_contracts import Money, ProductSummary
     from chain_server.src.conversation_products import (
         ConversationProductMatch,
         ProductReferenceResolution,
         ResolveConversationProductsResult,
         format_product_resolution,
     )
+    from shared.commerce_contracts import Money, ProductSummary
 
     def _dress(ref: str, name: str, colour: str) -> ProductSummary:
         return ProductSummary(
@@ -339,6 +338,9 @@ def test_historical_index_formatter_is_compact_and_ignores_bad_rows() -> None:
     assert rendered.startswith(
         "HISTORICAL PRODUCT INDEX (read-only, most recently shown first):"
     )
+    # How to read the numbers, beside them. Two products numbered 1 under
+    # different headings had the model asking which was meant.
+    assert "Numbered from 1 under each [heading]" in rendered
     assert "set=set-2 turn=2" in rendered
     assert "1:Structured Tote [tote_bags] <bag-1>" in rendered
     assert "2:Cobalt Crossbody [crossbody_bags] <bag-2>" in rendered
@@ -367,6 +369,10 @@ def test_historical_index_bound_keeps_newest_sets() -> None:
     assert "set=set-1" not in rendered
     assert "earlier historical products omitted" in rendered
     assert len(rendered) <= 256
+    # The showings won the space. How to read the numbers is guidance about
+    # them, so an index that kept the rule and dropped every product would
+    # have been the worse half to keep.
+    assert "Numbered from 1 under each" not in rendered
 
 
 def test_evidence_adds_only_unique_resolved_products() -> None:

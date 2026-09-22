@@ -1901,6 +1901,66 @@ def test_a_name_placed_by_its_last_word_does_not_cancel_the_search(
     )
 
 
+def test_where_the_judge_has_placed_a_role_the_string_rule_is_not_consulted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The judge is the last word on where a role goes.
+
+    `_resolved_against_the_catalogue` writes the judge's answer into the
+    taxonomy three steps before this gate. Asked about the Ultra Soft Cashmere
+    Blend Sweater Blouse in P26, the deployed judge answered sweaters and
+    blouses, five times in five. Had the model called that role "blouses", a
+    phrase the catalog advertises whole, the string rule would want blouses
+    alone and refuse the scope the judge had just written.
+    """
+
+    capabilities = _capabilities()
+    capabilities.taxonomy.categories["apparel"].subcategories = {
+        "sweaters": CatalogTaxonomySubcategory(product_count=1),
+        "blouses": CatalogTaxonomySubcategory(product_count=1),
+    }
+    capabilities.filters["product_type"].values = ["sweaters", "blouses"]
+
+    sweater = ProductSummary(
+        product_id="s1",
+        display_name="Ultra Soft Cashmere Blend Sweater Blouse",
+        category="sweaters",
+        price=Money(amount=39.99, currency="USD"),
+    )
+    monkeypatch.setattr(
+        catalog_search_mod,
+        "execute_catalog_search",
+        lambda *_a, **_k: SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[sweater]),
+            fallback_attempted=False,
+            fallback_used=False,
+        ),
+    )
+
+    name = "Ultra Soft Cashmere Blend Sweater Blouse"
+    ctx = _context(
+        f"add the {name} to my cart",
+        capabilities=capabilities,
+        judge=_Judge({"blouses": ["sweaters", "blouses"]}),
+    )
+
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query=name,
+                requested_product_type="blouses",
+                taxonomy={"category": ["apparel"], "subcategory": ["blouses"]},
+            )
+        ],
+    )
+
+    assert _rejection_codes(result) == []
+    assert sweater.display_name in (
+        result[0] if isinstance(result, tuple) else result
+    )
+
+
 def test_a_narrowed_role_is_not_told_to_widen() -> None:
     """A role with no filter behind it gets the narrowing advice only. The
     wider shapes are for a request that named no type at all."""

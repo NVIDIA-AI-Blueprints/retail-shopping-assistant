@@ -957,11 +957,32 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         # Rank on it, disclose it, do not abandon the search.
         unconfirmable_requirements = list(unadvertised_requirements)
 
-    advertised_taxonomy_issue = _advertised_taxonomy_scope_issue(
-        request.requested_product_type,
-        request.taxonomy_status,
-        request.taxonomy,
-        capabilities,
+    # Where the catalogue has placed this role, this gate has nothing to add.
+    # `_resolved_against_the_catalogue` runs three steps earlier, rewrites the
+    # taxonomy to the subcategories the judge named, and is the last word on
+    # it. What follows reads requested_product_type as a type instead, which
+    # for a phrase the catalog does not advertise means reading it by its last
+    # word -- and then refuses the very scope that step just wrote.
+    #
+    # Asked for the Ultra Soft Cashmere Blend Sweater Blouse, the judge
+    # answered sweaters and blouses, five times in five, declining to pick a
+    # shelf for what is a sweater's name. The taxonomy was widened to both.
+    # This gate read the name's last word, wanted blouses alone, did not find
+    # it, and cancelled the search twice. The better answer was already in
+    # hand and was overruled by a string.
+    #
+    # Unjudged is the case this is still for. A judge that cannot be reached
+    # leaves every scope unruled, and an unruled scope is decided by the gates
+    # that decided it before the judge existed -- this among them.
+    advertised_taxonomy_issue = (
+        None
+        if attempt.judged_subcategories is not None
+        else _advertised_taxonomy_scope_issue(
+            request.requested_product_type,
+            request.taxonomy_status,
+            request.taxonomy,
+            capabilities,
+        )
     )
     if advertised_taxonomy_issue:
         if shopper_stated_scope:

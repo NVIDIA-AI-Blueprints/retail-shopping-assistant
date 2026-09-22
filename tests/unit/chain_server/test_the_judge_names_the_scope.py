@@ -213,3 +213,18 @@ def test_a_description_may_be_answered_null_but_a_garment_never() -> None:
     assert "names no kind of garment" in prompt
     assert "never null" in prompt
     assert "or null" in prompt
+
+
+def test_a_role_in_a_look_is_not_a_garment_name() -> None:
+    """ "Layer" alone was read as a garment the shop does not sell.
+
+    Empty every time, so the role closed as not carried while the model had
+    scoped it to sweaters, blouses and camisoles -- and it resent that search
+    ten times in one turn, because nothing it could see explained the refusal.
+    """
+
+    from chain_server.src.vocabulary_judge import _prompt
+
+    prompt = _prompt([ScopeQuestion("layer")], [], _SUBCATEGORIES, _COLOURS)
+
+    assert "the part a piece plays in a look" in prompt

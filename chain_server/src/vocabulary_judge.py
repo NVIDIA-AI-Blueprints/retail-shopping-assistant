@@ -234,6 +234,15 @@ def _prompt(
             "names a garment is never null, whether or not this catalogue "
             "sells it: trousers, a scarf and a raincoat are garments, and "
             '"hiking boots" names boots.',
+            # The bare word "layer" read as a garment this shop does not sell:
+            # empty every time, and the model, which had scoped it to sweaters,
+            # blouses and camisoles, resent the same search ten times in one
+            # turn. Measured on seven role phrases, five of them not named
+            # here: 0 empty after, and the eight uncarried garments still
+            # empty every time.
+            " - A word for the part a piece plays in a look -- a layer, a "
+            "piece, a cover, an extra -- is not a garment name either: answer "
+            "null.",
             "",
             "TASK A words:",
         ]

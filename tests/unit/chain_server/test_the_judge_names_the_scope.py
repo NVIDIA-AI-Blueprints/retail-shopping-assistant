@@ -78,6 +78,23 @@ def test_an_empty_list_and_an_unasked_word_are_not_the_same() -> None:
     assert verdict.subcategories_for("belts") is None
 
 
+def test_a_phrase_that_names_no_garment_is_not_ruled_on() -> None:
+    """Null is "not mine to rule on", and must not read as "not carried".
+
+    "Light layer" is the model's description of a role it had already scoped
+    to sweaters, blouses and camisoles. Answered empty, it closed that role
+    and three more, and the shopper was told the shop sells no dresses,
+    skirts or jumpsuits. Answered null, the role searches what the model sent.
+    """
+
+    verdict = _verdict(
+        '{"a": {"light layer": null, "jeans": []}}', "light layer", "jeans"
+    )
+
+    assert verdict.subcategories_for("light layer") is None
+    assert verdict.subcategories_for("jeans") == []
+
+
 def test_a_value_this_catalogue_lacks_is_discarded() -> None:
     """A filter naming a value the catalogue does not hold matches nothing.
 
@@ -178,3 +195,21 @@ def test_the_prompt_does_not_recommend_the_empty_answer() -> None:
     assert "will be told plainly" not in prompt
     assert "jeans are not skirts" in prompt.lower()
     assert "empty list" in prompt
+
+
+def test_a_description_may_be_answered_null_but_a_garment_never() -> None:
+    """Both halves of the rule, because either alone was measured to fail.
+
+    Offering null for descriptions without saying garments never get it sent
+    "jacket" back as null three times in three, which would search sweaters
+    for a jacket the shop does not sell. The examples are deliberately not
+    the words the rule was measured on.
+    """
+
+    from chain_server.src.vocabulary_judge import _prompt
+
+    prompt = _prompt([ScopeQuestion("light layer")], [], _SUBCATEGORIES, _COLOURS)
+
+    assert "names no kind of garment" in prompt
+    assert "never null" in prompt
+    assert "or null" in prompt

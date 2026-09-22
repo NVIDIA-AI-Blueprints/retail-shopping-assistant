@@ -2607,7 +2607,10 @@ def search_catalog(
     scopes = _one_scope_per_category(ctx, list(scopes))
     attempts: list[_Attempt] = []
     for raw in scopes:
-        fields = raw if isinstance(raw, dict) else raw.model_dump()
+        # Unset fields are left out, not carried as None. Dumped whole, every
+        # constraint the model did not set arrived as None, and was read
+        # downstream as the word "None" the catalog could not filter on.
+        fields = raw if isinstance(raw, dict) else raw.model_dump(exclude_none=True)
         attempt = _Attempt(
             semantic_query=fields.get("semantic_query", ""),
             requested_product_type=fields.get("requested_product_type"),

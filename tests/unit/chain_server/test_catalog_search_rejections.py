@@ -34,7 +34,10 @@ from chain_server.src.control_signals import (
     REJECTIONS_KEY,
     SearchRejection,
 )
-from chain_server.src.tool_schemas import _search_catalog_tool_input_model
+from chain_server.src.tool_schemas import (
+    _search_catalog_scopes_input_model,
+    _search_catalog_tool_input_model,
+)
 from chain_server.src.turn_scope import TurnScope
 from chain_server.src.vocabulary_judge import VocabularyVerdict
 from shared.commerce_contracts import (
@@ -983,6 +986,35 @@ def test_a_payload_the_catalog_can_honour_is_left_exactly_as_it_came() -> None:
     text = result[0] if isinstance(result, tuple) else result
     assert "SEARCH_WORDS_RANKED_NOT_FILTERED" not in text
     assert _rejection_codes(result) == []
+
+
+def test_a_constraint_left_unset_is_not_a_word_set_aside() -> None:
+    """The scope as the tool delivers it: a model instance, not a dict.
+
+    Dumped whole, it carries every constraint field the catalog advertises,
+    the unset ones as None. Those were read as the word "None" and disclosed
+    on 31 of 33 live searches as unfilterable words to check the results
+    against -- on searches that had asked for nothing at all.
+    """
+
+    ctx = _context("show me dresses")
+    arguments = _search_catalog_scopes_input_model(ctx.capabilities).model_validate(
+        {
+            "scopes": [
+                _scope(
+                    semantic_query="dresses",
+                    requested_product_type="dresses",
+                    taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
+                    scope_complete=True,
+                )
+            ]
+        }
+    )
+
+    result = search_catalog(ctx, arguments.scopes)
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert "SEARCH_WORDS_RANKED_NOT_FILTERED" not in text
 
 
 def test_a_word_the_catalog_cannot_filter_on_does_not_cost_the_role(

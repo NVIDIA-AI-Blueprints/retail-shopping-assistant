@@ -46,11 +46,13 @@ turns:
       cart:
         - {name: Vivienne Lace Dress, size: "2", qty: 1}
 
-  # 8. Two sizes are two lines, not a quantity of two.
-  - say: actually add it in a 4 as well
+  # 8. A size change edits the line it is about. One dress in a 4, not a 2 and
+  #    a 4 -- the shopper is correcting the size, not buying twice. "it" is
+  #    unambiguous here because the cart holds exactly one thing, which is
+  #    what makes this a cart edit rather than a reference puzzle.
+  - say: replace it with a size 4
     expect:
       cart:
-        - {name: Vivienne Lace Dress, size: "2", qty: 1}
         - {name: Vivienne Lace Dress, size: "4", qty: 1}
 
   # 9. A one-size product is never asked its size.

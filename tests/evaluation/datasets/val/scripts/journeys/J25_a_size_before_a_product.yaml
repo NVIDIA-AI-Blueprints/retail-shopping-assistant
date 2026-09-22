@@ -1,0 +1,49 @@
+id: J25_a_size_before_a_product
+covers: [product-discovery, sizes, filters, honesty]
+why: >
+  A size named before any product: "show me clothes only in size 4". The size
+  is a search filter here and not a cart choice, and "clothes" is apparel --
+  not bags, and not sunglasses, which have no size to be a 4 in.
+
+  Every other journey avoids opening this way. J21 says so in a comment: a
+  size stated as a search filter can carry into the cart, so it keeps size out
+  of its browse turn to protect a later one. That leaves the shape untested.
+
+  Turn 2 is the half worth having either way. The shopper said "size 4" out
+  loud, so a later add is entitled to use it rather than asking again -- a
+  size the conversation settles is settled whenever it was said.
+
+  KNOWN FAILURE, 2026-09-22. Turn 1 fails intermittently, and the cause is the
+  vocabulary judge, not the search. Asked what "clothes" covers, it answers
+  wrongly in both directions and does so consistently: alone it returns an
+  empty list five times in five, and beside any second word it returns all
+  twenty subcategories five times in five -- tote bags, sunglasses and
+  bracelets among them. The right answer, the six apparel subcategories, never
+  appears.
+
+  An empty verdict is read as "the shop does not stock this", so the reply
+  becomes "This catalog doesn't carry clothes" about the largest department in
+  the shop. The schema rejection visible in the transcript is downstream of
+  that, and a clearer rejection message would not help: the model would be
+  told again that clothes are not carried.
+
+  The same fault is already recorded for "bag" in
+  scripts/does_the_judge_know_a_bag.py, which came back empty on six of seven
+  deployed turns. Every umbrella example in the judge's prompt sits inside one
+  department -- shoes, tops, jewelry -- and a word spanning a whole department
+  has nothing to pattern on. Teaching it the word was tried and reverted: it
+  flips the answer into the second column rather than the right one.
+
+  Kept failing on purpose. It is a real defect and the journey is the record
+  of it.
+turns:
+  - say: show me clothes only in size 4
+    expect:
+      products_min: 1
+      every_product: {category: apparel}
+
+  - say: add the second one to my cart
+    expect:
+      cart_lines: 1
+      cart:
+        - {size: "4", qty: 1}

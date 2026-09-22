@@ -148,8 +148,6 @@ def _advertised_scope_match(
         default=None,
     )
 
-
-
 def _duplicates_unavailable_product_type(
     requirements: Any,
     requested_product_type: str | None,
@@ -387,5 +385,3 @@ def _exact_taxonomy_issue(
         "A single taxonomy value must match requested_product_type. If no "
         "advertised value faithfully represents it, ask a clarification instead"
     )
-
-

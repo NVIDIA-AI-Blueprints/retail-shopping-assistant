@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+# ruff: noqa: B008 - FastAPI dependencies intentionally use Depends in defaults.
 
 import json
 import time
@@ -10,6 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from .conversations import create_conversation_router, sweep_abandoned_turns
 from .database import (
@@ -264,7 +266,7 @@ def _cart_item_for_add(
 
 
 @app.get("/user/{user_id}")
-def get_user(user_id: int, db=Depends(get_db)):
+def get_user(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     cart_items = db.query(CartItem).filter(CartItem.id == user_id).all()
     if not user:
@@ -272,7 +274,7 @@ def get_user(user_id: int, db=Depends(get_db)):
     return {"id": user.id, "context": user.context, "cart": [_cart_item_dict(item) for item in cart_items]}
 
 @app.get("/user/{user_id}/cart")
-def report_cart(user_id: int, db=Depends(get_db)):
+def report_cart(user_id: int, db: Session = Depends(get_db)):
     cart_items = db.query(CartItem).filter(CartItem.user_id == user_id).all()
     if not cart_items:
         return {
@@ -286,7 +288,7 @@ def report_cart(user_id: int, db=Depends(get_db)):
         }
 
 @app.get("/user/{user_id}/context")
-def get_context(user_id: int, db=Depends(get_db)):
+def get_context(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return {
@@ -303,7 +305,7 @@ def get_context(user_id: int, db=Depends(get_db)):
 def add_to_cart(
     user_id: int,
     item_update: ItemUpdate,
-    db=Depends(get_db),
+    db: Session = Depends(get_db),
 ):
     item = item_update.item
     amount = item_update.amount
@@ -369,7 +371,7 @@ def add_to_cart(
 def remove_cart(
     user_id: int,
     item_update: CartRemoveUpdate,
-    db=Depends(get_db),
+    db: Session = Depends(get_db),
 ):
     amount = item_update.amount
     stable_target_id = item_update.cart_line_id
@@ -429,7 +431,7 @@ def update_cart_quantity(
     user_id: int,
     cart_line_id: str,
     quantity_update: CartQuantityUpdate,
-    db=Depends(get_db),
+    db: Session = Depends(get_db),
 ):
     canonical_digest = _cart_mutation_digest(
         "update",
@@ -479,7 +481,7 @@ def update_cart_quantity(
         raise
 
 @app.post("/user/{user_id}/cart/clear")
-def clear_cart(user_id: int, db=Depends(get_db)):
+def clear_cart(user_id: int, db: Session = Depends(get_db)):
     cart_items = db.query(CartItem).filter(CartItem.user_id == user_id).all()
     if not cart_items:
         raise HTTPException(status_code=404, detail="No items found in cart")
@@ -495,7 +497,7 @@ def clear_cart(user_id: int, db=Depends(get_db)):
 def add_context(
     user_id: int,
     context_update: ContextUpdate,
-    db=Depends(get_db),
+    db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -513,7 +515,7 @@ def add_context(
 def replace_context(
     user_id: int,
     context_update: ContextUpdate,
-    db=Depends(get_db),
+    db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -528,7 +530,7 @@ def replace_context(
         }
 
 @app.post("/user/{user_id}/context/clear")
-def clear_context(user_id: int, db=Depends(get_db)):
+def clear_context(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -540,7 +542,7 @@ def clear_context(user_id: int, db=Depends(get_db)):
         }
 
 @app.post("/user/{user_id}/clear")
-def clear_user(user_id: int, db=Depends(get_db)):
+def clear_user(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -552,7 +554,7 @@ def clear_user(user_id: int, db=Depends(get_db)):
         }
 
 @app.get("/ready")
-def readiness_check(db=Depends(get_db)):
+def readiness_check(db: Session = Depends(get_db)):
     """Readiness, which unlike /health is allowed to say no.
 
     Liveness answers "is this process alive"; readiness answers "should this pod
@@ -575,7 +577,7 @@ def readiness_check(db=Depends(get_db)):
         raise HTTPException(
             status_code=503,
             detail=f"database unavailable: {type(exc).__name__}",
-        )
+        ) from exc
 
     if applied is None or applied < expected:
         raise HTTPException(

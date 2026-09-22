@@ -159,6 +159,7 @@ class QueryResponse(BaseModel):
     timings: dict[str, float] = {}
     token_usage: dict[str, int] = Field(default_factory=dict)
     model_usage: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    guardrail_report: dict[str, Any] = Field(default_factory=dict)
     agent_diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -169,6 +170,7 @@ _MODEL_LABELS = {
     "image_embedding": "Image embedding",
     "content_safety": "Content safety",
     "topic_control": "Topic control",
+    "multimodal_safety": "Multimodal safety",
 }
 
 
@@ -194,7 +196,7 @@ def create_initial_state(request: QueryRequest) -> State:
 async def process_query_stream(request: QueryRequest):
     """
     Stream responses to user queries in real-time.
-    
+
     This endpoint provides streaming responses for responsive UIs
     and chat-like experiences.
     """
@@ -238,13 +240,13 @@ async def process_query_stream(request: QueryRequest):
         raise
     except Exception as e:
         logger.error(f"Error processing streaming query: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 @app.post("/query/timing", response_model=QueryResponse)
 async def process_query_timing(request: QueryRequest):
     """
     Process a query and return detailed timing information.
-    
+
     This endpoint is useful for performance analysis and debugging.
     """
     try:
@@ -286,6 +288,7 @@ async def process_query_timing(request: QueryRequest):
             timings=out_state_dict["timings"],
             token_usage=out_state_dict.get("token_usage", {}),
             model_usage=out_state_dict.get("model_usage", {}),
+            guardrail_report=out_state_dict.get("guardrail_report", {}),
             agent_diagnostics=out_state_dict.get("agent_diagnostics", {}),
         )
         response.timings["total"] = total_time
@@ -297,7 +300,7 @@ async def process_query_timing(request: QueryRequest):
         raise
     except Exception as e:
         logger.error(f"Error processing timing query: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 @app.get("/ready")
 async def readiness_check():
@@ -349,6 +352,16 @@ async def capabilities():
             "vlm_enabled": config.vlm_enabled,
         },
         "models": _model_capabilities(),
+        "guardrails": {
+            "default_enabled": config.guardrails_enabled,
+            "failure_mode": config.guardrails_failure_mode,
+            "speculative_main_model_enabled": (
+                config.guardrails_speculative_main_model_enabled
+            ),
+            "speculative_main_model_scope": "text_only",
+            "supported_modalities": config.guardrails_supported_modalities,
+            "request_override_supported": True,
+        },
         "catalog": catalog.model_dump(),
     }
 
@@ -698,10 +711,7 @@ def _mime_from_data_url(data: str) -> str:
 
 def _data_url_byte_count(data: str) -> int:
     match = _DATA_URL_RE.match((data or "").strip())
-    if not match:
-        encoded = (data or "").strip()
-    else:
-        encoded = match.group(2).strip()
+    encoded = (data or "").strip() if not match else match.group(2).strip()
     encoded += "=" * (-len(encoded) % 4)
     try:
         return len(base64.b64decode(encoded, validate=True))

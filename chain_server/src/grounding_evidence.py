@@ -500,5 +500,3 @@ def _is_tool_evidence_message(message: Any, content: str) -> bool:
     ):
         return False
     return message_type == "tool" or role == "tool"
-
-

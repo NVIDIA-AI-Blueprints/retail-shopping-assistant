@@ -9,6 +9,7 @@ export interface MessageData {
   role: MessageRole;
   content: string | ImageContent | ImageRowContent | MediaAnalysis;
   productName: string;
+  guardrailReport?: GuardrailReport;
 }
 
 export type MessageRole = 
@@ -78,12 +79,13 @@ export interface ChatMessageProps {
   productName: string;
   selectedProductName?: string;
   onProductSelect?: (product: ProductSummary) => void;
+  guardrailReport?: GuardrailReport;
 }
 
 export interface ApiRequest {
   user_id: number;
   query: string;
-  guardrails: boolean;
+  guardrails?: boolean;
   image: string;
   media?: MediaAttachment[];
   image_bool: boolean;
@@ -189,6 +191,12 @@ export interface CatalogTaxonomyCapabilities {
 export interface CapabilitiesResponse {
   media_input: MediaCapabilities;
   models?: ModelCapabilities;
+  guardrails?: {
+    default_enabled: boolean;
+    failure_mode: 'open' | 'closed';
+    supported_modalities: Array<'text' | 'image' | 'video'>;
+    request_override_supported: boolean;
+  };
   catalog?: CatalogCapabilities;
 }
 
@@ -197,6 +205,7 @@ export interface ApiResponse {
   images: Record<string, string>;
   timings: Record<string, number>;
   token_usage?: TokenUsage;
+  guardrail_report?: GuardrailReport;
   agent_diagnostics?: AgentDiagnostics;
 }
 
@@ -216,10 +225,8 @@ export interface CartLine {
   unit_price?: number | null;
 }
 
-/** What the vision model saw, as the server projects it for display. */
 export interface MediaAnalysisItem {
   label: string;
-  /** How many of the model's own searches chase this item. 0 = seen, not searched. */
   pursued: number;
 }
 
@@ -239,7 +246,7 @@ export interface CartSnapshot {
 }
 
 export interface StreamingChunk {
-  type: 'content' | 'images' | 'products' | 'metrics' | 'media_analysis' | 'error';
+  type: 'content' | 'images' | 'products' | 'metrics' | 'progress' | 'media_analysis' | 'error';
   payload: string | Record<string, string> | ProductSummary[] | InferenceMetricsPayload;
   timestamp: number;
 }
@@ -249,7 +256,22 @@ export interface InferenceMetricsPayload {
   total_seconds?: number;
   token_usage?: TokenUsage;
   model_usage?: ModelUsage;
+  guardrail_report?: GuardrailReport;
   agent_diagnostics?: AgentDiagnostics;
+}
+
+export interface GuardrailCheckResult {
+  stage: 'input' | 'output';
+  status: 'allow' | 'block' | 'error';
+  violated_categories: string[];
+  latency_ms: number;
+  model_calls: Record<string, number>;
+}
+
+export interface GuardrailReport {
+  enabled: boolean;
+  failure_mode: 'open' | 'closed';
+  checks: GuardrailCheckResult[];
 }
 
 export interface AgentToolCallDiagnostic {

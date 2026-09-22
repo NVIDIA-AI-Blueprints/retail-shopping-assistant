@@ -101,33 +101,40 @@ def _record_language_model_failure(state: State) -> None:
 
 
 
-def _record_safety_model_usage(state: State, mode: str, *, ok: bool = True) -> None:
+def _record_safety_model_usage(
+    state: State,
+    mode: str,
+    *,
+    model_calls: dict[str, int],
+    ok: bool = True,
+) -> None:
     status = "used" if ok else "failed"
-    detail = "Input and output safety checks" if ok else "Guardrails check failed open"
-    if mode == "input":
+    calls = {role: max(0, int(count)) for role, count in model_calls.items()}
+    if not calls and not ok:
+        calls = (
+            {"content_safety": 1, "topic_control": 1}
+            if mode == "input"
+            else {"content_safety": 1}
+        )
+    details = {
+        "content_safety": "Content safety check",
+        "topic_control": "Retail topic check",
+        "multimodal_safety": "Video safety and retail relevance",
+    }
+    for role, count in calls.items():
+        if count <= 0:
+            continue
         _add_model_usage(
             state,
-            "content_safety",
+            role,
             status=status,
-            calls=1,
-            detail=detail,
+            calls=count,
+            detail=(
+                details.get(role, "Guardrail model check")
+                if ok
+                else "Guardrails check failed"
+            ),
         )
-        _add_model_usage(
-            state,
-            "topic_control",
-            status=status,
-            calls=1,
-            detail="Input topic check" if ok else "Guardrails topic check failed open",
-        )
-        return
-
-    _add_model_usage(
-        state,
-        "content_safety",
-        status=status,
-        calls=1,
-        detail=detail,
-    )
 
 
 
@@ -324,7 +331,6 @@ def _message_token_usage_record(message: Any) -> Any:
     return None
 
 
-
 def _token_int(record: Any, keys: tuple[str, ...]) -> int | None:
     for key in keys:
         value = _value(record, key)
@@ -333,5 +339,3 @@ def _token_int(record: Any, keys: tuple[str, ...]) -> int | None:
         if isinstance(value, (int, float)):
             return max(0, int(value))
     return None
-
-

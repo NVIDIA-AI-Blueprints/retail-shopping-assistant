@@ -23,7 +23,7 @@ from typing import Any
 
 import pytest
 from chain_server.src import catalog_search, tool_loop_control, turn_support
-from chain_server.src.agenttypes import Cart, ShopperContext, State
+from chain_server.src.agenttypes import Cart, DialogueTurn, ShopperContext, State
 from chain_server.src.conversation_memory import (
     ConversationMemoryError,
     ConversationProjection,
@@ -295,6 +295,14 @@ class TestHealthAndRoot:
         assert body["models"]["app_llm"]["enabled"] is True
         assert body["models"]["vlm"]["model"] == "test-vlm"
         assert body["models"]["vlm"]["enabled"] is True
+        assert body["guardrails"] == {
+            "default_enabled": True,
+            "failure_mode": "closed",
+            "speculative_main_model_enabled": False,
+            "speculative_main_model_scope": "text_only",
+            "supported_modalities": ["text", "image", "video"],
+            "request_override_supported": True,
+        }
         assert body["catalog"]["catalog_id"] == "test_catalog"
         assert body["catalog"]["filters"]["category"]["values"] == ["bag", "dress"]
 
@@ -405,6 +413,7 @@ class TestTimingEndpoint:
         assert "total" in body["timings"]
         assert body["timings"]["total"] > 0
         assert body["model_usage"] == {}
+        assert body["guardrail_report"] == {}
         assert body["agent_diagnostics"] == {}
 
     def test_returns_agent_diagnostics_additively(
@@ -1028,6 +1037,29 @@ class TestCartFormatting:
 
 
 class TestDeepAgentsRuntimeScopes:
+    def test_chat_model_supports_tool_calls_on_nvidia_build(
+        self, monkeypatch: pytest.MonkeyPatch, base_config
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+
+        captured: dict[str, Any] = {}
+
+        class FakeChatOpenAI:
+            def __init__(self, **kwargs) -> None:
+                captured.update(kwargs)
+
+        monkeypatch.setattr("langchain_openai.ChatOpenAI", FakeChatOpenAI)
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+
+        runtime._create_chat_model()
+
+        assert captured["extra_body"] == {
+            "chat_template_kwargs": {
+                "enable_thinking": False,
+                "force_nonempty_content": True,
+            }
+        }
+
     def test_selected_shopper_context_is_one_current_turn_only_block(
         self,
         base_config,
@@ -1305,7 +1337,14 @@ class TestDeepAgentsRuntimeScopes:
             cart_user_id=222,
             request_id="request-a",
         )
-        monkeypatch.setattr(runtime, "_check_safety", lambda *_args: (False, True))
+        class BlockingGuardrails:
+            async def check_input(self, **_kwargs):
+                from chain_server.src.guardrails import GuardrailDecision
+                return GuardrailDecision(
+                    status="block", stage="input", policy="test"
+                )
+
+        runtime._guardrails = BlockingGuardrails()
 
         output = await runtime._run_turn(
             State(user_id=111, query="blocked", guardrails=True),
@@ -1318,6 +1357,466 @@ class TestDeepAgentsRuntimeScopes:
         assert memory.finalize_calls[0]["termination_reason"] == (
             "input_guardrail_blocked"
         )
+
+    @pytest.mark.asyncio
+    async def test_speculative_main_model_overlaps_input_guardrail_but_tools_wait(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src.guardrails import GuardrailDecision
+
+        base_config.guardrails_speculative_main_model_enabled = True
+        base_config.grounding_rewrite_enabled = False
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity = runtime_mod_support.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        guardrail_started = asyncio.Event()
+        release_guardrail = asyncio.Event()
+        agent_started = asyncio.Event()
+        tool_executed = asyncio.Event()
+
+        class DelayedGuardrails:
+            async def check_input(self, **_kwargs):
+                guardrail_started.set()
+                await release_guardrail.wait()
+                return GuardrailDecision(status="allow", stage="input")
+
+            async def check_output(self, **_kwargs):
+                return GuardrailDecision(status="allow", stage="output")
+
+        class FakeAgent:
+            def __init__(self, tool_gate):
+                self.tool_gate = tool_gate
+
+            async def ainvoke(self, _payload, config):
+                assert config["configurable"]["thread_id"] == (
+                    identity.checkpoint_thread_id
+                )
+                agent_started.set()
+                await self.tool_gate.wait()
+                tool_executed.set()
+                return {
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "content": "I can help with apparel shopping.",
+                            "usage_metadata": {
+                                "input_tokens": 10,
+                                "output_tokens": 5,
+                                "total_tokens": 15,
+                            },
+                        }
+                    ]
+                }
+
+        async def fake_analyze(_state):
+            return ""
+
+        def fake_create_agent(
+            _state,
+            _identity,
+            _turn_capabilities=None,
+            *,
+            input_guardrail_tool_gate=None,
+        ):
+            assert input_guardrail_tool_gate is not None
+            return FakeAgent(input_guardrail_tool_gate)
+
+        runtime._guardrails = DelayedGuardrails()
+        monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
+        monkeypatch.setattr(
+            runtime._catalog_capabilities,
+            "get",
+            lambda: CatalogCapabilities(
+                catalog_id="test-catalog",
+                retrieval_modes=["text"],
+                filters={},
+            ),
+        )
+        monkeypatch.setattr(runtime, "_create_agent", fake_create_agent)
+
+        pending = asyncio.create_task(
+            runtime._execute_turn(
+                State(user_id=111, query="help me shop", guardrails=True),
+                identity,
+            )
+        )
+        await asyncio.wait_for(guardrail_started.wait(), timeout=1)
+        await asyncio.wait_for(agent_started.wait(), timeout=1)
+
+        assert not tool_executed.is_set()
+
+        release_guardrail.set()
+        output = await asyncio.wait_for(pending, timeout=1)
+
+        assert tool_executed.is_set()
+        assert output.response == "I can help with apparel shopping."
+        assert output.timings["input_guardrail_model_overlap"] > 0
+        assert output.model_usage["app_llm"]["calls"] == 1
+
+    @pytest.mark.asyncio
+    async def test_speculative_input_block_cancels_model_and_executes_no_tool(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src.guardrails import GuardrailDecision
+
+        base_config.guardrails_speculative_main_model_enabled = True
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity = runtime_mod_support.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        release_guardrail = asyncio.Event()
+        agent_started = asyncio.Event()
+        agent_cancelled = asyncio.Event()
+        tool_executed = asyncio.Event()
+
+        class BlockingGuardrails:
+            async def check_input(self, **_kwargs):
+                await release_guardrail.wait()
+                return GuardrailDecision(status="block", stage="input")
+
+        class FakeAgent:
+            def __init__(self, tool_gate):
+                self.tool_gate = tool_gate
+
+            async def ainvoke(self, _payload, config):
+                agent_started.set()
+                try:
+                    await self.tool_gate.wait()
+                    tool_executed.set()
+                finally:
+                    agent_cancelled.set()
+
+        async def fake_analyze(_state):
+            return ""
+
+        def fake_create_agent(
+            _state,
+            _identity,
+            _turn_capabilities=None,
+            *,
+            input_guardrail_tool_gate=None,
+        ):
+            return FakeAgent(input_guardrail_tool_gate)
+
+        runtime._guardrails = BlockingGuardrails()
+        monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
+        monkeypatch.setattr(
+            runtime._catalog_capabilities,
+            "get",
+            lambda: CatalogCapabilities(
+                catalog_id="test-catalog",
+                retrieval_modes=["text"],
+                filters={},
+            ),
+        )
+        monkeypatch.setattr(runtime, "_create_agent", fake_create_agent)
+
+        pending = asyncio.create_task(
+            runtime._execute_turn(
+                State(user_id=111, query="blocked", guardrails=True),
+                identity,
+            )
+        )
+        await asyncio.wait_for(agent_started.wait(), timeout=1)
+        release_guardrail.set()
+        output = await asyncio.wait_for(pending, timeout=1)
+
+        assert output.response == base_config.unsafe_message
+        assert agent_cancelled.is_set()
+        assert not tool_executed.is_set()
+        assert output.model_usage["app_llm"]["status"] == "failed"
+        assert output.model_usage["app_llm"]["calls"] == 1
+        assert "may still be billed" in output.model_usage["app_llm"]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_default_mode_waits_for_input_guardrail_before_model(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src.guardrails import GuardrailDecision
+
+        base_config.guardrails_speculative_main_model_enabled = False
+        base_config.grounding_rewrite_enabled = False
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity = runtime_mod_support.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        guardrail_started = asyncio.Event()
+        release_guardrail = asyncio.Event()
+        agent_started = asyncio.Event()
+        input_kwargs = {}
+
+        class DelayedGuardrails:
+            async def check_input(self, **kwargs):
+                input_kwargs.update(kwargs)
+                guardrail_started.set()
+                await release_guardrail.wait()
+                return GuardrailDecision(status="allow", stage="input")
+
+            async def check_output(self, **_kwargs):
+                return GuardrailDecision(status="allow", stage="output")
+
+        class FakeAgent:
+            async def ainvoke(self, _payload, config):
+                agent_started.set()
+                return {
+                    "messages": [
+                        {"role": "assistant", "content": "Ready to shop."}
+                    ]
+                }
+
+        async def fake_analyze(_state):
+            return ""
+
+        runtime._guardrails = DelayedGuardrails()
+        monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
+        monkeypatch.setattr(
+            runtime._catalog_capabilities,
+            "get",
+            lambda: CatalogCapabilities(
+                catalog_id="test-catalog",
+                retrieval_modes=["text"],
+                filters={},
+            ),
+        )
+        monkeypatch.setattr(
+            runtime,
+            "_create_agent",
+            lambda _state, _identity, _turn_capabilities=None: FakeAgent(),
+        )
+
+        pending = asyncio.create_task(
+            runtime._execute_turn(
+                State(
+                    user_id=111,
+                    query="what about the first one?",
+                    guardrails=True,
+                    dialogue=[
+                        DialogueTurn(
+                            sequence=1,
+                            shopper_text="Show me dresses",
+                            assistant_text="Here are two dresses.",
+                        )
+                    ],
+                ),
+                identity,
+            )
+        )
+        await asyncio.wait_for(guardrail_started.wait(), timeout=1)
+        await asyncio.sleep(0)
+
+        assert not agent_started.is_set()
+        assert input_kwargs["conversation"] == [
+            {"role": "user", "content": "Show me dresses"},
+            {"role": "assistant", "content": "Here are two dresses."},
+        ]
+
+        release_guardrail.set()
+        output = await asyncio.wait_for(pending, timeout=1)
+
+        assert agent_started.is_set()
+        assert output.response == "Ready to shop."
+        assert "input_guardrail_model_overlap" not in output.timings
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure_mode", ["open", "closed"])
+    async def test_input_guardrail_error_obeys_failure_mode(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+        failure_mode: str,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src.guardrails import GuardrailDecision
+
+        base_config.guardrails_failure_mode = failure_mode
+        base_config.grounding_rewrite_enabled = False
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity = runtime_mod_support.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        agent_called = False
+
+        class ErroringInputGuardrails:
+            async def check_input(self, **_kwargs):
+                return GuardrailDecision(
+                    status="error",
+                    stage="input",
+                    diagnostic_code="test_input_failure",
+                )
+
+            async def check_output(self, **_kwargs):
+                return GuardrailDecision(status="allow", stage="output")
+
+        class FakeAgent:
+            async def ainvoke(self, _payload, config):
+                nonlocal agent_called
+                agent_called = True
+                return {
+                    "messages": [
+                        {"role": "assistant", "content": "Ready to shop."}
+                    ]
+                }
+
+        async def fake_analyze(_state):
+            return ""
+
+        runtime._guardrails = ErroringInputGuardrails()
+        monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
+        monkeypatch.setattr(
+            runtime._catalog_capabilities,
+            "get",
+            lambda: CatalogCapabilities(
+                catalog_id="test-catalog",
+                retrieval_modes=["text"],
+                filters={},
+            ),
+        )
+        monkeypatch.setattr(
+            runtime,
+            "_create_agent",
+            lambda _state, _identity, _turn_capabilities=None: FakeAgent(),
+        )
+
+        output = await runtime._execute_turn(
+            State(user_id=111, query="help me shop", guardrails=True),
+            identity,
+        )
+
+        if failure_mode == "open":
+            assert agent_called
+            assert output.response == "Ready to shop."
+            assert output.agent_diagnostics["final_termination_reason"] == "completed"
+        else:
+            assert not agent_called
+            assert output.response == base_config.guardrails_unavailable_message
+            assert output.agent_diagnostics["final_termination_reason"] == (
+                "input_guardrail_error"
+            )
+        assert output.guardrail_results[0] == {
+            "stage": "input",
+            "status": "error",
+            "violated_categories": [],
+            "latency_ms": 0.0,
+            "model_calls": {},
+        }
+        assert [result["stage"] for result in output.guardrail_results] == (
+            ["input", "output"] if failure_mode == "open" else ["input"]
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure_mode", ["open", "closed"])
+    async def test_output_guardrail_error_obeys_failure_mode(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+        failure_mode: str,
+    ) -> None:
+        from chain_server.src import deepagents_runtime as runtime_mod
+        from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src.guardrails import GuardrailDecision
+
+        base_config.guardrails_failure_mode = failure_mode
+        base_config.grounding_rewrite_enabled = False
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        identity = runtime_mod_support.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+
+        class ErroringOutputGuardrails:
+            async def check_input(self, **_kwargs):
+                return GuardrailDecision(status="allow", stage="input")
+
+            async def check_output(self, **_kwargs):
+                return GuardrailDecision(
+                    status="error",
+                    stage="output",
+                    diagnostic_code="test_output_failure",
+                )
+
+        class FakeAgent:
+            async def ainvoke(self, _payload, config):
+                return {
+                    "messages": [
+                        {"role": "assistant", "content": "Here is a safe answer."}
+                    ]
+                }
+
+        async def fake_analyze(_state):
+            return ""
+
+        runtime._guardrails = ErroringOutputGuardrails()
+        monkeypatch.setattr(runtime._media_perception, "analyze", fake_analyze)
+        monkeypatch.setattr(
+            runtime._catalog_capabilities,
+            "get",
+            lambda: CatalogCapabilities(
+                catalog_id="test-catalog",
+                retrieval_modes=["text"],
+                filters={},
+            ),
+        )
+        monkeypatch.setattr(
+            runtime,
+            "_create_agent",
+            lambda _state, _identity, _turn_capabilities=None: FakeAgent(),
+        )
+        state = State(user_id=111, query="help me shop", guardrails=True)
+        state.product_results = [{"product_id": "product-a"}]
+        state.retrieved = {"Product A": "/images/product-a.jpg"}
+
+        output = await runtime._execute_turn(state, identity)
+
+        if failure_mode == "open":
+            assert output.response == "Here is a safe answer."
+            assert output.product_results == [{"product_id": "product-a"}]
+            assert output.retrieved == {"Product A": "/images/product-a.jpg"}
+            assert output.agent_diagnostics["final_termination_reason"] == "completed"
+        else:
+            assert output.response.startswith(base_config.guardrails_unavailable_message)
+            assert output.product_results == []
+            assert output.retrieved == {}
+            assert output.agent_diagnostics["final_termination_reason"] == (
+                "output_guardrail_error"
+            )
 
     @pytest.mark.asyncio
     async def test_turn_start_failure_skips_agent_work(
@@ -1913,8 +2412,16 @@ class TestDeepAgentsRuntimeModelUsage:
 
         state = State(user_id=1, query="hello")
 
-        _record_safety_model_usage(state, "input")
-        _record_safety_model_usage(state, "output")
+        _record_safety_model_usage(
+            state,
+            "input",
+            model_calls={"content_safety": 1, "topic_control": 1},
+        )
+        _record_safety_model_usage(
+            state,
+            "output",
+            model_calls={"content_safety": 1},
+        )
 
         assert state.model_usage["content_safety"]["status"] == "used"
         assert state.model_usage["content_safety"]["calls"] == 2
@@ -1926,31 +2433,35 @@ class TestDeepAgentsRuntimeModelUsage:
 
         state = State(user_id=1, query="hello")
 
-        _record_safety_model_usage(state, "input", ok=False)
+        _record_safety_model_usage(state, "input", model_calls={}, ok=False)
 
         assert state.model_usage["content_safety"]["status"] == "failed"
         assert state.model_usage["content_safety"]["calls"] == 1
         assert state.model_usage["topic_control"]["status"] == "failed"
         assert state.model_usage["topic_control"]["calls"] == 1
 
-    def test_safety_check_transport_error_fails_open_with_failed_usage_signal(
+    @pytest.mark.asyncio
+    async def test_safety_provider_transport_error_returns_typed_error(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from chain_server.src import deepagents_runtime as runtime_mod
+        import httpx
+        from chain_server.src.guardrails import GuardrailServiceClient
 
-        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        async def unavailable(_request):
+            raise httpx.ConnectError("rails down")
 
-        def fake_post(*args, **kwargs):
-            raise runtime_mod.requests.RequestException("rails down")
+        provider = GuardrailServiceClient("http://rails", timeout_seconds=1)
+        await provider._client.aclose()
+        provider._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(unavailable), timeout=1
+        )
+        decision = await provider.check_input(text="hello", media=[])
 
-        monkeypatch.setattr(runtime_mod.requests, "post", fake_post)
-
-        safe, check_ok = runtime._check_safety("input", 1, "hello")
-
-        assert safe is True
-        assert check_ok is False
+        assert decision.status == "error"
+        assert decision.diagnostic_code == "invalid_or_unavailable"
+        await provider._client.aclose()
 
     def test_language_model_failure_usage_is_explicit(self) -> None:
         from chain_server.src.model_usage import _record_language_model_failure

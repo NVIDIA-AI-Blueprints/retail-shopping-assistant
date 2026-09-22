@@ -1037,6 +1037,46 @@ async def test_query_responses_hide_agent_diagnostics_by_default(
 
 
 @pytest.mark.asyncio
+async def test_stream_metrics_include_sanitized_guardrail_results(
+    base_config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DeepAgentsRuntime(base_config)
+    state = State(user_id=1, query="hello", guardrails=True)
+    state.response = "done"
+    state.guardrail_results = [
+        {
+            "stage": "input",
+            "status": "allow",
+            "violated_categories": [],
+            "latency_ms": 25.0,
+            "model_calls": {"content_safety": 1, "topic_control": 1},
+        }
+    ]
+    identity = RequestIdentity(
+        session_id="session-a",
+        conversation_id="conversation-a",
+        cart_id="cart-a",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id="request-a",
+    )
+
+    async def fake_run_turn(*args, **kwargs):
+        return state
+
+    monkeypatch.setattr(runtime, "_run_turn", fake_run_turn)
+
+    chunks = [json.loads(chunk) async for chunk in runtime.astream(state, identity)]
+
+    assert chunks[-1]["payload"]["guardrail_report"] == {
+        "enabled": True,
+        "failure_mode": base_config.guardrails_failure_mode,
+        "checks": state.guardrail_results,
+    }
+
+
+@pytest.mark.asyncio
 async def test_trusted_query_responses_can_expose_agent_diagnostics(
     base_config,
     monkeypatch: pytest.MonkeyPatch,

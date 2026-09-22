@@ -7,7 +7,7 @@ import logging
 import math
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, validator
@@ -91,7 +91,7 @@ class ChainServerConfig(BaseModel):
     # Service Endpoints
     retriever_port: str = Field(..., description="Catalog retriever service endpoint")
     memory_port: str = Field(..., description="Memory retriever service endpoint")
-    rails_port: str = Field(..., description="Guardrails service endpoint")
+    guardrails_url: str = Field(..., description="Guardrail service endpoint URL")
 
     # Performance Configuration
     memory_length: int = Field(..., description="Maximum memory length for context")
@@ -202,14 +202,41 @@ class ChainServerConfig(BaseModel):
     guardrails_enabled: bool = Field(
         default=False,
         description=(
-            "Default guardrails setting for requests that omit it. Off: "
-            "guardrails is opt-in, enabled per deployment via GUARDRAILS_ENABLED "
-            "or the config file, and per request via the request's own flag."
+            "Default guardrails setting for requests that omit it. The request "
+            "field remains authoritative when present."
         ),
     )
+    guardrails_failure_mode: Literal["open", "closed"] = Field(
+        default="closed",
+        description="Whether provider errors bypass or stop the guarded turn.",
+    )
+    guardrails_timeout_seconds: float = Field(
+        default=15.0,
+        description="Maximum duration of each guardrail service request.",
+    )
+    guardrails_speculative_main_model_enabled: bool = Field(
+        default=False,
+        description=(
+            "For guarded text-only turns, start the first app-model step while "
+            "input guardrails run. Every tool remains blocked until approval. "
+            "This can reduce latency but blocked turns may still incur app-model "
+            "cost. Media turns remain sequential."
+        ),
+    )
+    guardrails_supported_modalities: list[Literal["text", "image", "video"]] = Field(
+        default_factory=lambda: ["text", "image", "video"],
+        description="Modalities covered by required configured safety judges.",
+    )
     unsafe_message: str = Field(..., description="Message to display for unsafe content")
+    guardrails_unavailable_message: str = Field(
+        default=(
+            "I cannot safely validate this request right now. Please retry. "
+            "If it involved a cart change, check your cart first."
+        ),
+        description="Closed-mode response when a required safety check fails.",
+    )
 
-    @validator('llm_port', 'retriever_port', 'memory_port', 'rails_port')
+    @validator('llm_port', 'retriever_port', 'memory_port', 'guardrails_url')
     def validate_urls(cls, v):
         """Validate that URLs are properly formatted."""
         if not v.startswith(('http://', 'https://')):
@@ -287,6 +314,12 @@ class ChainServerConfig(BaseModel):
             raise ValueError("catalog_search_timeout_seconds must be positive")
         return v
 
+    @validator('guardrails_timeout_seconds')
+    def validate_guardrails_timeout(cls, v):
+        if not math.isfinite(v) or v <= 0:
+            raise ValueError("guardrails_timeout_seconds must be finite and positive")
+        return v
+
     class Config:
         """Pydantic configuration."""
         extra = "forbid"  # Prevent additional fields
@@ -315,7 +348,7 @@ def load_config(config_path: str | None = None) -> ChainServerConfig:
     env_overrides = {
         "retriever_port": os.environ.get("CATALOG_RETRIEVER_URL"),
         "memory_port": os.environ.get("MEMORY_RETRIEVER_URL"),
-        "rails_port": os.environ.get("RAILS_URL"),
+        "guardrails_url": os.environ.get("GUARDRAILS_URL"),
         "catalog_search_timeout_seconds": os.environ.get("CATALOG_SEARCH_TIMEOUT_SECONDS"),
         "deepagents_recursion_limit": os.environ.get("DEEPAGENTS_RECURSION_LIMIT"),
         "grounding_editor_reserve_seconds": os.environ.get(
@@ -339,6 +372,11 @@ def load_config(config_path: str | None = None) -> ChainServerConfig:
         "expose_agent_diagnostics": _env_bool("EXPOSE_AGENT_DIAGNOSTICS"),
         "relay_enabled": _env_bool("RELAY_ENABLED"),
         "guardrails_enabled": _env_bool("GUARDRAILS_ENABLED"),
+        "guardrails_failure_mode": os.environ.get("GUARDRAILS_FAILURE_MODE"),
+        "guardrails_timeout_seconds": os.environ.get("GUARDRAILS_TIMEOUT_SECONDS"),
+        "guardrails_speculative_main_model_enabled": _env_bool(
+            "GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED"
+        ),
     }
     config_data.update(
         {
@@ -347,6 +385,13 @@ def load_config(config_path: str | None = None) -> ChainServerConfig:
             if value is not None and value != ""
         }
     )
+    supported_guardrail_modalities = os.environ.get("GUARDRAILS_SUPPORTED_MODALITIES")
+    if supported_guardrail_modalities:
+        config_data["guardrails_supported_modalities"] = [
+            item.strip().lower()
+            for item in supported_guardrail_modalities.split(",")
+            if item.strip()
+        ]
     weather_enabled = _env_bool("WEATHER_ENABLED")
     if weather_enabled is not None:
         weather_data = dict(config_data.get("weather") or {})

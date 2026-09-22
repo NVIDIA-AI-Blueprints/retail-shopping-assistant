@@ -1215,6 +1215,29 @@ def _images_in_product_order(
     }
 
 
+def _trusted_catalog_images(
+    images: dict[str, str], products: list[dict[str, Any]]
+) -> dict[str, str]:
+    """Keep only curated local catalog assets belonging to emitted products."""
+
+    product_names = {
+        str(product.get("display_name") or product.get("name") or "")
+        for product in products
+    }
+    trusted: dict[str, str] = {}
+    for name, url in images.items():
+        normalized = str(url or "")
+        if name not in product_names:
+            continue
+        if not re.fullmatch(r"/images/[A-Za-z0-9][A-Za-z0-9._/-]*", normalized):
+            continue
+        relative = normalized.removeprefix("/images/")
+        if not relative or ".." in relative.split("/"):
+            continue
+        trusted[name] = normalized
+    return trusted
+
+
 def _search_attribute_facts(product: Any) -> dict[str, str]:
     """Structured attributes the catalog confirmed for one search hit.
 

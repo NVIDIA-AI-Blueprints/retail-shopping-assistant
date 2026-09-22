@@ -628,6 +628,16 @@ trips a per-IP limit and returns HTTP 429, which surfaces as mass application
 failure rather than as a rate limit. If load testing suddenly fails everywhere,
 suspect that before your code.
 
+**Speculative input execution trades blocked-turn cost for latency.** With
+`GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED=true`, a guarded text-only turn starts
+its first app-model step while the parallel input rails run. Every tool remains
+behind the input allow decision, and media remains sequential. An allowed turn
+can save at most the overlap between input-rail latency and that first model
+step. A blocked turn runs no tool, but its already-started model request can
+still be billed even after cancellation. Keep the default `false` unless that
+cost tradeoff is intentional, and compare allowed and blocked traffic mixes as
+well as latency percentiles.
+
 **One remote hop stays on the critical path.** The same hosted embedding call
 means a fully local deployment would be faster than what you measure here, so
 your figures are a floor rather than a best case. `docker-compose-nim-local.yaml`

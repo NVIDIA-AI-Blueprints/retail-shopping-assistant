@@ -510,5 +510,3 @@ def _scrub_internal_shopper_language(text: str) -> str:
     for internal, replacement in _INTERNAL_SHOPPER_REPLACEMENTS:
         scrubbed = scrubbed.replace(internal, replacement)
     return scrubbed
-
-

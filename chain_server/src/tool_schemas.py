@@ -156,8 +156,6 @@ class SearchCatalogToolArguments(BaseModel):
         description="Optional search mode from Catalog capabilities.",
     )
 
-
-
 class SearchCatalogToolInput(SearchCatalogToolArguments):
     """Runtime-validated catalog search request."""
 
@@ -1016,5 +1014,3 @@ def _required_constraints_input_model(
         },
         **fields,
     )
-
-

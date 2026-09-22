@@ -322,8 +322,6 @@ def _search_reported_not_covered(messages: Any) -> bool:
                 return True
     return False
 
-
-
 def _search_reported_not_carried(messages: Any) -> bool:
     """Whether the search tool established a product type as not carried."""
 
@@ -772,5 +770,3 @@ def _has_successful_non_search_tool_evidence(
         if _tool_call_status(tool_name, message)[0] == "completed":
             return True
     return False
-
-

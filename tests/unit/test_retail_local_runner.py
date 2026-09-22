@@ -119,3 +119,27 @@ def test_ui_process_does_not_receive_weather_environment(
     assert process_env["REACT_APP_API_BASE_URL"] == "/api"
     assert "WEATHER_ENABLED" not in process_env
     assert "WEATHER_API_KEY" not in process_env
+
+
+def test_configure_uses_dedicated_topic_and_full_video_endpoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = load_runner_module()
+    captured: dict[str, str] = {}
+
+    monkeypatch.setattr(
+        runner,
+        "write_text",
+        lambda _path, content: captured.update(content=content),
+    )
+
+    runner.configure(type("Args", (), {"nim_host": "http://pdx-host"})())
+
+    content = captured["content"]
+    assert 'RAILS_TOPIC_BASE_URL="http://pdx-host:8004/v1"' in content
+    assert (
+        'RAILS_TOPIC_MODEL="nvidia/llama-3.1-nemoguard-8b-topic-control"'
+        in content
+    )
+    assert 'VLM_BASE_URL="http://pdx-host:8005/v1"' in content
+    assert 'MULTIMODAL_SAFETY_BASE_URL="http://pdx-host:8005/v1"' in content

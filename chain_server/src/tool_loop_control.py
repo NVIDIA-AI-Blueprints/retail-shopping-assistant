@@ -36,6 +36,12 @@ UNSUPPORTED_CONSTRAINT_PREFIX = "The requested catalog requirement cannot be enf
 #: answers without it. Two: the first refusal carries the reason, and a second
 #: identical attempt shows the reason was not usable.
 _MAX_IDENTICAL_CALLS = 2
+#: Search calls one turn may make, whatever they carry. One call holds a whole
+#: look, so three leaves room for a repair and one follow-up. The per-turn scope
+#: budget counts distinct scopes and never fired on "something to layer over a
+#: sleeveless dress": each retry narrowed the shelves a little, so each was new,
+#: and one turn made twenty calls.
+_MAX_SEARCH_CALLS_PER_TURN = 3
 _SYNTHESIS_PROMPT = """## Tool Loop Closed
 
 Do not call or describe another tool. Produce the best concise shopper-facing
@@ -101,6 +107,7 @@ class ToolLoopControlMiddleware(AgentMiddleware):
         self._repair_feedback = ""
         self._synthesis_required = False
         self._search_budget_exhausted = False
+        self._search_calls = 0
         #: The search is finished. That is a statement about searching, not
         #: about the turn: a shopper who asked for something to be added is
         #: still owed the add.
@@ -284,6 +291,14 @@ class ToolLoopControlMiddleware(AgentMiddleware):
             if not isinstance(content, str):
                 continue
             content = content.strip()
+            # Arguments that did not validate never ran, and the repair path
+            # below has its own bound, so only searches that ran are counted.
+            if _tool_name(result) == SEARCH_TOOL_NAME and not _validation_error_body(
+                content
+            ):
+                self._search_calls += 1
+                if self._search_calls >= _MAX_SEARCH_CALLS_PER_TURN:
+                    self._search_budget_exhausted = True
             # Typed outcomes recorded by the tool. Text matching remains only
             # for results the framework produces before our code runs.
             signals = signals_of(result)

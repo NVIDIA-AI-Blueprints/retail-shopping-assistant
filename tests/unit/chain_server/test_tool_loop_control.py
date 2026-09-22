@@ -463,6 +463,33 @@ def test_an_exhausted_budget_keeps_the_catalog_for_the_repair_that_needs_it() ->
     assert middleware.spent_tool_context() == frozenset()
 
 
+def test_a_third_search_call_is_the_last_one_the_turn_gets() -> None:
+    """Counted by call, not by scope, because the retries were all different.
+
+    "Something to layer over a sleeveless dress" searched six apparel shelves,
+    got dresses back, and kept narrowing: each call was a new scope, so the
+    scope budget never fired and one turn made twenty calls.
+    """
+
+    middleware = ToolLoopControlMiddleware()
+    messages: list[Any] = [HumanMessage(content="something to layer over a dress")]
+    for number, found in ((1, "dresses"), (2, "sweaters and blouses")):
+        messages.append(
+            _tool_result(
+                f"SEARCH_RESULT_GROUNDING_NOTE: {found}", tool_call_id=f"c{number}"
+            )
+        )
+        prepared = _capture_model_request(middleware, messages)
+        assert "search_catalog_tool" in [tool.name for tool in prepared.tools]
+
+    messages.append(
+        _tool_result("SEARCH_RESULT_GROUNDING_NOTE: sweaters", tool_call_id="c3")
+    )
+    prepared = _capture_model_request(middleware, messages)
+
+    assert "search_catalog_tool" not in [tool.name for tool in prepared.tools]
+
+
 def _policy_skill_tool_grants() -> dict[str, frozenset[str]]:
     """The real grant map, because the gate validates against the real policy."""
 

@@ -89,6 +89,15 @@ class TurnResult:
     #: what it could see -- which used to be reconstructable only offline, and
     #: only approximately, from the products a run happened to report.
     memory: dict[str, str] = field(default_factory=dict)
+    #: What each tool was actually asked for, in order. `tools` gives the names
+    #: and answers "did it resolve or search"; it cannot answer "which product
+    #: did it add", and that is the question the cart failures turn on. A turn
+    #: put the wrong dress in the cart and diagnosing it meant inferring the
+    #: ref from the prose of the reply and the set the turn happened to show,
+    #: because the argument itself was captured, used for `scopes`, and then
+    #: dropped. Skill activation is here for the same reason: the name says
+    #: skills were chosen, not which ones.
+    calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 def scenario_identity(label: str, scenario_id: str, repeat: int) -> dict[str, Any]:
@@ -208,6 +217,13 @@ class Assistant:
             "cart": self.cart(identity["user_id"]),
             "tools": [
                 str(call.get("tool_name") or "")
+                for call in (diagnostics.get("tool_calls") or [])
+            ],
+            "calls": [
+                {
+                    "tool_name": str(call.get("tool_name") or ""),
+                    "arguments": call.get("arguments") or {},
+                }
                 for call in (diagnostics.get("tool_calls") or [])
             ],
             **_how_the_turn_ended(diagnostics),
@@ -741,6 +757,7 @@ def run_scenario(
             rejected=answered.get("rejected") or [],
             repeated=answered.get("repeated") or {},
             memory=answered.get("memory") or {},
+            calls=answered.get("calls") or [],
         )
         turn.checks = [
             *check_turn(step.get("expect") or {}, turn, previous_cart, turns),
@@ -854,10 +871,38 @@ def write_transcript(
             mark = {"pass": "ok", "fail": "**FAILED**", "error": "error"}[check["outcome"]]
             detail = f" — {check['detail']}" if check["outcome"] != "pass" else ""
             lines.append(f"> {mark} `{check['name']}`{detail}")
+        lines += _what_the_tools_were_asked(turn.get("calls") or [])
         lines += _memory_the_turn_read(turn.get("memory") or {})
         lines.append("")
 
     path.write_text("\n".join(lines))
+
+
+def _what_the_tools_were_asked(calls: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Render each call's arguments, folded, in the order they were made.
+
+    The summary line above already names the tools. What it cannot say is what
+    they were asked for, and the cart failures all turn on that: a turn that
+    adds the wrong product calls exactly the tools a turn that adds the right
+    one calls. Reading the argument used to mean re-running the turn against a
+    separate probe script and hoping a fifty-fifty defect reproduced.
+    """
+
+    if not calls:
+        return []
+    lines = [
+        "",
+        f"<details><summary>what the tools were asked — {len(calls)} calls</summary>",
+        "",
+        "```",
+    ]
+    for index, call in enumerate(calls, start=1):
+        lines.append(f"{index}. {call.get('tool_name') or '?'}")
+        lines.append(
+            json.dumps(call.get("arguments") or {}, indent=2, default=str)
+        )
+    lines += ["```", "", "</details>"]
+    return lines
 
 
 def _memory_the_turn_read(memory: Mapping[str, str]) -> list[str]:

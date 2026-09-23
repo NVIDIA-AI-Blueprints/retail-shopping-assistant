@@ -383,17 +383,11 @@ class ToolLoopControlMiddleware(AgentMiddleware):
 
         # WORKAROUND for a model failure, not a policy about retries.
         #
-        # The model emits an assistant message with empty text content whose
-        # tool call is byte-identical to the one it just made, receives a
-        # byte-identical result, and repeats: twelve times in J01 turn 16,
-        # twenty-two tool calls, killed by the graph's recursion limit after
-        # 98 seconds, on a turn whose first call had already retrieved all
-        # sixteen products it asked for. Nothing in the result is being read,
-        # so no wording in it can stop this -- an earlier version that told the
-        # model it had already searched the scope looped the same way.
-        #
-        # Filed against the model. See
-        # docs/reports/2026-09-17__model-bug-report__tool-call-repetition-lock-in.md
+        # The model can emit an assistant message with empty text content
+        # whose tool call is byte-identical to the one it just made, receive a
+        # byte-identical result, and repeat until the graph's recursion limit.
+        # Nothing in the result is being read, so no wording in it can stop
+        # this. Filed against the model as a tool-call repetition lock-in.
         #
         # The *pair* is what gets counted, not the call. A repair re-issues the
         # same arguments after the locked fields are restored, so an identical

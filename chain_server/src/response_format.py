@@ -613,20 +613,12 @@ class WeatherForecastInput(BaseModel):
         ),
     )
     #: Where the place came from, as a parameter rather than a rule, for the
-    #: reason above: the prose form said "the shopper named a CITY" without
-    #: saying when. "It's going to snow when we get back" names no place, so
-    #: the assistant reached for the wedding city of an earlier turn and
-    #: answered a shopper describing snow with the forecast for Rome at 77-97F.
-    #:
-    #: This asked for the current turn's words and nothing else, which is one
-    #: turn narrower than the bug. Two things made Rome wrong and neither was
-    #: the age of the citation: the shopper had said what the conditions would
-    #: be, and "when we get back" is home rather than the city of the trip.
-    #: Meanwhile "will I need a jacket in the evening", nine turns into
-    #: planning one trip to one city, names no place either -- and was refused,
-    #: then answered with invented weather, which is the outcome the refusal
-    #: exists to prevent. So the field asks which place they are asking about
-    #: now, and names the two things that disqualify a carried-over one.
+    #: reason above. A place carried over from an earlier turn can be right
+    #: ("will I need a jacket in the evening", mid-way through planning one
+    #: trip) or wrong ("it's going to snow when we get back" -- the shopper has
+    #: given the conditions, and "back" is home, not the trip). So the field
+    #: asks which place they are asking about now, and names the two things
+    #: that disqualify a carried-over one.
     #:
     #: Nothing to quote is the signal. Ask which place they mean.
     shopper_words_naming_the_place: str = Field(
@@ -815,11 +807,9 @@ def _format_shopper_context(context: ShopperContext | None) -> str:
 def _format_wearer_audience(audience: list[str] | None) -> str:
     """Say who the last named item was for, without scoping anything.
 
-    This used to read "keep filtering to this audience while it still
-    applies", which made a wearer a property of the conversation rather than
-    of the item they were named for. "Shades for hubby" then scoped every
-    later search: "show me some heels" came back empty in a shop full of
-    heels, because they are all womens and the carried audience was not.
+    A wearer is a property of the item they were named for, not of the
+    conversation: after "shades for hubby", "show me some heels" must not be
+    scoped to mens.
 
     The two errors are not the same size. Carrying it wrongly costs the
     shopper the whole result set, silently, with no way to see why. Forgetting

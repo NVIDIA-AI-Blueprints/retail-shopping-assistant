@@ -1078,9 +1078,9 @@ def _relay_may_observe_but_not_decide(middleware: Any) -> None:
       cannot double a cart write or drop one;
     * the agent receives the handler's own return value, not the wrapper's.
 
-    Relay still sees the call and still writes its span -- it is invoked exactly
-    as before, and the handler it is given runs the real work at the real moment,
-    so nesting and timings are unaffected. It simply no longer has a vote.
+    Relay still sees the call and still writes its span -- the handler it is
+    given runs the real work at the real moment, so nesting and timings are
+    unaffected. It has no say in the result.
 
     An exception from the wrapper is contained: the work is already done, and the
     agent gets its result. A trace must never cost a turn.
@@ -1377,14 +1377,10 @@ class DeepAgentsRuntime:
                 _record_turn_diagnostics(span, state)
                 # Likewise, and for a blunter reason. The checkpoint thread is
                 # keyed on (conversation_id, request_id), so it belongs to this
-                # one request and nothing will ever read it again. It used to be
-                # freed only when the turn finalized, which meant every turn
-                # that failed to finalize -- a superseded attempt, a memory
-                # service blip, a turn that never started -- left its whole
-                # message history in this process for as long as the process
-                # lived. Pods are long-lived and there is no eviction, so that
-                # is a leak that ends in an OOMKill, and more pods only means
-                # more of them leaking.
+                # one request and nothing will ever read it again. It is freed
+                # here, not only at finalization, because a turn that fails to
+                # finalize would otherwise keep its whole message history for
+                # the life of a long-lived pod with no eviction.
                 await self._delete_turn_checkpoint(identity)
 
     async def _run_turn_inner(
@@ -1960,12 +1956,10 @@ class DeepAgentsRuntime:
                 display_name = _descriptor_field(descriptor, "display_name")
                 if reference_id not in unresolved:
                     continue
-                # The name is usually in `display_name`. When the model puts it
-                # in `reference_id` instead -- "Southwest Bracelet" as the label
-                # rather than the name -- the lookup used to collect nothing and
-                # do nothing, and the shopper was told the product could not be
-                # found while its name sat one field over. Both fields are the
-                # model's own free text; either may carry it.
+                # The name is usually in `display_name`, but the model may put
+                # it in `reference_id` instead -- "Southwest Bracelet" as the
+                # label rather than the name. Both fields are the model's own
+                # free text; either may carry it.
                 text = str(display_name or reference_id or "").strip()
                 if text and text not in names:
                     names.append(text)
@@ -2007,12 +2001,8 @@ class DeepAgentsRuntime:
                     if product.image_url:
                         scope.retrieved[product.display_name] = product.image_url
                 # Whether a product was shown is a fact this record holds, so
-                # it is read rather than assumed. This path used to open by
-                # stating none of these had been shown and to instruct the
-                # reply to repeat it. Reached for a product an earlier turn
-                # did show -- a resolvable reference that came here instead --
-                # it told the shopper the assistant had never shown them the
-                # sweater it had shown them first.
+                # it is read rather than assumed: a resolvable reference can
+                # arrive here for a product an earlier turn did show.
                 shown_before = {
                     product.product_id: _where_a_product_was_already_shown(
                         state.historical_product_sets, product.product_id
@@ -2140,13 +2130,12 @@ class DeepAgentsRuntime:
                 return "\n".join(established)
 
             with scope.resolution_lock:
-                # A resolution that found something ends the budget, as before.
-                # One that found nothing no longer does: the failure itself
-                # says "correct that field and retry", and the retry used to be
-                # refused with an instruction to stop and ask -- so the turn was
-                # spent asking the shopper to name a product the assistant had
-                # named a turn earlier. Attempts are still counted, so a call
-                # that keeps missing terminates.
+                # A resolution that found something ends the budget. One that
+                # found nothing does not: the failure itself says "correct that
+                # field and retry", and refusing the retry would have the turn
+                # ask the shopper to name a product the assistant already named.
+                # Attempts are still counted, so a call that keeps missing
+                # terminates.
                 if (
                     scope.product_resolution_used
                     or scope.product_resolution_attempts
@@ -3151,17 +3140,13 @@ class DeepAgentsRuntime:
     def _forecast_prompt_section() -> str:
         """When to fetch a forecast, for a request that was granted the tool.
 
-        This used to be a sub-bullet of the search fan-out rule, which is
-        where it was first needed and the wrong place for it to live. A turn
-        that fans out to no product roles has no fan-out to go before, so the
-        only statement of when to call read as inapplicable to the one shape
-        that most needs it: "going to Cancun next week, what's the weather
-        like". That turn asks for nothing to search, and got no forecast.
+        Its own section rather than part of the search fan-out rule, because a
+        turn with nothing to search -- "going to Cancun next week, what's the
+        weather like" -- still needs it.
 
         Held out of the static prompt for the same reason the catalog rules
         are: ordering instructions for a tool the request was not granted are
-        unreadable cost, and the flag that used to approximate that check is
-        no longer needed once the grant does it exactly.
+        unreadable cost.
         """
 
         return """Forecast ordering:

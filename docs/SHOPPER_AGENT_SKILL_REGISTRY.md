@@ -200,7 +200,7 @@ outcomes from diagnostics.
 | --- | --- | --- | --- | --- | --- |
 | `product-discovery` | `chain_server/skills/shopper/product-discovery/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, same-conversation product resolution | General search, category browsing, filter-driven discovery without styling intent |
 | `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, same-conversation product resolution | Build, complete, or refine a look; coordinate a requested piece with an anchor; use cart evidence only when cart management is also active |
-| `cart-management` | `chain_server/skills/shopper/cart-management/SKILL.md` | Registered | `standalone` | Cart read, total, add, remove, update, same-conversation product resolution | Explicit cart reads and mutations, alone or beside a product procedure |
+| `cart-management` | `chain_server/skills/shopper/cart-management/SKILL.md` | Registered | `standalone` | Cart read, total, add, remove, update, same-conversation product resolution, catalog search for a named product | Explicit cart reads and mutations, alone or beside a product procedure |
 | `budget-shopping` | `chain_server/skills/shopper/budget-shopping/SKILL.md` | Registered | `modifier` | None | Stated price ceilings and budget bundles; combine with cart management for cart-total checks |
 | `catalog-questions` | `chain_server/skills/shopper/catalog-questions/SKILL.md` | Registered | `primary` | Questions about the shop | The most or least expensive thing, whether anything falls in a price range, what departments exist |
 | `store-policy-answers` | `chain_server/skills/shopper/store-policy-answers/SKILL.md` | Registered | `standalone` | Policy lookup | Returns, shipping, sizing, payment, price matching, and gift cards |
@@ -294,6 +294,8 @@ Purpose: explicit cart reads, additions, removals, and quantity changes.
 - Resolves an earlier presented product before an add only when the product is
   absent from current-turn evidence. Missing or ambiguous matches do not
   authorize a mutation.
+- Searches for a named product nothing in the conversation has shown, so an
+  add needs no product procedure beside it.
 - Treats mutation results as authoritative and reports partial failures.
 
 ## `budget-shopping`

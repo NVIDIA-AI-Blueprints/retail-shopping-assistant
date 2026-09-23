@@ -3243,6 +3243,7 @@ class TestDeepAgentsRuntimeRefs:
             "update_cart_items_tool",
             "view_cart_total_tool",
             "resolve_conversation_products_tool",
+            "search_catalog_tool",
         }
         activation_result = tools_by_name["activate_shopper_skills_tool"](
             ["outfit-styling"],

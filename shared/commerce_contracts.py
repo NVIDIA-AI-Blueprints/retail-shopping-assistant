@@ -128,6 +128,10 @@ class SearchCatalogResult(CommerceModel):
     error: CommerceError | None = None
     diagnostics: dict[str, Any] = Field(default_factory=dict)
     no_result_reason: str | None = None
+    #: The nearest product a hard filter removed. Not a result and never an
+    #: offer: it fails the search it came from. It is carried so a turn can
+    #: answer a question about the filter, which the filtered results cannot.
+    excluded_near_miss: ProductSummary | None = None
     meta: ToolMeta = Field(default_factory=ToolMeta)
 
 

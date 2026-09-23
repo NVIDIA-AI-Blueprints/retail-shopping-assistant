@@ -73,6 +73,7 @@ from .response_format import (
     SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE,
     _format_catalog_scope_outcome,
     _format_colour_words_read_as_advertised_ones,
+    _format_excluded_near_miss,
     _format_product_record,
     _format_search_composed_role_evidence,
     _format_search_direction_evidence,
@@ -98,6 +99,7 @@ from .turn_support import (
     _ONE_SIZE,
     _SEARCH_BUDGET_EXHAUSTED_NOTE,
     _SEARCH_NO_MATCH_GROUNDING_NOTE,
+    _SEARCH_NO_MATCH_NEXT_STEP,
     _SEARCH_RESULT_GROUNDING_NOTE,
     _SEARCH_SCOPE_COMPLETE_NOTE,
     _UNSUPPORTED_SEARCH_MODE_MESSAGE,
@@ -956,11 +958,32 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         # Rank on it, disclose it, do not abandon the search.
         unconfirmable_requirements = list(unadvertised_requirements)
 
-    advertised_taxonomy_issue = _advertised_taxonomy_scope_issue(
-        request.requested_product_type,
-        request.taxonomy_status,
-        request.taxonomy,
-        capabilities,
+    # Where the catalogue has placed this role, this gate has nothing to add.
+    # `_resolved_against_the_catalogue` runs three steps earlier, rewrites the
+    # taxonomy to the subcategories the judge named, and is the last word on
+    # it. What follows reads requested_product_type as a type instead, which
+    # for a phrase the catalog does not advertise means reading it by its last
+    # word -- and then refuses the very scope that step just wrote.
+    #
+    # Asked for the Ultra Soft Cashmere Blend Sweater Blouse, the judge
+    # answered sweaters and blouses, five times in five, declining to pick a
+    # shelf for what is a sweater's name. The taxonomy was widened to both.
+    # This gate read the name's last word, wanted blouses alone, did not find
+    # it, and cancelled the search twice. The better answer was already in
+    # hand and was overruled by a string.
+    #
+    # Unjudged is the case this is still for. A judge that cannot be reached
+    # leaves every scope unruled, and an unruled scope is decided by the gates
+    # that decided it before the judge existed -- this among them.
+    advertised_taxonomy_issue = (
+        None
+        if attempt.judged_subcategories is not None
+        else _advertised_taxonomy_scope_issue(
+            request.requested_product_type,
+            request.taxonomy_status,
+            request.taxonomy,
+            capabilities,
+        )
     )
     if advertised_taxonomy_issue:
         if shopper_stated_scope:
@@ -1636,6 +1659,15 @@ def _reserved_search_slot(ctx: SearchContext, attempt: _Attempt) -> StepResult:
 
 
 
+def _filters_that_can_go(confirmed_filters: dict[str, Any]) -> list[str]:
+    """The filters a search that found nothing may be retried without.
+
+    A size is a fact about a body, not a preference, so it is never one.
+    """
+
+    return [name for name in confirmed_filters if name != "sizes"]
+
+
 def _executed_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     """Run the retrieval and record what it cost and returned."""
 
@@ -1880,6 +1912,9 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             budget_exhausted=bool(search_budget_exhausted),
             unconfirmed_requirements=unconfirmable_requirements,
             size_the_scope_has_not=dict(attempt.size_the_scope_has_not or {}),
+            # Nothing came back and a filter is why: the clearest case of a
+            # search that cannot speak to what it excluded.
+            excluded_near_miss=_the_filter_removed(result.excluded_near_miss),
             scope_outcome={
                 "outcome": "zero_results",
                 "requested_product_type": request.requested_product_type,
@@ -1909,6 +1944,13 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         )
         if colour_note:
             lines.append(colour_note)
+        # Nothing came back, and a filter is why. "We have no bracelet under
+        # $110" and "we have no such bracelet" are different answers, and the
+        # products cannot tell them apart because the filter removed the one
+        # that would have.
+        near_miss_note = _format_excluded_near_miss(evidence.excluded_near_miss)
+        if near_miss_note:
+            lines.append(near_miss_note)
         if scope_relation_evidence:
             lines.append(scope_relation_evidence)
         if evidence.confirmed_filters:
@@ -1935,10 +1977,15 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         # silently is still forbidden; the evidence requires saying which one
         # went.
         relaxable = bool(evidence.confirmed_filters)
+        droppable = _filters_that_can_go(evidence.confirmed_filters)
         if evidence.scope_complete and not relaxable:
             lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
         elif evidence.budget_exhausted:
             lines.append(_SEARCH_BUDGET_EXHAUSTED_NOTE)
+        elif droppable:
+            lines.append(
+                _SEARCH_NO_MATCH_NEXT_STEP.format(droppable=", ".join(droppable))
+            )
         return "\n\n".join(lines), evidence.as_artifact()
 
     evidence = SearchEvidence(
@@ -1961,6 +2008,11 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         products=[
             _search_product_record(product) for product in result.products
         ],
+    )
+    evidence.excluded_near_miss = _the_filter_removed(result.excluded_near_miss)
+    evidence.how_many_matched = _more_matched_than_are_shown(
+        result.diagnostics,
+        len(evidence.products),
     )
     evidence.assumed_audience = _assumed_audience(
         str(getattr(ctx.config, "wearer_audience_field", "") or ""),
@@ -1989,6 +2041,12 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     )
     if colour_note:
         lines.append(colour_note)
+    # Results came back, and the one the shopper asked about may not be among
+    # them because the filter removed it. Four bracelets under budget are no
+    # evidence at all about a fifth that is over it.
+    near_miss_note = _format_excluded_near_miss(evidence.excluded_near_miss)
+    if near_miss_note:
+        lines.append(near_miss_note)
     if scope_relation_evidence:
         lines.append(scope_relation_evidence)
     if evidence.confirmed_filters:
@@ -2005,7 +2063,9 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             lines.append(
                 f"CATEGORY CHOSEN FOR THEM: the shopper named no product type, "
                 f"so these are {chosen} only. Say so, and offer the other "
-                "departments."
+                "departments. These are not everything this shop has under "
+                "the filter -- only everything in this one department -- so "
+                "do not describe them as everything, all, or the whole shop."
             )
     if evidence.unconfirmed_requirements:
         lines.append(
@@ -2244,13 +2304,61 @@ def _a_category_the_shopper_did_not_name(evidence: Any, attempt: Any) -> str:
     taxonomy = getattr(evidence, "taxonomy", None) or {}
     if not isinstance(taxonomy, dict):
         return ""
+    # The category list, under whatever the catalog calls that field. This
+    # evidence is keyed by the catalog's own field names, not by the generic
+    # roles the model selects with, so the name has to be read from the
+    # capabilities rather than assumed.
+    #
+    # Flattened across every list here, as this was, it counted subcategories
+    # too and wanted exactly one value in total -- so it fired for a bare
+    # category and went quiet the moment the scope named what was under it,
+    # which is what browsing a department looks like. "Nothing over $50"
+    # searched bags and two of its subcategories, disclosed nothing, and the
+    # reply introduced four bags as everything in the shop under fifty
+    # dollars. Forty-three products qualified, across all five departments.
+    capabilities = getattr(attempt, "capabilities", None)
+    field = getattr(getattr(capabilities, "taxonomy", None), "category_field", None)
+    if not field:
+        return ""
     categories = [
-        str(value)
-        for values in taxonomy.values()
-        if isinstance(values, list)
-        for value in values
+        str(value) for value in (taxonomy.get(field) or []) if str(value).strip()
     ]
     return categories[0] if len(categories) == 1 else ""
+
+
+def _the_filter_removed(near_miss: Any) -> dict[str, Any]:
+    """The excluded product reduced to what an answer about it needs.
+
+    A name and a number. The price is the whole point -- it is what the
+    shopper asked about -- so the amount is taken out of its Money wrapper
+    rather than leaving a currency field between them and the answer.
+    """
+
+    name = str(getattr(near_miss, "display_name", "") or "").strip()
+    if not name:
+        return {}
+    removed: dict[str, Any] = {"display_name": name}
+    amount = getattr(getattr(near_miss, "price", None), "amount", None)
+    if amount is not None:
+        removed["price"] = amount
+    return removed
+
+
+def _more_matched_than_are_shown(diagnostics: Any, shown: int) -> int:
+    """How many matched, when top-k returned fewer than that, else 0.
+
+    Zero is the useful answer as often as the count is: it says the list is
+    complete, and "here are the four tote bags under $50" -- which really is
+    all four -- must stay sayable. The same phrasing over four of seventeen
+    jewellery pieces is the defect.
+    """
+
+    if not isinstance(diagnostics, dict):
+        return 0
+    matched = diagnostics.get("after_filter_count")
+    if not isinstance(matched, int) or matched <= shown:
+        return 0
+    return matched
 
 
 def _hard_filter_scopes_this(required_constraints: Any) -> bool:
@@ -2302,6 +2410,28 @@ def _one_scope_per_category(ctx: SearchContext, scopes: list[Any]) -> list[Any]:
         taxonomy = fields.get("taxonomy") or {}
         asked = taxonomy.get("category") if isinstance(taxonomy, dict) else None
         named = list(taxonomy.get("subcategory") or []) if isinstance(taxonomy, dict) else []
+        if (
+            isinstance(asked, list)
+            and not asked
+            and not named
+            and not str(fields.get("requested_product_type") or "").strip()
+            and _hard_filter_scopes_this(fields.get("required_constraints"))
+        ):
+            # No product type, no category, a filter and nothing else: the
+            # shopper asked about the shop. Named none, this used to stay one
+            # scope, and one scope with no category is ranked rather than
+            # spread -- "nothing over $50" went out as `category: []` with the
+            # guidance "everything in the shop, across all departments", and
+            # came back as four bags because they won a similarity contest
+            # against "affordable items under $50", a phrase with no product
+            # signal in it at all. Forty-three products qualified, twenty of
+            # them apparel. The reply then read its own results back as intent
+            # and opened "I'm assuming you're looking for bags".
+            #
+            # Filling the categories in here rather than asking the model to
+            # list them keeps the one request that means "everywhere" off the
+            # path where ranking decides where.
+            asked = sorted(categories)
         # Two or more categories only. One category with no subcategory is
         # indistinguishable from an invented role: "rainy outfit under $60"
         # arrives as apparel with a price and nothing else, and filling in
@@ -2492,7 +2622,10 @@ def search_catalog(
     scopes = _one_scope_per_category(ctx, list(scopes))
     attempts: list[_Attempt] = []
     for raw in scopes:
-        fields = raw if isinstance(raw, dict) else raw.model_dump()
+        # Unset fields are left out, not carried as None. Dumped whole, every
+        # constraint the model did not set arrived as None, and was read
+        # downstream as the word "None" the catalog could not filter on.
+        fields = raw if isinstance(raw, dict) else raw.model_dump(exclude_none=True)
         attempt = _Attempt(
             semantic_query=fields.get("semantic_query", ""),
             requested_product_type=fields.get("requested_product_type"),

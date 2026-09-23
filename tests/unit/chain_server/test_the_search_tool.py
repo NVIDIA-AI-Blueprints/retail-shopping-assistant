@@ -34,6 +34,7 @@ from shared.commerce_contracts import (
     SearchCatalogResult,
 )
 
+from .test_catalog_search_rejections import _Judge
 from .test_main import tool_text
 
 VALIDATION_ERROR = tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
@@ -232,7 +233,12 @@ def a_turn(base_config, monkeypatch: pytest.MonkeyPatch):
         skills: tuple[str, ...] = ("product-discovery",),
         context: str | None = None,
         image: str | None = None,
+        judge: Any = None,
     ) -> _Turn:
+        # Unset, the real judge is built and cannot connect here, which is the
+        # degraded mode: every scope unruled, the older gates deciding.
+        if judge is not None:
+            runtime._vocabulary_judge = judge
         extra: dict[str, Any] = {}
         if context is not None:
             extra["context"] = context
@@ -318,14 +324,15 @@ class TestTheScopeMustMatchWhatTheShopperNamed:
         assert "do not substitute an advertised sibling" in answer
         assert turn.searches == 0
 
-    def test_another_category_cannot_be_substituted_mid_turn(self, a_turn) -> None:
-        turn = a_turn("show me practical work bags under $60")
-        turn.search(
-            semantic_query="practical structured work bag",
-            shopper_guidance="Finding a practical bag for work.",
-            requested_product_type="bags",
-            taxonomy={"category": ["bags"], "subcategory": ["satchels"]},
-            required_constraints={"price": {"max": 60}},
+    def test_another_category_is_put_back_by_the_judge(self, a_turn) -> None:
+        # Answering "work bags" with dresses used to be refused here, by
+        # reading the phrase's last word. The judge now places the role and its
+        # answer replaces the taxonomy the model sent, so the dresses are never
+        # searched. Nor, traced live, sent: the model named every bag
+        # subcategory for "work bags", twice in two.
+        turn = a_turn(
+            "show me practical work bags under $60",
+            judge=_Judge({"work bags": ["satchels", "tote_bags"]}),
         )
 
         answer = turn.search(
@@ -336,19 +343,28 @@ class TestTheScopeMustMatchWhatTheShopperNamed:
             required_constraints={},
         )
 
-        assert "do not substitute another category" in answer
-        assert turn.searches == 1
+        assert FOUND_SOMETHING in answer
+        assert turn.plan.hard_filters["product_type"] == ["satchels", "tote_bags"]
 
 
 class TestATypeThatBindsToACategoryKeepsIt:
     """Dropping the taxonomy loses what the shopper asked for."""
 
-    def test_a_named_type_may_not_arrive_with_an_empty_taxonomy(
+    def test_a_named_type_sent_with_no_taxonomy_is_scoped_by_the_judge(
         self, a_turn
     ) -> None:
         # A hard filter can scope a search that names no category -- "nothing
-        # over $50" belongs to every category. "Work bags" is not that case.
-        turn = a_turn("show me blue or black work bags under $60")
+        # over $50" belongs to every category. "Work bags" is not that case,
+        # and the judge's placement of it becomes the scope.
+        #
+        # Unjudged, this is searched on its filters alone, across the shop:
+        # the one thing given up by no longer placing a phrase by its last
+        # word. It needs the judge down and the model sending no taxonomy, and
+        # traced live the model sent every bag subcategory, twice in two.
+        turn = a_turn(
+            "show me blue or black work bags under $60",
+            judge=_Judge({"work bags": ["satchels", "tote_bags"]}),
+        )
 
         answer = turn.search(
             semantic_query="work bags under $60",
@@ -361,18 +377,21 @@ class TestATypeThatBindsToACategoryKeepsIt:
             },
         )
 
-        assert "binds to advertised category" in answer
-        assert turn.searches == 0
+        assert FOUND_SOMETHING in answer
+        assert turn.plan.hard_filters["department"] == ["bags"]
+        assert turn.plan.hard_filters["product_type"] == ["satchels", "tote_bags"]
 
     def test_the_refusal_hands_back_the_constraints_to_preserve(
         self, a_turn
     ) -> None:
-        turn = a_turn("show me blue or black work bags under $60")
+        # "bags" is advertised whole, so unjudged it is still refused without
+        # a taxonomy, and that refusal is what this is about.
+        turn = a_turn("show me blue or black bags under $60")
 
         answer = turn.search(
-            semantic_query="work bags under $60",
-            shopper_guidance="Finding work bags under the stated budget.",
-            requested_product_type="work bags",
+            semantic_query="bags under $60",
+            shopper_guidance="Finding bags under the stated budget.",
+            requested_product_type="bags",
             taxonomy={"category": [], "subcategory": []},
             required_constraints={
                 "price": {"max": 60},
@@ -928,7 +947,24 @@ class TestASearchThatFindsNothing:
         _turn, text = empty
 
         assert "SEARCH_SCOPE_COMPLETE" not in text
-        assert "search again without it" in text
+        assert "Drop one filter, search again" in text
+
+    def test_it_ends_by_naming_the_filters_that_can_go(self, empty) -> None:
+        # The general rule sits above the evidence, which echoes the call just
+        # sent; replayed, the model copied that call 3 of 3 times. Named last,
+        # the filters it could drop were dropped 3 of 3.
+        _turn, text = empty
+
+        assert text.rstrip().endswith(
+            "NEXT STEP: search again without one of these filters: color. "
+            "Do not send the same search again."
+        )
+
+    def test_a_size_is_never_offered_as_the_filter_to_drop(self) -> None:
+        assert catalog_search._filters_that_can_go(
+            {"primary_color": ["green"], "sizes": ["2"]}
+        ) == ["primary_color"]
+        assert catalog_search._filters_that_can_go({"sizes": ["2"]}) == []
 
     def test_the_retry_is_the_model_s_to_issue_not_the_server_s(
         self, empty

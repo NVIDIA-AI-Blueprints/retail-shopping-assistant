@@ -47,7 +47,12 @@ SHOPPING_TOOL_POLICIES: Mapping[str, ToolPolicy] = MappingProxyType(
     {
         "search_catalog_tool": ToolPolicy(
             allowed_skills_any_of=frozenset(
-                {"catalog-questions", "outfit-styling", "product-discovery"}
+                {
+                    "cart-management",
+                    "catalog-questions",
+                    "outfit-styling",
+                    "product-discovery",
+                }
             ),
             risk="read",
         ),

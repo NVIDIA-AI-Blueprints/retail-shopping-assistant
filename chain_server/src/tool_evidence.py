@@ -72,6 +72,25 @@ class SearchEvidence:
     #: cannot see it. ``asked`` and ``comes_in``, both as the catalog writes
     #: them, so the reply can name the real run instead of inventing one.
     size_the_scope_has_not: dict[str, Any] = field(default_factory=dict)
+    #: The nearest product a hard filter removed: ``display_name`` and
+    #: ``price``. Not a result and never an offer -- it fails the search it
+    #: came from. It is typed rather than left in the result prose because the
+    #: grounding editor reads this artifact and not that prose, and the editor
+    #: is what decides the words the shopper gets. Told only in the prose, a
+    #: $169.99 bracelet the price filter had removed never reached the editor,
+    #: which passed a draft saying this shop does not stock one.
+    excluded_near_miss: dict[str, Any] = field(default_factory=dict)
+    #: How many products matched this search before top-k cut the list, when
+    #: more matched than are being shown. Zero means the products below are
+    #: all of them, and the reply may say so.
+    #:
+    #: Four jewellery pieces were introduced as the ones this shop carries
+    #: under $150. Seventeen do. The count was known -- retrieval reports it --
+    #: and stopped at the tool, so no lane could tell the editor that the list
+    #: it was editing was a slice. A floor rather than an exact total, since
+    #: it counts within the candidate window, which is all "do not call this
+    #: everything" needs.
+    how_many_matched: int = 0
 
     def as_artifact(self) -> dict[str, Any]:
         return {
@@ -92,6 +111,8 @@ class SearchEvidence:
                 "unconfirmed_requirements": self.unconfirmed_requirements,
                 "assumed_audience": self.assumed_audience,
                 "size_the_scope_has_not": self.size_the_scope_has_not,
+                "excluded_near_miss": self.excluded_near_miss,
+                "how_many_matched": self.how_many_matched,
             }
         }
 

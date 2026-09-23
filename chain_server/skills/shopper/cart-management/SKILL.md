@@ -1,6 +1,6 @@
 ---
 name: cart-management
-description: Cart reads, item add, remove, and quantity update. Use whenever the shopper asks to inspect or manage their cart, including alongside a styling or product-discovery request.
+description: Cart reads, item add, remove, and quantity update. Use whenever the shopper asks to inspect or manage their cart, including alongside a styling or product-discovery request. It can find a product the shopper names, so adding one needs no other skill.
 response_guidance: Cart changes and resulting quantities are shown only after the cart service confirms them. Partial failures remain explicit.
 role: standalone
 tools_granted:
@@ -10,6 +10,7 @@ tools_granted:
   - update_cart_items_tool
   - view_cart_total_tool
   - resolve_conversation_products_tool
+  - search_catalog_tool
 ---
 
 # Cart Management
@@ -43,6 +44,9 @@ change the cart, and what the shopper is told afterwards.
 
 - Use `resolve_conversation_products_tool` only for an earlier product this
   turn has not established.
+- A product the shopper names that nothing in this conversation has shown:
+  search for it by name. If one result is clearly that product, add it and say
+  which. If none or several could be, show them and ask.
 - Pass `PRODUCT_REF` values established by this turn's search or by a successful
   resolution -- never display names. Include `expected_display_name` for each
   item so the tool can verify the ref resolves to the product you mean.

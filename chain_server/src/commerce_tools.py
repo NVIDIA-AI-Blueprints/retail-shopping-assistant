@@ -151,6 +151,7 @@ def search_catalog(
         products=_products_from_catalog_response(data),
         diagnostics=data.get("diagnostics") or {},
         no_result_reason=data.get("no_result_reason"),
+        excluded_near_miss=_near_miss_from_catalog_response(data),
     )
 
 
@@ -671,6 +672,25 @@ def _catalog_session() -> requests.Session:
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     return session
+
+
+def _near_miss_from_catalog_response(
+    data: dict[str, Any],
+) -> ProductSummary | None:
+    """The excluded near-miss, when the catalog sent a readable one.
+
+    Dropped silently when it does not parse. It is supporting evidence for an
+    answer the results cannot give; losing it costs that one answer, while
+    failing the search over it would cost the results too.
+    """
+
+    payload = data.get("excluded_near_miss")
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return ProductSummary.model_validate(payload)
+    except ValueError:
+        return None
 
 
 def _products_from_catalog_response(data: dict[str, Any]) -> list[ProductSummary]:

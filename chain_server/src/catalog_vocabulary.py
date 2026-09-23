@@ -241,7 +241,22 @@ def _advertised_taxonomy_scope_issue(
     )
     if advertised_match is None:
         return None
-    scope_kind, advertised_name, category_name, _ = advertised_match
+    scope_kind, advertised_name, category_name, matched_text = advertised_match
+    # Only a phrase the catalog advertises can refuse a search. Read whole,
+    # "crossbody bags" is that subcategory, and a taxonomy naming a sibling is
+    # a substitution. A phrase placed by its last word is a guess, and a guess
+    # does not get a veto: the Ultra Soft Cashmere Blend Sweater Blouse is a
+    # sweater, and read by its last word it cancelled the search for itself
+    # twice, for a product the shop stocks and the retriever returns first for
+    # its own name. Nothing this compares is part of a retrieval request.
+    #
+    # Where the judge is reachable this gate is not consulted at all; see
+    # `_reviewed_provenance`. This rule is the degraded mode, and in it a named
+    # type sent with no taxonomy is searched on its filters alone. Traced live,
+    # the model does not send that: "work bags" arrived with every bag
+    # subcategory named, twice in two.
+    if _normalize_product_text(requested_product_type or "") != matched_text:
+        return None
     payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
     selected_categories = payload.get("category") or []
     selected_subcategories = payload.get("subcategory") or []

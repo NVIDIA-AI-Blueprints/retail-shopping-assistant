@@ -262,8 +262,8 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             self._activation_validation_failures += 1
             if self._activation_validation_failures == 1:
                 return (
-                    f"{SKILL_ACTIVATION_INVALID} {feedback} "
-                    "Retry the activation once with the smallest valid skill set."
+                    f"{SKILL_ACTIVATION_INVALID} Retry the activation once "
+                    f"with a valid skill set: {feedback}"
                 )
             self._status = "clarification"
             self._clarification_response = _activation_clarification(issue)

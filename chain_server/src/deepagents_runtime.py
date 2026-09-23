@@ -2680,19 +2680,10 @@ class DeepAgentsRuntime:
             know, so the one skill that could answer a question about the shop
             was never offered as an option. Read the descriptions.
 
-            What they cannot tell you, because it spans two of them: adding a
-            product the shopper names that no search in this conversation has
-            shown is a discovery request as well as a cart one. Select
-            `product-discovery` and `cart-management` together -- the cart skill
-            cannot search, and a product must be found and shown before it can
-            be added. Both names are literal here on purpose. This is one
-            composition rule about two specific skills, not a list of the
-            members of a group, so it does not go stale when a skill is
-            registered; a test asserts both are still registered.
-
-            The second such rule, for the same reason. Dressing for a named
-            place and date needs the conditions there, and `outfit-styling`
-            cannot fetch them: select `destination-weather` with it whenever
+            What they cannot tell you, because it spans two of them: dressing
+            for a named place and date needs the conditions there, and
+            `outfit-styling` cannot fetch them: select `destination-weather`
+            with it whenever
             the turn turns on the weather. "A wedding in Rome in June, what
             should I wear" needs both. It is a standalone skill, neither a
             second primary nor a modifier, so selecting it beside a procedure

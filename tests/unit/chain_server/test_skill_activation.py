@@ -63,6 +63,7 @@ SKILL_TOOL_GRANTS = {
             "get_cart_tool",
             "remove_cart_item_tool",
             "resolve_conversation_products_tool",
+            "search_catalog_tool",
             "update_cart_items_tool",
             "view_cart_total_tool",
         }
@@ -264,6 +265,22 @@ def test_activation_schema_rejects_two_primary_procedures() -> None:
         skill_names=["outfit-styling", "budget-shopping"],
     )
     assert selected.skill_names == ["outfit-styling", "budget-shopping"]
+
+
+def test_two_primaries_are_answered_with_the_selections_to_send() -> None:
+    # J11: told only the rule, the model resent the same three skills and the
+    # turn closed without the search the add needed.
+    activation_input = _skill_activation_input_model(_THREE_PRIMARIES)
+
+    with pytest.raises(ValueError) as rejected:
+        activation_input(
+            skill_names=["outfit-styling", "cart-management", "product-discovery"],
+        )
+
+    assert (
+        'Send one of: ["outfit-styling", "cart-management"] or '
+        '["cart-management", "product-discovery"]'
+    ) in str(rejected.value)
 
 
 def test_every_primary_in_a_group_is_exclusive_with_every_other() -> None:
@@ -1086,7 +1103,10 @@ def test_invented_catalog_constraint_is_rejected_before_execution() -> None:
     assert str(result.content).startswith("CATALOG_CALL_NOT_AUTHORIZED:")
 
 
-def test_cart_management_exposes_cart_mutation_but_not_catalog_search() -> None:
+def test_cart_management_alone_can_find_and_add_a_named_product() -> None:
+    # J11: "add the Ombre Canvas Tote Bag", never shown, needed a search the cart
+    # skill could not make, so the model reached for a primary as well and the
+    # pair it chose was refused.
     middleware = _middleware()
     middleware.activate(
         {"/shopper/cart-management/SKILL.md": "# Cart Management"},
@@ -1096,7 +1116,8 @@ def test_cart_management_exposes_cart_mutation_but_not_catalog_search() -> None:
     prepared = _capture_request(middleware, _model_request(messages))
 
     assert [candidate.name for candidate in prepared.tools] == [
-        "add_cart_items_tool"
+        "search_catalog_tool",
+        "add_cart_items_tool",
     ]
     request = _tool_request("add_cart_items_tool", messages)
     expected = ToolMessage(content="cart updated", tool_call_id="add-call")
@@ -1934,14 +1955,10 @@ def test_skills_named_in_the_activation_tool_are_registered() -> None:
     """The one place a skill name is still written literally.
 
     The exclusivity rule was an enumeration of a group's members, so it went
-    stale when a third member was registered and is now generated. This is a
-    different thing: one composition rule about two specific skills, where
-    naming them is what makes it actionable. Measured -- softening it to "the
-    discovery procedure alongside cart management" produced a turn that
-    activated twice, searched three times, said "Now I'll add it to your cart"
-    and added nothing.
-
-    So the names stay, and this asserts they still exist.
+    stale when a third member was registered and is now generated. What is
+    left is a composition rule about two specific skills, weather and styling,
+    where naming them is what makes it actionable. So the names stay, and this
+    asserts they still exist.
     """
 
     import re

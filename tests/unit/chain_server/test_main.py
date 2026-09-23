@@ -2131,12 +2131,17 @@ class TestDeepAgentsRuntimeRefs:
             {"category": ["bags"], "subcategory": ["tote_bags"]},
             capabilities,
         ) is not None
+        # Placed by its last word rather than advertised whole, so this gate
+        # reads it as bags and leaves the choice between bags alone. The
+        # substitution is still refused mid-turn, by the gate holding a repair
+        # to the scope it is repairing: see, in the search-tool suite,
+        # test_a_modifier_does_not_license_the_substitution.
         assert catalog_vocabulary_mod._advertised_taxonomy_scope_issue(
             "formal crossbody bags",
             "member_of_requested_umbrella",
             {"category": ["bags"], "subcategory": ["tote_bags"]},
             capabilities,
-        ) is not None
+        ) is None
         assert catalog_vocabulary_mod._advertised_taxonomy_scope_issue(
             "formal crossbody bags",
             "exact_requested_type",
@@ -2640,6 +2645,33 @@ class TestDeepAgentsRuntimeRefs:
             )
             or ""
         )
+        # A request that names no product type is searched on whatever else
+        # scopes it. Required unconditionally, this field had to be filled with
+        # a noun the shopper never said, and "nothing over $50" -- scoped by
+        # its price and by nothing else -- reached the vocabulary judge as a
+        # request for "items" and came back as a catalog that stocks none.
+        typeless_by_taxonomy = schema_model.model_validate(
+            {
+                **complete_request,
+                "requested_product_type": None,
+                "taxonomy_status": "agent_selected_type",
+            }
+        )
+        assert typeless_by_taxonomy.requested_product_type is None
+        typeless_by_price = schema_model.model_validate(
+            {
+                **complete_request,
+                "requested_product_type": None,
+                "taxonomy_status": "agent_selected_type",
+                "taxonomy": {"category": [], "subcategory": []},
+                "required_constraints": {"price": {"max": 50}},
+            }
+        )
+        assert typeless_by_price.requested_product_type is None
+        # Nothing to search by is still nothing to search by. "Looking for
+        # something nice" names no type, selects no taxonomy and sets no
+        # filter, and is a question to ask rather than the whole shop to
+        # return.
         with pytest.raises(
             ValueError,
             match="text catalog search requires requested_product_type",
@@ -2648,7 +2680,8 @@ class TestDeepAgentsRuntimeRefs:
                 {
                     **complete_request,
                     "requested_product_type": None,
-                    "taxonomy_status": "exact_requested_type",
+                    "taxonomy_status": "agent_selected_type",
+                    "taxonomy": {"category": [], "subcategory": []},
                 }
             )
         # An advertised category grounds a role the shopper did not name: the
@@ -3210,6 +3243,7 @@ class TestDeepAgentsRuntimeRefs:
             "update_cart_items_tool",
             "view_cart_total_tool",
             "resolve_conversation_products_tool",
+            "search_catalog_tool",
         }
         activation_result = tools_by_name["activate_shopper_skills_tool"](
             ["outfit-styling"],

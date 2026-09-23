@@ -220,6 +220,29 @@ def _prompt(
             " - Never reach for the nearest available garment: jeans are not "
             "skirts, a belt is not a blouse, a coat is not a camisole. Return "
             "an empty list for a word this catalogue sells no form of.",
+            # Null is "not mine to rule on", read as no verdict, so the search
+            # runs on the subcategories the model chose. Without it a phrase
+            # like "light layer" could only be placed or refused: alone it was
+            # refused, the shopper was told the shop sells no dresses, skirts
+            # or jumpsuits, and the answer flipped with whatever else the call
+            # asked. Six such phrases, alone and batched: 36 of 108 answers
+            # wrong before, 0 of 108 after, with jeans, jacket, coat, hat and
+            # belt still empty every time.
+            " - A phrase that names no kind of garment at all -- only a "
+            'purpose, occasion or quality, such as "something cosy" or "an '
+            'outfit for dinner" -- answer null, not a list. A phrase that '
+            "names a garment is never null, whether or not this catalogue "
+            "sells it: trousers, a scarf and a raincoat are garments, and "
+            '"hiking boots" names boots.',
+            # The bare word "layer" read as a garment this shop does not sell:
+            # empty every time, and the model, which had scoped it to sweaters,
+            # blouses and camisoles, resent the same search ten times in one
+            # turn. Measured on seven role phrases, five of them not named
+            # here: 0 empty after, and the eight uncarried garments still
+            # empty every time.
+            " - A word for the part a piece plays in a look -- a layer, a "
+            "piece, a cover, an extra -- is not a garment name either: answer "
+            "null.",
             "",
             "TASK A words:",
         ]
@@ -243,7 +266,7 @@ def _prompt(
     lines += [
         "",
         "Reply with JSON and nothing else:",
-        '{"a": {"word": ["subcategory"]}, "b": {"word": ["colour"]}}',
+        '{"a": {"word": ["subcategory"] or null}, "b": {"word": ["colour"]}}',
     ]
     return "\n".join(lines)
 

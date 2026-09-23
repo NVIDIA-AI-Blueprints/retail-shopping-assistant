@@ -15,8 +15,12 @@ turns:
   - say: what are the first two made of
     expect:
       # Materials come off the record. Answering from memory is how a dress
-      # acquires a fabric it never had.
-      tools_used: [get_product_details_tool]
+      # acquires a fabric it never had. Resolving the shown products returns
+      # the attributes the catalog confirmed when they were shown, so either
+      # tool reads the record.
+      any_of:
+        - tools_used: [get_product_details_tool]
+        - tools_used: [resolve_conversation_products_tool]
       cart_unchanged: true
 
   - say: how do I care for them

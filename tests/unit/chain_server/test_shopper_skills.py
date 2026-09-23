@@ -39,6 +39,7 @@ EXPECTED_SKILL_POLICY = {
             "update_cart_items_tool",
             "view_cart_total_tool",
             "resolve_conversation_products_tool",
+            "search_catalog_tool",
         ],
     },
     "outfit-styling": {

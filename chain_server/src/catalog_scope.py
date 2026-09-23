@@ -18,6 +18,14 @@ CATALOG_SEARCH_RULES = """- Call search_catalog_tool when exact advertised
   never put a product type in `unadvertised_requirements`.
   Returned products are closest alternatives under their actual catalog types,
   not confirmed instances of the shopper's type.
+- A request that names no product type still gets searched. "Nothing over $50"
+  is complete: the price is the scope and every category is in it. Leave
+  `requested_product_type` null there rather than inventing a noun for it --
+  a made-up "items" is read as a product type the shopper asked for, and
+  answered with the fact that this catalog carries no such thing. Null is not
+  licence for an unscoped search: taxonomy or a hard filter must still say
+  which products are meant, and a request with neither -- "looking for
+  something nice" -- is a question to ask, not a search to run.
 - If no advertised subcategory denotes the requested kind, the catalog does not
   carry it. Name it in `not_covered` beside the roles you can search, and build
   no scope for it. If it is the only thing asked for, do not call the tool at

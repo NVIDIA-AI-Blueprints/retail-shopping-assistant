@@ -34,7 +34,10 @@ from chain_server.src.control_signals import (
     REJECTIONS_KEY,
     SearchRejection,
 )
-from chain_server.src.tool_schemas import _search_catalog_tool_input_model
+from chain_server.src.tool_schemas import (
+    _search_catalog_scopes_input_model,
+    _search_catalog_tool_input_model,
+)
 from chain_server.src.turn_scope import TurnScope
 from chain_server.src.vocabulary_judge import VocabularyVerdict
 from shared.commerce_contracts import (
@@ -985,6 +988,35 @@ def test_a_payload_the_catalog_can_honour_is_left_exactly_as_it_came() -> None:
     assert _rejection_codes(result) == []
 
 
+def test_a_constraint_left_unset_is_not_a_word_set_aside() -> None:
+    """The scope as the tool delivers it: a model instance, not a dict.
+
+    Dumped whole, it carries every constraint field the catalog advertises,
+    the unset ones as None. Those were read as the word "None" and disclosed
+    on 31 of 33 live searches as unfilterable words to check the results
+    against -- on searches that had asked for nothing at all.
+    """
+
+    ctx = _context("show me dresses")
+    arguments = _search_catalog_scopes_input_model(ctx.capabilities).model_validate(
+        {
+            "scopes": [
+                _scope(
+                    semantic_query="dresses",
+                    requested_product_type="dresses",
+                    taxonomy={"category": ["apparel"], "subcategory": ["dresses"]},
+                    scope_complete=True,
+                )
+            ]
+        }
+    )
+
+    result = search_catalog(ctx, arguments.scopes)
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert "SEARCH_WORDS_RANKED_NOT_FILTERED" not in text
+
+
 def test_a_word_the_catalog_cannot_filter_on_does_not_cost_the_role(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1050,6 +1082,168 @@ def _judge_answering_colours(
 
     verdict = VocabularyVerdict(colours=colours)
     return SimpleNamespace(judge=lambda *_args, **_kwargs: verdict)
+
+
+def test_a_department_chosen_for_the_shopper_reaches_the_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End to end, on a catalog that does not call its field `category`.
+
+    "Nothing over $50" names no product type, so one department is a choice
+    made for the shopper, and the turn has to say so and must not call the
+    result the whole shop. The disclosure is derived from the taxonomy
+    evidence, which is keyed by the catalog's own field names -- `department`
+    here -- so reading it by the generic role name finds nothing at all.
+    """
+
+    def _one_product(*_args: Any, **_kwargs: Any) -> Any:
+        return SimpleNamespace(
+            result=SearchCatalogResult(
+                ok=True,
+                products=[
+                    ProductSummary(
+                        product_id="generated:1",
+                        display_name="Ombre Canvas Tote Bag",
+                        price=Money(amount=49.99),
+                    )
+                ],
+            ),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _one_product)
+
+    result = search_catalog(
+        _context("nothing over $50"),
+        [
+            _scope(
+                semantic_query="affordable pieces",
+                requested_product_type=None,
+                taxonomy={
+                    "category": ["bags"],
+                    "subcategory": ["tote_bags", "crossbody_bags"],
+                },
+                required_constraints={"price": {"max": 50}},
+            )
+        ],
+    )
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert "CATEGORY CHOSEN FOR THEM" in text
+    assert "bags" in text
+    assert "do not describe them as everything" in text
+
+
+def test_a_product_the_filter_removed_reaches_the_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End to end: the catalog excludes it, the turn is told about it.
+
+    Without this the turn holds four bracelets under budget and no way to
+    know a fifth exists above it, which is how "is the Southwest Bracelet
+    within that" was answered with "this shop does not have one".
+    """
+
+    def _with_a_near_miss(*_args: Any, **_kwargs: Any) -> Any:
+        return SimpleNamespace(
+            result=SearchCatalogResult(
+                ok=True,
+                products=[],
+                excluded_near_miss=ProductSummary(
+                    product_id="generated:1",
+                    display_name="Southwest Bracelet",
+                    price=Money(amount=169.99),
+                ),
+            ),
+            fallback_attempted=False,
+            fallback_used=False,
+        )
+
+    monkeypatch.setattr(
+        catalog_search_mod, "execute_catalog_search", _with_a_near_miss
+    )
+
+    result = search_catalog(
+        _context("is the Canvas Weekender within that"),
+        [
+            _scope(
+                semantic_query="Canvas Weekender",
+                required_constraints={"price": {"max": 110.01}},
+            )
+        ],
+    )
+
+    text = result[0] if isinstance(result, tuple) else result
+    assert "EXCLUDED BY A FILTER ON THIS SEARCH" in text
+    assert "Southwest Bracelet" in text
+    assert "169.99" in text
+
+
+def _judge_recording_words(
+    scopes: dict[str, list[str]],
+    asked: list[str],
+) -> SimpleNamespace:
+    """A judge that answers from `scopes` and records what it was asked."""
+
+    def _judge(questions: Any, *_args: Any, **_kwargs: Any) -> VocabularyVerdict:
+        asked.extend(question.requested_product_type for question in questions)
+        return VocabularyVerdict(scopes=scopes)
+
+    return SimpleNamespace(judge=_judge)
+
+
+def test_a_request_naming_no_product_type_is_not_judged_as_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The judge answers about words the shopper said, and only those.
+
+    "Nothing over $50" names no product type. Required to send one anyway, the
+    model sent "items", and the judge -- correctly, for a question it should
+    never have been asked -- reported that this catalogue sells no such thing.
+    The shopper was told the shop had nothing for them while four tote bags
+    under fifty dollars sat behind a search that never ran.
+
+    A word the shopper really did say is unaffected, and the second scope here
+    is the case the judge exists for: jeans are asked about, named nothing,
+    and answered as not carried.
+    """
+
+    searched: list[str] = []
+
+    def _record(plan: Any, *_args: Any, **_kwargs: Any) -> Any:
+        searched.extend(plan.semantic_queries)
+        return _no_products()
+
+    monkeypatch.setattr(catalog_search_mod, "execute_catalog_search", _record)
+
+    asked: list[str] = []
+    ctx = replace(
+        _context("nothing over $50, and some jeans"),
+        vocabulary_judge=_judge_recording_words({"jeans": []}, asked),
+    )
+
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="affordable pieces",
+                requested_product_type=None,
+                taxonomy={"category": [], "subcategory": []},
+                required_constraints={"price": {"max": 50}},
+            ),
+            _scope(
+                semantic_query="jeans",
+                requested_product_type="jeans",
+                taxonomy={"category": ["apparel"], "subcategory": ["skirts"]},
+            ),
+        ],
+    )
+
+    assert asked == ["jeans"]
+    assert searched == ["affordable pieces"]
+    text = result[0] if isinstance(result, tuple) else result
+    assert "jeans" in text.lower()
 
 
 def test_an_unlisted_colour_word_filters_on_the_ones_it_could_mean(
@@ -1544,6 +1738,67 @@ def test_one_category_and_no_subcategory_is_left_alone() -> None:
     assert _one_scope_per_category(ctx, [scope]) == [scope]
 
 
+def test_a_filter_and_no_category_reaches_every_department() -> None:
+    """"Nothing over $50" names nowhere, and nowhere means everywhere.
+
+    The model sends this correctly: no product type, no category, a price and
+    a guidance line reading "everything in the shop, across all departments".
+    Left as one scope it was ranked rather than spread, and four bags won a
+    similarity contest against "affordable items under $50" -- a phrase with
+    no product signal in it -- while twenty qualifying apparel pieces went
+    unmentioned. The reply then read its own results back as intent: "I'm
+    assuming you're looking for bags."
+    """
+
+    from chain_server.src.catalog_search import _one_scope_per_category
+
+    ctx = SimpleNamespace(
+        capabilities=_capabilities(),
+        config=SimpleNamespace(max_search_scopes_per_call=10),
+    )
+    scope = {
+        "semantic_query": "affordable items under $50",
+        "requested_product_type": None,
+        "taxonomy": {"category": [], "subcategory": []},
+        "required_constraints": {"price": {"max": 50}},
+    }
+
+    fanned = _one_scope_per_category(ctx, [scope])
+
+    assert len(fanned) > 1
+    assert [f["taxonomy"]["category"] for f in fanned] == [
+        [name] for name in sorted(_capabilities().taxonomy.categories)
+    ]
+    # Every scope keeps the ceiling, and each carries its own department's
+    # advertised subcategories rather than an empty list.
+    assert all(f["required_constraints"] == {"price": {"max": 50}} for f in fanned)
+    assert all(f["taxonomy"]["subcategory"] for f in fanned)
+
+
+def test_a_browse_with_no_filter_at_all_is_left_alone() -> None:
+    """Nothing to narrow by is not the whole shop, it is a question.
+
+    The schema refuses a scope with no type, no taxonomy and no filter, and
+    that refusal is what turns "looking for something nice" into a question.
+    Fanning it here would hand back the catalog and route around the guard.
+    """
+
+    from chain_server.src.catalog_search import _one_scope_per_category
+
+    ctx = SimpleNamespace(
+        capabilities=_capabilities(),
+        config=SimpleNamespace(max_search_scopes_per_call=10),
+    )
+    scope = {
+        "semantic_query": "something nice",
+        "requested_product_type": None,
+        "taxonomy": {"category": [], "subcategory": []},
+        "required_constraints": {},
+    }
+
+    assert _one_scope_per_category(ctx, [scope]) == [scope]
+
+
 def test_a_scope_that_names_subcategories_is_left_alone() -> None:
     from chain_server.src.catalog_search import _one_scope_per_category
 
@@ -1614,6 +1869,128 @@ def test_a_scopeless_browse_is_shown_rather_than_refused(
     )
 
     assert _rejection_codes(result) == []
+
+
+def test_a_name_placed_by_its_last_word_does_not_cancel_the_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P26 t2, "add the Ultra Soft Cashmere Blend Sweater Blouse".
+
+    A product's name is not a product type, but placed by its last word it
+    reads as one: this sweater's name ends in "Blouse", so it was read as
+    blouses and refused against the sweaters the model had correctly selected.
+    Twice, and then the turn gave up and told the shopper the search could not
+    be completed -- about a sweater on the shelf, which the retriever returns
+    first for its own name, and which no gate here had any part in finding.
+
+    Nothing this gate compares reaches the retriever. Refusing cost the answer
+    and bought nothing, so a phrase the catalog does not advertise no longer
+    settles which shelf was meant.
+    """
+
+    capabilities = _capabilities()
+    capabilities.taxonomy.categories["apparel"].subcategories = {
+        "sweaters": CatalogTaxonomySubcategory(product_count=1),
+        "blouses": CatalogTaxonomySubcategory(product_count=1),
+    }
+    capabilities.filters["product_type"].values = ["sweaters", "blouses"]
+
+    sweater = ProductSummary(
+        product_id="s1",
+        display_name="Ultra Soft Cashmere Blend Sweater Blouse",
+        category="sweaters",
+        price=Money(amount=39.99, currency="USD"),
+    )
+    monkeypatch.setattr(
+        catalog_search_mod,
+        "execute_catalog_search",
+        lambda *_a, **_k: SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[sweater]),
+            fallback_attempted=False,
+            fallback_used=False,
+        ),
+    )
+
+    ctx = _context(
+        "add the Ultra Soft Cashmere Blend Sweater Blouse to my cart",
+        capabilities=capabilities,
+    )
+
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="Ultra Soft Cashmere Blend Sweater Blouse",
+                requested_product_type="Ultra Soft Cashmere Blend Sweater Blouse",
+                taxonomy={"category": ["apparel"], "subcategory": ["sweaters"]},
+            )
+        ],
+    )
+
+    assert _rejection_codes(result) == []
+    assert sweater.display_name in (
+        result[0] if isinstance(result, tuple) else result
+    )
+
+
+def test_where_the_judge_has_placed_a_role_the_string_rule_is_not_consulted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The judge is the last word on where a role goes.
+
+    `_resolved_against_the_catalogue` writes the judge's answer into the
+    taxonomy three steps before this gate. Asked about the Ultra Soft Cashmere
+    Blend Sweater Blouse in P26, the deployed judge answered sweaters and
+    blouses, five times in five. Had the model called that role "blouses", a
+    phrase the catalog advertises whole, the string rule would want blouses
+    alone and refuse the scope the judge had just written.
+    """
+
+    capabilities = _capabilities()
+    capabilities.taxonomy.categories["apparel"].subcategories = {
+        "sweaters": CatalogTaxonomySubcategory(product_count=1),
+        "blouses": CatalogTaxonomySubcategory(product_count=1),
+    }
+    capabilities.filters["product_type"].values = ["sweaters", "blouses"]
+
+    sweater = ProductSummary(
+        product_id="s1",
+        display_name="Ultra Soft Cashmere Blend Sweater Blouse",
+        category="sweaters",
+        price=Money(amount=39.99, currency="USD"),
+    )
+    monkeypatch.setattr(
+        catalog_search_mod,
+        "execute_catalog_search",
+        lambda *_a, **_k: SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[sweater]),
+            fallback_attempted=False,
+            fallback_used=False,
+        ),
+    )
+
+    name = "Ultra Soft Cashmere Blend Sweater Blouse"
+    ctx = _context(
+        f"add the {name} to my cart",
+        capabilities=capabilities,
+        judge=_Judge({"blouses": ["sweaters", "blouses"]}),
+    )
+
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query=name,
+                requested_product_type="blouses",
+                taxonomy={"category": ["apparel"], "subcategory": ["blouses"]},
+            )
+        ],
+    )
+
+    assert _rejection_codes(result) == []
+    assert sweater.display_name in (
+        result[0] if isinstance(result, tuple) else result
+    )
 
 
 def test_a_narrowed_role_is_not_told_to_widen() -> None:

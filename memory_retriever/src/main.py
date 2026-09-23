@@ -513,8 +513,7 @@ def clear_context(user_id: int, db=Depends(get_db)):
 @app.post("/user/{user_id}/clear")
 def clear_user(user_id: int, db=Depends(get_db)):
     # The cart goes explicitly. `CartItem.user_id` carries no foreign key onto
-    # `users`, so deleting the user cascades nothing, and this endpoint used to
-    # report that it had deleted the cart while leaving every line in place.
+    # `users`, so deleting the user cascades nothing.
     cart_lines = (
         db.query(CartItem).filter(CartItem.user_id == user_id).delete(
             synchronize_session=False

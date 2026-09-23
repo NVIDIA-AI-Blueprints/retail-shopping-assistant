@@ -487,12 +487,13 @@ interface StreamingChunk {
 
 ### Weather boundary (no HTTP route)
 
-Slice 3 adds a disabled, directly constructible weather client/tool inside the
-chain server, but it exposes no application, chain-server, or memory-service
-weather endpoint. It is absent from query request/response schemas, agent tool
-registration, prompts, and UI payloads. `/query/stream` and `/query/timing`
-therefore do not perform weather lookups, including when a selected shopper has
-a saved ZIP or a message mentions an event or date.
+There is no weather endpoint on the application, chain server, or memory
+service, and no weather field in the query request or response schemas. When
+weather is enabled (`WEATHER_ENABLED=true`), the agent itself may call its
+forecast tool during `/query/stream` or `/query/timing` for a place and dates
+the shopper named, and the forecast reaches the client only as part of the
+reply text. A selected shopper's saved ZIP is never looked up on its own. When
+weather is disabled, no query makes a weather request.
 
 ### GET `/shopper-profiles`
 

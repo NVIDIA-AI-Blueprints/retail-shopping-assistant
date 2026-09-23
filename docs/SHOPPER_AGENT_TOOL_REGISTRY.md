@@ -1037,14 +1037,15 @@ but they are not registered tools in the active Deep Agents runtime:
 | Outfit styling tool | Not a tool. Styling is model behavior guided by skills over catalog results. |
 | Media perception tool | Not an agent-callable tool. Media analysis runs before the Deep Agents turn and is passed as context. |
 
-The dormant weather wrapper accepts only an exact five-digit US ZIP and one of
-three date modes: no date for the provider-location's local today, one ISO
-calendar date, or a complete inclusive ISO start/end range of at most 15 days.
-It rejects relative phrases, prose locations, coordinates, shopper IDs, mixed
-date modes, partial ranges, historical observations, historical forecasts, and
-statistical long-range estimates. Its normalized daily evidence is bounded to
-15 unique ordered rows and uses a finite condition and precipitation domain.
-Typed failures separate invalid input, disabled/config state, an unresolved ZIP,
+The weather tool accepts a city, town or postal code that the shopper named in
+the conversation, and one ISO calendar date or a complete inclusive ISO
+start/end range of at most 15 days; with no date it asks rather than forecasting
+today. It rejects relative phrases, multi-line or overlong locations, places the
+shopper did not name, mixed date modes, partial ranges, historical observations,
+historical forecasts, and statistical long-range estimates. Its normalized
+daily evidence is bounded to 15 unique ordered rows and uses a finite condition
+and precipitation domain. Typed failures separate invalid input,
+disabled/config state, an unresolved place,
 out-of-horizon data, authentication, rate limit, timeout, availability, and
 invalid provider responses without disclosing the key, prepared URL, ZIP,
 requested dates, resolved location, provider body, or raw exception.
@@ -1052,12 +1053,13 @@ requested dates, resolved location, provider body, or raw exception.
 The first adapter uses the
 [Visual Crossing Timeline API](https://www.visualcrossing.com/resources/documentation/weather-api/timeline-weather-api/)
 directly through the existing HTTP dependency; no vendor SDK or MCP server is
-required. Normalized results preserve provider attribution metadata. A later
-shopper-facing slice must display the attribution required by the operator's
-license, add forecast-uncertainty language, and review
+required. Normalized results preserve provider attribution metadata, and a
+reply that uses a forecast must carry that attribution and its link. The reply,
+forecast included, is stored with the conversation like any other reply, so
+check the
 [Visual Crossing storage and sharing terms](https://www.visualcrossing.com/weather-service-terms/)
-before persisting or exposing results. Slice 3 stores and displays no forecast
-and makes no weather request during startup, health checks, or shopper turns.
+against your deployment before enabling it. Disabled, the tool makes no weather
+request during startup, health checks, or shopper turns.
 
 ## Registration Standards For New Tools
 

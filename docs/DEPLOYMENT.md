@@ -415,20 +415,22 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 | `MEMORY_SQLITE_BUSY_TIMEOUT_MS` | SQLite lock wait for the single memory-service writer | No | `5000` |
 | `MEMORY_TURN_ABANDON_SECONDS` | Age at which startup or the next turn start marks an unfinished `started` turn abandoned | No | `300` |
 | `MEMORY_RECENT_TURNS` | Maximum prior context-eligible raw turns returned at the next durable turn start | No | `8` |
-| `WEATHER_ENABLED` | Permits explicit direct construction of the dormant weather client/tool; does not register it with the shopper agent | No | `false` |
+| `WEATHER_ENABLED` | Registers the forecast tool with the shopper agent (needs `WEATHER_API_KEY`) | No | `false` |
 | `WEATHER_API_KEY` | Visual Crossing server-side credential, read indirectly from the variable named by chain-server weather config | Only when directly constructing an enabled weather client | empty |
 | `LOCAL_NIM_CACHE` | NIM cache directory | Local only | `~/.cache/nim` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
 
-### Dormant Weather Tool
+### Weather Tool
 
-The chain server includes a provider-neutral daily weather client and a
-`get_weather_forecast_tool` factory, with Visual Crossing as the first adapter.
-Slice 3 leaves it disabled and unregistered: it is not model-visible, not
-granted by any shopper skill, not connected to selected-shopper ZIP, and not
-exposed through FastAPI or the UI. Ordinary startup, health checks, shopper
+The chain server includes a provider-neutral daily weather client and
+`get_weather_forecast_tool`, with Visual Crossing as the first adapter. It is
+off by default. Enabled, the tool is registered with the shopping agent and
+granted only by the `destination-weather` skill; it forecasts a place the
+shopper named, for dates within the 15-day horizon, at most twice per turn.
+Disabled, it is not registered at all, and startup, health checks, shopper
 turns, and offline tests perform no provider request and require no weather key.
+It has no FastAPI route and no UI of its own.
 
 The complete non-secret configuration is in
 `shared/configs/chain_server/config.yaml`:
@@ -444,7 +446,7 @@ weather:
   max_range_days: 15
 ```
 
-For an explicit direct-client test, set `WEATHER_ENABLED=true` and provide
+To enable it, set `WEATHER_ENABLED=true` and provide
 `WEATHER_API_KEY` through an ignored `.env`, the process environment, or the
 deployment secret manager. Compose passes those two variables only to
 `chain-server`; it does not bake a value into an image or expose it to catalog,

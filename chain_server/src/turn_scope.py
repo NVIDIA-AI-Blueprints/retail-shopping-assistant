@@ -29,7 +29,6 @@ class CatalogRepairState:
 
     failed_repair_scope_key: str | None = None
     pending_taxonomy_constraints: dict[str, Any] | None = None
-    pending_no_direct_constraint_clear: bool = False
     pending_schema_requirements: list[str] = field(default_factory=list)
     #: The last scope this turn was turned back on, as sent. A repair that
     #: comes back identical has not repaired anything, and the locks above

@@ -58,10 +58,6 @@ class SearchRejection(StrEnum):
     # unadvertised requirement is disclosed and ranked on now, never sent back
     # to be justified, so neither code has anything left that can raise it.
     EXACT_TAXONOMY_NOT_ADVERTISED = "exact_taxonomy_not_advertised"
-    ADVERTISED_MATCH_REPORTED_AS_GAP = "advertised_match_reported_as_gap"
-
-    # Outcome for a product type no advertised taxonomy faithfully covers.
-    NO_ADVERTISED_TAXONOMY_MATCH = "no_advertised_taxonomy_match"
 
     # Planning against the capability contract.
     UNSUPPORTED_CATALOG_TAXONOMY = "unsupported_catalog_taxonomy"

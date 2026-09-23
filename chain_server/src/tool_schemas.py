@@ -176,7 +176,6 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
         "member_of_requested_umbrella",
         "parent_category_alternative",
         "agent_selected_type",
-        "no_direct_catalog_match",
         "image_only",
     ] = Field(..., description="Server-derived catalog execution mode.")
 
@@ -219,10 +218,7 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
             if isinstance(self.requested_product_type, str)
             else ""
         )
-        if self.taxonomy_status in {
-            "image_only",
-            "no_direct_catalog_match",
-        }:
+        if self.taxonomy_status == "image_only":
             if has_shopper_guidance:
                 raise ValueError(
                     "A non-text retrieval path requires empty shopper_guidance"
@@ -256,29 +252,6 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
             raise ValueError(
                 "image-only search requires requested_product_type=null"
             )
-        if self.taxonomy_status == "no_direct_catalog_match":
-            if has_taxonomy:
-                raise ValueError(
-                    "a non-retrieval result requires empty taxonomy arrays"
-                )
-            if not has_query:
-                raise ValueError(
-                    "a non-retrieval result requires a requested product type"
-                )
-            constraints = (
-                self.required_constraints.model_dump(exclude_none=True)
-                if isinstance(self.required_constraints, BaseModel)
-                else self.required_constraints
-            )
-            has_constraint = any(
-                value not in (None, "", [], {})
-                for value in constraints.values()
-            )
-            if has_constraint:
-                raise ValueError(
-                    "a non-retrieval result cannot include required constraints"
-                )
-            return self
         if self.taxonomy_status == "image_only":
             if has_query or has_taxonomy:
                 raise ValueError(

@@ -2339,7 +2339,6 @@ class TestDeepAgentsRuntimeRefs:
             "member_of_requested_umbrella",
             "parent_category_alternative",
             "agent_selected_type",
-            "no_direct_catalog_match",
             "image_only",
         ]
         assert schema["properties"]["taxonomy_status"]["description"] == (
@@ -2753,54 +2752,6 @@ class TestDeepAgentsRuntimeRefs:
                     "shopper_guidance": "",
                     "requested_product_type": None,
                     "taxonomy_status": "image_only",
-                }
-            )
-
-        no_direct_match = schema_model.model_validate(
-            {
-                "semantic_query": "casual sneakers",
-                "shopper_guidance": "",
-                "requested_product_type": "sneakers",
-                "taxonomy_status": "no_direct_catalog_match",
-                "taxonomy": {"category": [], "subcategory": []},
-                "required_constraints": {},
-                "scope_complete": True,
-            }
-        )
-        assert no_direct_match.taxonomy_status == "no_direct_catalog_match"
-        with pytest.raises(
-            ValueError,
-            match="a non-retrieval result cannot include required constraints",
-        ):
-            schema_model.model_validate(
-                {
-                    **no_direct_match.model_dump(),
-                    "required_constraints": {
-                        "unadvertised_requirements": ["sneakers"]
-                    },
-                }
-            )
-        with pytest.raises(
-            ValueError,
-            match="a non-retrieval result cannot include required constraints",
-        ):
-            schema_model.model_validate(
-                {
-                    **no_direct_match.model_dump(),
-                    "required_constraints": {
-                        "unadvertised_requirements": ["denim"]
-                    },
-                }
-            )
-        with pytest.raises(
-            ValueError,
-            match="a non-retrieval result requires empty taxonomy arrays",
-        ):
-            schema_model.model_validate(
-                {
-                    **complete_request,
-                    "shopper_guidance": "",
-                    "taxonomy_status": "no_direct_catalog_match",
                 }
             )
 

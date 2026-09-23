@@ -505,20 +505,11 @@ def test_repeated_catalog_scope_is_attributed_to_the_catalog_scope_gate() -> Non
     assert str(second) == str(first)
 
 
-#: Three gates keyed on a ``taxonomy_status`` the server no longer derives.
-#: ``_catalog_execution_taxonomy_status`` returns six statuses and
-#: ``no_direct_catalog_match`` is not one of them, which strands the two gates
-#: that require it; the third needs ``exact_requested_type`` for a product type
-#: the catalog does not advertise, and every route to that combination is
-#: refused by the schema first. They keep their codes so that a status change
-#: that revives them is attributable on the day it happens.
-UNREACHABLE_GATES = frozenset(
-    {
-        SearchRejection.NO_ADVERTISED_TAXONOMY_MATCH,
-        SearchRejection.ADVERTISED_MATCH_REPORTED_AS_GAP,
-        SearchRejection.EXACT_TAXONOMY_NOT_ADVERTISED,
-    }
-)
+#: This gate needs ``exact_requested_type`` for a product type the catalog does
+#: not advertise, and every route to that combination is refused by the schema
+#: first. It keeps its code so that a change that revives it is attributable on
+#: the day it happens.
+UNREACHABLE_GATES = frozenset({SearchRejection.EXACT_TAXONOMY_NOT_ADVERTISED})
 
 
 def test_every_reachable_gate_code_is_exercised() -> None:

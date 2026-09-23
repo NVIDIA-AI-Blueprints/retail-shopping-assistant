@@ -45,7 +45,6 @@ from .catalog_request import (
 from .catalog_vocabulary import (
     _advertised_scope_match,
     _advertised_taxonomy_scope_issue,
-    _advertised_taxonomy_value,
     _agent_selected_scope_is_advertised,
     _catalog_execution_taxonomy_status,
     _duplicates_unavailable_product_type,
@@ -166,27 +165,17 @@ def _lock_taxonomy_constraint_values(
     repair: CatalogRepairState,
     scope_key: str | None,
     constraints: dict[str, Any],
-    *,
-    allow_no_direct_clear: bool = False,
 ) -> str:
     """Store canonical hard constraints for one taxonomy repair."""
 
     constraints = _normalized_scope_value(constraints)
     constraints.pop("unadvertised_requirements", None)
     repair.pending_taxonomy_constraints = constraints
-    repair.pending_no_direct_constraint_clear = allow_no_direct_clear
     serialized_constraints = json.dumps(
         constraints,
         ensure_ascii=False,
         sort_keys=True,
     )
-    if allow_no_direct_clear:
-        return (
-            " Clear advertised required_constraints if the corrected "
-            "request does not retrieve. Otherwise preserve these "
-            "capability-validated advertised required_constraints "
-            f"exactly: {serialized_constraints}."
-        )
     if not constraints:
         return (
             " The rejected call had no advertised required_constraints. "
@@ -883,9 +872,6 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 attempt.repair,
                 candidate_scope_key,
                 validated_constraints.model_dump(exclude_none=True),
-                allow_no_direct_clear=(
-                    taxonomy_status == "no_direct_catalog_match"
-                ),
             )
         return _rejected(
             attempt,
@@ -930,10 +916,6 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     )
     if (
         attempt.repair.pending_taxonomy_constraints is not None
-        and not (
-            attempt.repair.pending_no_direct_constraint_clear
-            and request.taxonomy_status == "no_direct_catalog_match"
-        )
         and normalized_advertised_constraints
         != attempt.repair.pending_taxonomy_constraints
     ):
@@ -943,7 +925,6 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         )
     if attempt.repair.pending_taxonomy_constraints is not None:
         attempt.repair.pending_taxonomy_constraints = None
-        attempt.repair.pending_no_direct_constraint_clear = False
     normalized_constraints = dict(all_constraints)
     unadvertised_requirements = normalized_constraints.pop(
         "unadvertised_requirements",
@@ -1110,11 +1091,7 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             + _lock_taxonomy_constraints(attempt.repair, candidate_scope_key, request),
         )
 
-    if (
-        request.taxonomy_status != "no_direct_catalog_match"
-        and unadvertised_requirements
-        and not suppress_requirement_disclosure
-    ):
+    if unadvertised_requirements and not suppress_requirement_disclosure:
         # Rank on it, disclose it, do not abandon the search.
         #
         # This used to decide first whether the shopper had said the word,
@@ -1169,26 +1146,6 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             "clarifying question instead of searching an adjacent type.",
         )
 
-    advertised_match = (
-        _advertised_taxonomy_value(
-            request.requested_product_type,
-            capabilities,
-        )
-        if request.taxonomy_status == "no_direct_catalog_match"
-        else None
-    )
-    if advertised_match:
-        attempt.repair.failed_repair_scope_key = candidate_scope_key
-        return _rejected(
-            attempt,
-            SearchRejection.ADVERTISED_MATCH_REPORTED_AS_GAP,
-            SEARCH_VALIDATION_ERROR_PREFIX
-            + f"The requested product type '{request.requested_product_type}' "
-            f"matches advertised taxonomy value '{advertised_match}'. "
-            "Select that advertised value instead of reporting a gap."
-            + _lock_taxonomy_constraints(attempt.repair, candidate_scope_key, request),
-        )
-
     attempt.repair.failed_repair_scope_key = None
 
     attempt.normalized_constraints = normalized_constraints
@@ -1197,18 +1154,10 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     return None
 
 
-def _no_direct_match_outcome(ctx: SearchContext, attempt: _Attempt) -> StepResult:
-    """Report an unadvertised product type as a gap rather than searching around it.
-
-    Substituting an adjacent taxonomy here is what makes an assistant appear to
-    answer while showing something the shopper did not ask for, so this returns
-    the gap and stops the tool loop instead.
-    """
+def _role_key(ctx: SearchContext, attempt: _Attempt) -> StepResult:
+    """Key this scope by its role, so a second search of the role is a duplicate."""
 
     candidate_scope_key = attempt.candidate_scope_key
-    evidence = attempt.evidence
-    lines = attempt.lines
-    request = attempt.request
 
     # A role is a role whoever named it. This key is what stops the same role
     # being searched twice in a turn, and it used to be set only when the
@@ -1233,47 +1182,6 @@ def _no_direct_match_outcome(ctx: SearchContext, attempt: _Attempt) -> StepResul
         else None
     )
 
-    if request.taxonomy_status == "no_direct_catalog_match":
-        with ctx.scope.catalog_lock:
-            if (
-                shopper_scope_key is not None
-                and shopper_scope_key in ctx.scope.searched_shopper_scopes
-            ):
-                # Answered from the earlier search, as above. This arm is the
-                # model declaring no direct match for a role it already
-                # searched, which is the same repeat wearing a different
-                # status.
-                answer = _already_answered(ctx, attempt)
-                if answer is not None:
-                    return answer
-        evidence = SearchEvidence(
-            outcome="no_direct_catalog_match",
-            requested_product_type=request.requested_product_type,
-            scope_complete=bool(request.scope_complete),
-            scope_outcome={
-                "outcome": "no_direct_catalog_match",
-                "requested_product_type": request.requested_product_type,
-            },
-        )
-        lines = [
-            "STOP_TOOL_USE: No faithful advertised catalog taxonomy "
-            "matches the requested product type "
-            f"'{request.requested_product_type}'. "
-            "Do not search adjacent product types. Tell the shopper the "
-            "requested type is not advertised and ask before offering an "
-            "alternative.",
-            _format_catalog_scope_outcome(evidence.scope_outcome),
-        ]
-        if evidence.scope_complete:
-            lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
-        return _rejected(
-            attempt,
-            SearchRejection.NO_ADVERTISED_TAXONOMY_MATCH,
-            ("\n\n".join(lines), evidence.as_artifact()),
-        )
-
-    attempt.evidence = evidence
-    attempt.lines = lines
     attempt.shopper_scope_key = shopper_scope_key
     return None
 
@@ -2266,7 +2174,7 @@ _PLAN_STEPS = (
     _classify_requirements,
     _validated_request,
     _reviewed_provenance,
-    _no_direct_match_outcome,
+    _role_key,
     _planned_search,
 )
 
@@ -2902,9 +2810,5 @@ def _merge_repair(target: Any, source: Any) -> None:
     ):
         if getattr(target, name) is None and getattr(source, name) is not None:
             setattr(target, name, getattr(source, name))
-    target.pending_no_direct_constraint_clear = (
-        target.pending_no_direct_constraint_clear
-        or source.pending_no_direct_constraint_clear
-    )
     if not target.pending_schema_requirements:
         target.pending_schema_requirements = list(source.pending_schema_requirements)

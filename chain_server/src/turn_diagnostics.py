@@ -424,10 +424,6 @@ def _tool_rejection_reason(
         ),
         (f"{STOP_TOOL_USE_PREFIX} Catalog search limit reached", "catalog_search_limit"),
         (
-            "STOP_TOOL_USE: No faithful advertised catalog taxonomy",
-            "no_advertised_taxonomy_match",
-        ),
-        (
             f"{STOP_TOOL_USE_PREFIX} Product-detail read limit reached",
             "product_detail_read_limit",
         ),

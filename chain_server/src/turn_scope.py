@@ -69,12 +69,6 @@ class TurnScope:
     answered_scopes: dict[str, str | tuple[str, dict[str, Any]]] = field(
         default_factory=dict
     )
-    #: Roles already answered as a type this shop does not carry. Told once,
-    #: then refused outright: handed the advertised list a second time, the
-    #: model reads another name off it and tries that instead, which is how
-    #: one jeans role became a walk through all six apparel subcategories.
-    roles_not_advertised: set[str] = field(default_factory=set)
-
     # Forecast budget. A paid external call, and one turn never needs many:
     # a shopper is at one event, on one date. Guarded because roles can run
     # concurrently.

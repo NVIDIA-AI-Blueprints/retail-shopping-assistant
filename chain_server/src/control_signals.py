@@ -24,7 +24,6 @@ class ControlSignal(StrEnum):
     """One deterministic tool-loop outcome, recorded where it is decided."""
 
     STOP_TOOL_USE = "stop_tool_use"
-    SCOPE_COMPLETE = "scope_complete"
     BUDGET_EXHAUSTED = "budget_exhausted"
     UNSUPPORTED_TAXONOMY = "unsupported_taxonomy"
     UNSUPPORTED_CONSTRAINT = "unsupported_constraint"

@@ -18,6 +18,11 @@ from typing import Iterator
 import pytest
 from fastapi.testclient import TestClient
 from memory_retriever.src import main as memory_main
+from memory_retriever.src.migrations import (
+    ensure_cart_line_id_column,
+    ensure_product_id_column,
+    migrate_quantity_idempotency,
+)
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool, StaticPool
@@ -703,10 +708,13 @@ def test_cart_line_id_migration_is_idempotent(
                 "'{\"user_id\": 7, \"message\": \"updated\"}')"
             )
         )
-    memory_main._ensure_cart_line_id_column()
-    memory_main._ensure_product_id_column()
-    memory_main._migrate_quantity_idempotency()
-    memory_main._migrate_quantity_idempotency()
+    with legacy_engine.begin() as conn:
+        ensure_cart_line_id_column(conn)
+        ensure_product_id_column(conn)
+    with legacy_engine.begin() as conn:
+        migrate_quantity_idempotency(conn)
+    with legacy_engine.begin() as conn:
+        migrate_quantity_idempotency(conn)
     with legacy_engine.connect() as conn:
         first_ids = conn.execute(
             text("SELECT cart_line_id FROM cart_items ORDER BY id")
@@ -725,7 +733,8 @@ def test_cart_line_id_migration_is_idempotent(
             )
         ).fetchall()
 
-    memory_main._ensure_cart_line_id_column()
+    with legacy_engine.begin() as conn:
+        ensure_cart_line_id_column(conn)
     with legacy_engine.connect() as conn:
         second_ids = conn.execute(
             text("SELECT cart_line_id FROM cart_items ORDER BY id")

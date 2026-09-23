@@ -73,6 +73,9 @@ change the cart, and what the shopper is told afterwards.
 - When they DO name a size, act on it. Do not ask again. A bare "size 8" after
   you offered the sizes is an answer, not a new question: add it. Asking twice
   reads as not listening, and the instruction goes unfulfilled.
+- A size that names what the cart already holds -- "size 2" after you added
+  it in a 2 -- confirms that line. Change nothing and say it is in the cart;
+  adding again gives them two.
 - Never ask when the only size is `onesize`. Asking what size handbag someone
   wants is worse than not asking at all, and never add a size the product does
   not list.

@@ -782,13 +782,9 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 )
                 # The role may not exist at all. "Nothing over $50" names no
                 # product type, so every category the shop has is in scope and
-                # any single one of them is the wrong answer -- but this
-                # refusal only ever described how to narrow, so the model kept
-                # narrowing. It picked apparel four runs in five and the
-                # shopper was asked to clarify a request that was complete.
-                #
-                # Both wider shapes are already legal; neither was ever said
-                # out loud at the point they were needed.
+                # any single one of them is the wrong answer. The refusal must
+                # name the wider shapes too, or the model narrows to one
+                # category and asks the shopper to clarify a complete request.
                 if _hard_filter_scopes_this(required_constraints):
                     repair_guidance += (
                         " If the shopper named no product type at all -- a "
@@ -2331,15 +2327,12 @@ def _colour_words_not_advertised(
 ) -> list[str]:
     """The colour words this scope asked to filter on and this catalog lacks.
 
-    Read here because here is the only place it can be read: the step that
-    sets an unhonourable value aside is the first of the plan steps, and by the
-    time it has run the word is gone from the constraints.
+    Must run before the plan step that sets an unhonourable value aside; after
+    it the word is no longer in the constraints.
 
-    Gated on membership rather than sending every colour the scope offered.
-    Measured over 3,040 scopes carrying a colour filter, 95.6% named advertised
-    values throughout -- the scope prompt asks the model to do this mapping and
-    it mostly does. Asking about those would bolt dead words onto almost every
-    search call to serve the 4% that need it.
+    Only colours missing from the catalog are returned, not every colour the
+    scope offered: most scopes already name advertised values, and sending
+    those would add dead words to almost every search call.
     """
 
     if not advertised:

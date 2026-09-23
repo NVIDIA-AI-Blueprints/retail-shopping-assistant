@@ -365,9 +365,7 @@ class ProductEvidence:
 
         Read at finalization so the choice can be recorded. A shopper who says
         "add the first pairing" has chosen, by a coordinate the system itself
-        wrote down -- and that choice used to be forgotten the moment the turn
-        ended, leaving them to say it again, and again, until they typed the
-        catalog's own names.
+        wrote down, and must not have to say it again next turn.
         """
 
         return tuple(sorted(self._system_identified))
@@ -487,10 +485,8 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
                 lines.append("IMAGE_AVAILABLE: yes")
             # The presented-product event stores the whole ProductSummary, so
             # the attributes the catalog confirmed when this product was shown
-            # are already in hand. Withholding them told the model to spend a
-            # round trip fetching what the lane had recorded -- and the message
-            # below used to say details were required for material and care,
-            # which was never true of this data.
+            # are already in hand. Withholding them would have the model spend
+            # a round trip fetching what the lane has recorded.
             facts = _presented_attribute_facts(product)
             if facts:
                 lines.append("CONFIRMED WHEN SHOWN:")
@@ -551,27 +547,16 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
                 "guess."
             )
             continue
-        # Nothing shown in this conversation matches -- which is a different
-        # situation from an ambiguous or near-miss reference above, and used to
-        # get the same answer: stop and ask. A shopper who names a product that
-        # was never shown was making a search request, and the turn ended with a
-        # full search budget unspent, offering to accept a product link the
-        # assistant cannot read.
+        # Nothing matched by ref or by whole display name -- a different
+        # situation from an ambiguous or near-miss reference above. A shopper
+        # who names a product that was never shown is making a search request;
+        # one who points ("the black one in a 2") may mean something in the
+        # index that neither comparison can hit.
         #
         # Which recovery fits depends on whether the shopper named a product or
-        # pointed at one, and the model is the only reader that can tell.
-        # What was checked, not what was concluded. Two things were compared:
-        # the PRODUCT_REF, and the display name as a whole string. "Nothing
-        # shown in this conversation matches it" reports far more than that,
-        # and for a reference the shopper pointed with rather than named, it is
-        # simply untrue.
-        #
-        # "Add the black one in a 2" came here. No product is called "black
-        # one", so neither comparison could hit -- and the black dress in a
-        # size 2 was sitting in the index, shown nine turns earlier. Told
-        # nothing shown matched, and handed four catalog products it had never
-        # shown, the assistant stopped believing the index it was already
-        # holding and asked the shopper which black item they meant.
+        # pointed at one, and the model is the only reader that can tell. So
+        # the message reports what was checked, not a conclusion that nothing
+        # shown matches.
         lines.append(
             f"REFERENCE {resolution.reference_id}: NOT FOUND. No product shown "
             "in this conversation carries that PRODUCT_REF or that exact name; "
@@ -600,10 +585,8 @@ def format_historical_product_index(
         raise ValueError("max_chars must be at least 256")
     # Most recent first, because that is how the shopper refers to things. "The
     # black one" means the most recent black thing they were shown, not the
-    # oldest -- and this list used to open with turn 1 and bury the latest
-    # showing at the bottom of a long prompt. Asked for "the black one in a 2"
-    # one turn after four black dresses were shown, the assistant reached back
-    # fourteen turns for a navy dress and put it in the cart.
+    # oldest, and the latest showing must not be buried at the bottom of a long
+    # prompt.
     heading = (
         "HISTORICAL PRODUCT INDEX (read-only, most recently shown first):"
     )

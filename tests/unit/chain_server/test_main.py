@@ -225,7 +225,7 @@ class TestCreateInitialState:
         assert state.context == ""
         assert state.image == ""
         assert isinstance(state.cart, Cart)
-        assert state.cart.is_empty()
+        assert state.cart.contents == []
         assert state.guardrails is True
 
     def test_guardrails_request_overrides_config_default(self, main_module) -> None:

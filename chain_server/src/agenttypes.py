@@ -65,27 +65,9 @@ class Cart(BaseModel):
         description="List of items in the cart with their quantities and metadata"
     )
 
-    def is_empty(self) -> bool:
-        """Check if the cart is empty."""
-        return len(self.contents) == 0
-
-    def get_item_count(self) -> int:
-        """Get the total number of items in the cart."""
-        return sum(item.get('amount', 0) for item in self.contents)
-
-    def get_items(self) -> list[str]:
-        """Get a list of unique item names in the cart."""
-        return list(set(item.get('item', '') for item in self.contents))
-
 
 class State(BaseModel):
-    """Everything one turn carries, from request to final response.
-
-    The attribute list that used to live here named nine fields of the
-    twenty-five below and described `next_agent` as being set by a planner
-    that no longer exists. Each field documents itself, so there is no second
-    list here to drift out of date.
-    """
+    """Everything one turn carries, from request to final response."""
     user_id: int = Field(..., description="Unique user identifier")
     query: str = Field(..., description="User's input query")
     shopper_profile_id: str | None = Field(
@@ -197,57 +179,8 @@ class State(BaseModel):
         default_factory=list,
         description="Shopper skills selected during the current turn"
     )
-    next_agent: str = Field(default="", description="Next agent to route to")
     guardrails: bool = Field(default=True, description="Enable content safety checks")
     timings: Annotated[dict[str, float], ior] = Field(
         default_factory=dict,
         description="Performance timing information for each step"
     )
-
-    def add_timing(self, step: str, duration: float) -> None:
-        """Add timing information for a processing step."""
-        self.timings[step] = duration
-
-    def get_total_time(self) -> float:
-        """Get the total processing time."""
-        return sum(self.timings.values())
-
-    def has_image(self) -> bool:
-        """Check if the state contains an image."""
-        return bool(self.image.strip())
-
-    def is_empty_query(self) -> bool:
-        """Check if the query is empty."""
-        return not bool(self.query.strip())
-
-
-class Rail(BaseModel):
-    """
-    Guardrails check result model.
-    
-    This model represents the result of content safety checks
-    performed by the guardrails service.
-    
-    Attributes:
-        is_safe: Whether the content passed safety checks
-        rail_timings: Timing information for the safety check
-    """
-    is_safe: bool = Field(default=True, description="Whether content passed safety checks")
-    rail_timings: dict[str, float] = Field(
-        default_factory=dict,
-        description="Timing information for safety checks"
-    )
-
-    def add_timing(self, check_type: str, duration: float) -> None:
-        """Add timing information for a specific safety check."""
-        self.rail_timings[check_type] = duration
-
-    def get_total_rail_time(self) -> float:
-        """Get the total time spent on safety checks."""
-        return sum(self.rail_timings.values())
-
-
-# Type aliases for better code readability
-AgentResponse = dict[str, Any]
-ProductInfo = dict[str, Any]
-TimingInfo = dict[str, float]

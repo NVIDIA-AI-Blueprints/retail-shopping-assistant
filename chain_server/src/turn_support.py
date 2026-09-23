@@ -427,11 +427,19 @@ def _one_primary_per_group(self: Any) -> Any:
     for _group, names in sorted(groups.items()):
         chosen = sorted(selected.intersection(names))
         if len(chosen) > 1:
+            # Told only the rule, the model resent the same selection; given
+            # the lists to send, it sent one of them.
+            valid = [
+                json.dumps(
+                    [n for n in self.skill_names if n not in chosen or n == keep]
+                )
+                for keep in chosen
+            ]
             raise PydanticCustomError(
                 SKILL_ACTIVATION_MULTIPLE_PRIMARY,
-                "select exactly one primary procedure: {options}, never more "
-                "than one",
-                {"options": " or ".join(chosen)},
+                "select exactly one primary procedure, never more than one. "
+                "Send one of: {options}",
+                {"options": " or ".join(valid)},
             )
         primaries.extend(chosen)
 

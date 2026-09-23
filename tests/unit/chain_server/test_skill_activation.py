@@ -266,6 +266,22 @@ def test_activation_schema_rejects_two_primary_procedures() -> None:
     assert selected.skill_names == ["outfit-styling", "budget-shopping"]
 
 
+def test_two_primaries_are_answered_with_the_selections_to_send() -> None:
+    # J11: told only the rule, the model resent the same three skills and the
+    # turn closed without the search the add needed.
+    activation_input = _skill_activation_input_model(_THREE_PRIMARIES)
+
+    with pytest.raises(ValueError) as rejected:
+        activation_input(
+            skill_names=["outfit-styling", "cart-management", "product-discovery"],
+        )
+
+    assert (
+        'Send one of: ["outfit-styling", "cart-management"] or '
+        '["cart-management", "product-discovery"]'
+    ) in str(rejected.value)
+
+
 def test_every_primary_in_a_group_is_exclusive_with_every_other() -> None:
     """The pair that used to be hardcoded was two of three.
 

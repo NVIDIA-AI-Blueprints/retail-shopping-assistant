@@ -19,7 +19,6 @@ import pytest
 from catalog_retriever.src import utils as utils_mod
 from catalog_retriever.src.utils import (
     image_path_to_base64,
-    image_to_base64,
     image_url_to_base64,
     is_path,
     is_url,
@@ -214,23 +213,6 @@ class TestImageUrlToBase64:
             image_url_to_base64("http://example.com/a.jpg", max_b64_length=10)
             is None
         )
-
-
-# --------------------------------------------------------------------------->
-# image_to_base64 (raw PIL input)
-# --------------------------------------------------------------------------->
-
-
-class TestImageToBase64:
-    def test_roundtrips_pil_image(self) -> None:
-        img = Image.new("RGB", (16, 16), color="green")
-        result = image_to_base64(img)
-
-        assert result.startswith("data:image/jpeg;base64,")
-        _, b64 = result.split(",", 1)
-        decoded = base64.b64decode(b64)
-        recovered = Image.open(io.BytesIO(decoded))
-        assert recovered.format == "JPEG"
 
 
 # --------------------------------------------------------------------------->

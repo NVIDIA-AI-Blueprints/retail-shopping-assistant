@@ -86,23 +86,6 @@ def image_url_to_base64(
         logging.debug(f"CATALOG RETRIEVER | utils.image_url_to_base64() | An error occurred: {e}")
         return None
 
-def image_to_base64(image):
-    """
-    Changes a raw JPEG passed into gradio into the correct format for NVCLIP.
-    """
-    # Convert the PIL Image to a byte stream
-    buffered = io.BytesIO()
-    image.save(buffered, format="JPEG")  # Save the image in JPEG format to the byte stream
-    image_bytes = buffered.getvalue()
-
-    # Base64 encode the byte stream
-    image_b64 = base64.b64encode(image_bytes).decode()
-
-    # Return the base64 string in a data URI format
-    base64_string = f"data:image/jpeg;base64,{image_b64}"
-
-    return base64_string
-
 def is_url(string: str) -> bool:
     """
     Simple check if a string is a URL.

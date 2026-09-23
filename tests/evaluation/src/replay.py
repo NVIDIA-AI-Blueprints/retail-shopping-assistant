@@ -86,8 +86,7 @@ class TurnResult:
     #: The memory the turn was read against: the dialogue window and the
     #: product index, exactly as the server rendered them. Reading a journey
     #: means asking why a turn answered as it did, and half of that answer is
-    #: what it could see -- which used to be reconstructable only offline, and
-    #: only approximately, from the products a run happened to report.
+    #: what it could see.
     memory: dict[str, str] = field(default_factory=dict)
     #: What each tool was actually asked for, in order. `tools` gives the names
     #: and answers "did it resolve or search"; it cannot answer "which product
@@ -884,8 +883,7 @@ def _what_the_tools_were_asked(calls: Sequence[Mapping[str, Any]]) -> list[str]:
     The summary line above already names the tools. What it cannot say is what
     they were asked for, and the cart failures all turn on that: a turn that
     adds the wrong product calls exactly the tools a turn that adds the right
-    one calls. Reading the argument used to mean re-running the turn against a
-    separate probe script and hoping a fifty-fifty defect reproduced.
+    one calls.
     """
 
     if not calls:

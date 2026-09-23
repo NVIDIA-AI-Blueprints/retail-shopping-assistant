@@ -364,10 +364,8 @@ def add_items_to_the_cart(
         return rendered
     return rendered, {EFFECTS_KEY: committed}
 # Not a tool. `remove_cart_item_tool` calls this directly, and a
-# decorated function is a StructuredTool, which is not callable -- so
-# every removal raised `'StructuredTool' object is not callable` and
-# the turn died. Its sibling `_add_cart_items_impl` is undecorated for
-# the same reason.
+# decorated function is a StructuredTool, which is not callable. Its
+# sibling `_add_cart_items_impl` is undecorated for the same reason.
 def remove_a_cart_line(
     runtime: DeepAgentsRuntime,
     state: State,
@@ -436,21 +434,10 @@ def change_a_line_size(
     followed by a remove -- in that order, because a failure between
     the two must leave the shopper an extra line rather than nothing.
 
-    That protocol used to be prose in this tool's own refusal: send a
-    size and it told the model to add the new size, confirm it, then
-    remove the old line. Two readers never got it right. A turn that
-    went straight to `add_cart_items_tool` never saw the refusal at
-    all, so "change the heels to an 8" added the 8, narrated that the
-    cart now held both, and asked the shopper which to keep -- ending
-    with a pair they had just replaced still in the cart, and no
-    CART_LINE_ID to remove it with, having had no reason to read the
-    cart. A turn that did see it had three calls to sequence, each of
-    which could be the one that dropped.
-
-    Nothing in that sequence needed the model. It had already said
+    Nothing in that sequence needs the model. It has already said
     everything there is to say -- this line, that size, that many --
-    and the rest is bookkeeping this code can do without asking. So it
-    does, and reports the cart it actually left behind.
+    and the rest is bookkeeping this code does without asking, then
+    reports the cart it actually left behind.
     """
 
     line = _cart_line_by_id(cart_line_id, state.cart)
@@ -603,11 +590,8 @@ def update_a_cart_line(
 
     if quantity == 0:
         # Deleting is a different intent from setting a quantity, and
-        # it has its own tool. The size case used to be routed through
-        # here too, and the model reached for the only move available
-        # -- quantity 0 -- which deleted the line and never added the
-        # replacement: the shopper corrected their size and lost the
-        # item. A size now has a route of its own, above.
+        # it has its own tool. A size change has its own route, above,
+        # so quantity 0 is never the way to correct a size.
         return (
             "CART_UPDATE_REFUSED: quantity 0 would delete this line, and "
             "this tool sets quantities. If the shopper wants the line "

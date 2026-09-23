@@ -56,12 +56,8 @@ SKILL_TOOL_NOT_GRANTED = (
 def _tool_not_granted(tool_name: str, selected_skills: Sequence[str]) -> str:
     """Say which skill grants the tool, and that asking for it is allowed.
 
-    This used to end "continue using only the tools available for this turn",
-    which forbids the one recovery that works. Asked to "add the Ombre Canvas
-    Tote Bag", a turn holding outfit-styling and budget-shopping found the bag,
-    read its details, called the cart tool, was refused for the grant -- and,
-    told to carry on without it, replied "I've added the Ombre Canvas Tote Bag
-    to your cart" over an empty cart. It did as it was told.
+    Telling the model to carry on without the tool forbids the one recovery
+    that works, and invites a reply claiming the call succeeded.
 
     The skill that grants the tool is known here, so the message names it. The
     last line matters as much as the first: a refused call is not a thing that
@@ -186,20 +182,6 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             self._skill_tool_grants,
         )
         with self._lock:
-            # A turn's first selection used to be its last. A second call
-            # returned False, changed no grants, and was reported to the model
-            # as already complete -- which reads like success.
-            #
-            # A shopper says "add the Ombre Canvas Tote Bag" six turns into
-            # building a capsule. The turn opens with outfit-styling and
-            # budget-shopping, finds the bag, reads its details, and is refused
-            # the cart tool for the grant. Asked to select cart-management and
-            # try again it does exactly that, is told the selection is already
-            # complete, and is refused again -- twelve times, until the turn
-            # died on the recursion limit. The run before, obeying an older
-            # message that told it not to retry, it simply said "I've added the
-            # Ombre Canvas Tote Bag to your cart" over an empty cart.
-            #
             # What the shopper wants is not always clear at the first token of
             # a turn, and a selection made then has to be correctable. So a
             # later call replaces the selection and re-grants against it,
@@ -450,24 +432,13 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
     ) -> bool:
         """Add the skill that grants this tool, rather than asking for it.
 
-        A turn selects its skills at its first token, and the prompt that asks
-        for them asks which task the turn continues -- "an outfit-building or
-        styling thread continues with the styling procedure", "keep the same
-        primary skill when the current request continues that task". Both are
-        there because the model used to abandon a styling thread the moment a
-        turn named one product. So on turn seven of a capsule, "add the Ombre
-        Canvas Tote Bag" keeps `outfit-styling`, exactly as instructed -- and
-        is then refused the cart tool, for obeying.
-
-        The task answer was right. It was read as a tool answer, which it is
-        not: continuing a styling task says nothing about whether the turn
-        will need the cart. The refusal then asked the model to name the
-        granting skill -- which this code already knows, having just used
-        `allowed_skills_any_of` to write the message naming it. Recovery cost
-        a model call to be told what the caller had computed, and could spin:
-        refused for the cart grant six turns into a capsule, it re-selected,
-        was told the selection was already complete, and was refused twelve
-        times until the turn died on the recursion limit.
+        A turn selects its skills at its first token, and the prompt asks it
+        to keep the primary skill of the task it continues. So on turn seven of
+        a capsule, "add the Ombre Canvas Tote Bag" rightly keeps
+        `outfit-styling` -- but continuing a styling task says nothing about
+        whether the turn needs the cart. The granting skill is already known
+        here from `allowed_skills_any_of`, so asking the model to name it would
+        spend a model call on what the caller has computed.
 
         So the call is its own request. A tool the turn was refused names the
         skill that grants it, and if adding that skill is a legal selection it
@@ -633,12 +604,8 @@ def _activation_validation_issue(error: Any) -> str:
 def _activation_validation_feedback(error: Any, issue: str) -> str:
     """Relay the validator's own message rather than restating the rule.
 
-    This used to hold its own copy, naming outfit-styling and product-discovery
-    in both branches. The copy went stale when a third primary was registered,
-    so a model that selected `catalog-questions` beside a budget was told to
-    swap in one of two skills that were not the right answer. The validator
-    already names the skills it actually rejected; there is no second version
-    of the rule to keep in step.
+    The validator already names the skills it actually rejected; a second copy
+    of the rule here would go stale when a skill is registered.
     """
 
     errors = error.errors() if callable(getattr(error, "errors", None)) else []

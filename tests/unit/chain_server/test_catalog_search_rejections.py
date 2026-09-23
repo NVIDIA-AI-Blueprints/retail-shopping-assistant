@@ -290,6 +290,21 @@ GATE_CASES: tuple[GateCase, ...] = (
         _scope(required_constraints={"price": {"max": 100}}),
     ),
     (
+        # A type the catalog does not carry, scoped by a filter alone, with no
+        # vocabulary judge to close it first.
+        SearchRejection.EXACT_TAXONOMY_NOT_ADVERTISED,
+        "do you have aprons under $50",
+        None,
+        lambda ctx: None,
+        _scope(
+            semantic_query="aprons",
+            shopper_guidance="aprons",
+            requested_product_type="aprons",
+            taxonomy={"category": [], "subcategory": []},
+            required_constraints={"price": {"max": 50}},
+        ),
+    ),
+    (
         SearchRejection.CATALOG_SEARCH_LIMIT,
         "show me tote bags",
         None,
@@ -505,22 +520,6 @@ def test_repeated_catalog_scope_is_attributed_to_the_catalog_scope_gate() -> Non
     assert str(second) == str(first)
 
 
-#: Three gates keyed on a ``taxonomy_status`` the server no longer derives.
-#: ``_catalog_execution_taxonomy_status`` returns six statuses and
-#: ``no_direct_catalog_match`` is not one of them, which strands the two gates
-#: that require it; the third needs ``exact_requested_type`` for a product type
-#: the catalog does not advertise, and every route to that combination is
-#: refused by the schema first. They keep their codes so that a status change
-#: that revives them is attributable on the day it happens.
-UNREACHABLE_GATES = frozenset(
-    {
-        SearchRejection.NO_ADVERTISED_TAXONOMY_MATCH,
-        SearchRejection.ADVERTISED_MATCH_REPORTED_AS_GAP,
-        SearchRejection.EXACT_TAXONOMY_NOT_ADVERTISED,
-    }
-)
-
-
 def test_every_reachable_gate_code_is_exercised() -> None:
     """A new gate with no case here would be unattributable in production."""
 
@@ -533,7 +532,7 @@ def test_every_reachable_gate_code_is_exercised() -> None:
         SearchRejection.DUPLICATE_CATALOG_SCOPE,
     }
 
-    assert set(SearchRejection) - exercised == UNREACHABLE_GATES
+    assert set(SearchRejection) == exercised
 
 
 def test_a_scope_that_runs_records_no_code_beside_one_that_was_refused() -> None:

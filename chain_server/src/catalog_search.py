@@ -45,7 +45,6 @@ from .catalog_request import (
 from .catalog_vocabulary import (
     _advertised_scope_match,
     _advertised_taxonomy_scope_issue,
-    _advertised_taxonomy_value,
     _agent_selected_scope_is_advertised,
     _catalog_execution_taxonomy_status,
     _duplicates_unavailable_product_type,
@@ -166,27 +165,17 @@ def _lock_taxonomy_constraint_values(
     repair: CatalogRepairState,
     scope_key: str | None,
     constraints: dict[str, Any],
-    *,
-    allow_no_direct_clear: bool = False,
 ) -> str:
     """Store canonical hard constraints for one taxonomy repair."""
 
     constraints = _normalized_scope_value(constraints)
     constraints.pop("unadvertised_requirements", None)
     repair.pending_taxonomy_constraints = constraints
-    repair.pending_no_direct_constraint_clear = allow_no_direct_clear
     serialized_constraints = json.dumps(
         constraints,
         ensure_ascii=False,
         sort_keys=True,
     )
-    if allow_no_direct_clear:
-        return (
-            " Clear advertised required_constraints if the corrected "
-            "request does not retrieve. Otherwise preserve these "
-            "capability-validated advertised required_constraints "
-            f"exactly: {serialized_constraints}."
-        )
     if not constraints:
         return (
             " The rejected call had no advertised required_constraints. "
@@ -280,11 +269,7 @@ class _Attempt:
     #: unavailable.
     composed_role: bool = False
     #: Where the judge says this requested word lives in the catalogue, and the
-    #: scope this role will search. Four flags used to stand here -- not-a-kind
-    #: members, ruled-or-not, umbrella members, umbrella-ruled-or-not -- because
-    #: the judge graded the model's guess and the result had to be reassembled
-    #: from a verdict and the guess it was about. It names the values now, so
-    #: there is one value to carry.
+    #: scope this role will search.
     #:
     #: Empty list and None are different and the difference is load bearing.
     #: Empty is a verdict: this catalogue sells no such thing, and the shopper
@@ -364,18 +349,12 @@ RETIRED_GATE = "retired search gate"
 
 
 def _retired_gate_reached(gate: str, detail: str) -> None:
-    """Note a condition we used to turn the search back for, and carry on.
+    """Log a condition the search no longer turns back for, and carry on.
 
-    Several gates here corrected the model and then told it, at length, how to
-    re-issue the call. None of them fired across 14,150 recorded turns: the
-    repair instructions the model does receive are followed, so the gates that
-    policed the repair had nothing to catch. Their handling is gone.
-
-    The question each asked is kept, because "has not happened yet" is weaker
-    evidence than "cannot happen". If one of these is ever logged, the model
-    has done something no longer corrected, and the handling should come back
-    from history rather than be written again from memory -- the wording of
-    those repair instructions was tuned against real failures.
+    These conditions are not corrected, because the repair instructions the
+    model receives are followed. They are still checked, because "has not
+    happened" is weaker evidence than "cannot happen": if one is logged, the
+    model has done something uncorrected and the handling should be restored.
     """
 
     logger.warning("%s reached: %s | %s", RETIRED_GATE, gate, detail)
@@ -452,11 +431,9 @@ def _reconciled_with_what_is_advertised(
         set_aside[name] = dropped
         # What this catalog can honour stays. Only the word it cannot goes.
         #
-        # Dropping the whole field was tried first and is worse, because the
-        # field *is* the filter: losing it leaves no colour constraint at all.
-        # Asked for a cream sweater as `["cream", "beige"]`, the search ranked
-        # on "cable-knit" alone and returned sweaters in any colour, red among
-        # them. Keeping `["beige"]` returns beige ones.
+        # Dropping the whole field would be worse, because the field *is* the
+        # filter: `["cream", "beige"]` must still filter to beige, not to any
+        # colour.
         #
         # Keeping half can still be narrower than the model meant -- `["cream",
         # "white"]` filters to white in a shop whose cream is beige. That is
@@ -684,11 +661,8 @@ def _classify_requirements(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     # the same search either way. Abandoning it left the composer with
     # nothing to show and turned a valid request into a refusal.
     #
-    # Who first said the word does not change that. This used to disclose
-    # only when the shopper's own sentence contained the requirement, which
-    # meant deciding "waterproof" and "water resistance" were unrelated on
-    # a suffix table. The catalog cannot confirm the attribute either way,
-    # so the reply is told so either way.
+    # Who first said the word does not change that: the catalog cannot confirm
+    # the attribute either way, so the reply is told so either way.
     unconfirmable_requirements = (
         list(raw_unadvertised_requirements)
         if not suppress_requirement_disclosure
@@ -808,13 +782,9 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 )
                 # The role may not exist at all. "Nothing over $50" names no
                 # product type, so every category the shop has is in scope and
-                # any single one of them is the wrong answer -- but this
-                # refusal only ever described how to narrow, so the model kept
-                # narrowing. It picked apparel four runs in five and the
-                # shopper was asked to clarify a request that was complete.
-                #
-                # Both wider shapes are already legal; neither was ever said
-                # out loud at the point they were needed.
+                # any single one of them is the wrong answer. The refusal must
+                # name the wider shapes too, or the model narrows to one
+                # category and asks the shopper to clarify a complete request.
                 if _hard_filter_scopes_this(required_constraints):
                     repair_guidance += (
                         " If the shopper named no product type at all -- a "
@@ -883,9 +853,6 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 attempt.repair,
                 candidate_scope_key,
                 validated_constraints.model_dump(exclude_none=True),
-                allow_no_direct_clear=(
-                    taxonomy_status == "no_direct_catalog_match"
-                ),
             )
         return _rejected(
             attempt,
@@ -930,10 +897,6 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     )
     if (
         attempt.repair.pending_taxonomy_constraints is not None
-        and not (
-            attempt.repair.pending_no_direct_constraint_clear
-            and request.taxonomy_status == "no_direct_catalog_match"
-        )
         and normalized_advertised_constraints
         != attempt.repair.pending_taxonomy_constraints
     ):
@@ -943,7 +906,6 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         )
     if attempt.repair.pending_taxonomy_constraints is not None:
         attempt.repair.pending_taxonomy_constraints = None
-        attempt.repair.pending_no_direct_constraint_clear = False
     normalized_constraints = dict(all_constraints)
     unadvertised_requirements = normalized_constraints.pop(
         "unadvertised_requirements",
@@ -1030,15 +992,9 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     )
     # Recorded, not policed. A composed role is the model covering a garment
     # this shop has no single word for -- "a top" across blouses and sweaters,
-    # "shoes" across flats and heels and boots -- and a gate used to stand here
-    # deciding whether such a role was honest or a substitution, from a list of
-    # eighteen garment words and a rule about how many subcategories a scope
-    # may name. Asked to shop a look whose jeans this shop does not carry, the
-    # model sent `subcategory: ["skirts"]` with `semantic_query: "dark wash
-    # straight-leg jeans"`; every declared field was advertised and
-    # self-consistent, so no amount of reading the declaration could catch it.
-    # The list caught jeans and missed belts filed under blouses 39 times,
-    # because a list only knows the words on it.
+    # "shoes" across flats and heels and boots. Whether such a role is honest
+    # or a substitution cannot be read off the declaration: "jeans" sent as
+    # `subcategory: ["skirts"]` is advertised and self-consistent.
     #
     # `_resolved_against_the_catalogue` settles it instead, by asking the
     # catalogue's own vocabulary where the word lives. Substitution is not
@@ -1110,20 +1066,8 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             + _lock_taxonomy_constraints(attempt.repair, candidate_scope_key, request),
         )
 
-    if (
-        request.taxonomy_status != "no_direct_catalog_match"
-        and unadvertised_requirements
-        and not suppress_requirement_disclosure
-    ):
+    if unadvertised_requirements and not suppress_requirement_disclosure:
         # Rank on it, disclose it, do not abandon the search.
-        #
-        # This used to decide first whether the shopper had said the word,
-        # and send the call back for review when it concluded they had not.
-        # Two things were wrong with that. The review never once happened in
-        # 14,150 recorded turns, and deciding it meant stemming the shopper's
-        # sentence with a fixed suffix table and testing set membership --
-        # which reads "waterproof" and "water resistance" as strangers, and
-        # is the matching this codebase has been removing.
         #
         # Disclosure is the honest outcome either way. The catalog cannot
         # filter on the requirement, so the reply may not present a candidate
@@ -1169,26 +1113,6 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             "clarifying question instead of searching an adjacent type.",
         )
 
-    advertised_match = (
-        _advertised_taxonomy_value(
-            request.requested_product_type,
-            capabilities,
-        )
-        if request.taxonomy_status == "no_direct_catalog_match"
-        else None
-    )
-    if advertised_match:
-        attempt.repair.failed_repair_scope_key = candidate_scope_key
-        return _rejected(
-            attempt,
-            SearchRejection.ADVERTISED_MATCH_REPORTED_AS_GAP,
-            SEARCH_VALIDATION_ERROR_PREFIX
-            + f"The requested product type '{request.requested_product_type}' "
-            f"matches advertised taxonomy value '{advertised_match}'. "
-            "Select that advertised value instead of reporting a gap."
-            + _lock_taxonomy_constraints(attempt.repair, candidate_scope_key, request),
-        )
-
     attempt.repair.failed_repair_scope_key = None
 
     attempt.normalized_constraints = normalized_constraints
@@ -1197,83 +1121,25 @@ def _reviewed_provenance(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     return None
 
 
-def _no_direct_match_outcome(ctx: SearchContext, attempt: _Attempt) -> StepResult:
-    """Report an unadvertised product type as a gap rather than searching around it.
-
-    Substituting an adjacent taxonomy here is what makes an assistant appear to
-    answer while showing something the shopper did not ask for, so this returns
-    the gap and stops the tool loop instead.
-    """
+def _role_key(ctx: SearchContext, attempt: _Attempt) -> StepResult:
+    """Key this scope by its role, so a second search of the role is a duplicate."""
 
     candidate_scope_key = attempt.candidate_scope_key
-    evidence = attempt.evidence
-    lines = attempt.lines
-    request = attempt.request
 
-    # A role is a role whoever named it. This key is what stops the same role
-    # being searched twice in a turn, and it used to be set only when the
-    # shopper's typed words contained the product type -- so a look lifted
-    # from a video had no key at all, and no retry of it was ever a duplicate.
+    # A role is a role whoever named it. This key stops the same role being
+    # searched twice in a turn, including a role lifted from a photo or video
+    # rather than typed: an uncarried garment from a look must not walk the
+    # catalog one subcategory at a time.
     #
-    # That is how "I love this look" cost nine model calls and 122k tokens of
-    # prompt. The video's jeans are not carried here, so the model filed them
-    # under jumpsuits, and every search succeeded: jumpsuits came back, then
-    # skirts, then blouses, then camisoles, then dresses, each a correct
-    # hard-filtered slice of a catalog that has no jeans, each told to answer
-    # now and none of them a duplicate of the last. Five searches and four
-    # round trips to learn what the first one had already shown.
-    #
-    # Keyed on the role alone, the second of those is a duplicate and says so.
-    # What this does not catch is the first -- one search is the price of
-    # finding out -- and what it does not block is a retry after an empty
-    # result, because the key is withdrawn below when nothing came back.
+    # It does not catch the first search -- one search is the price of finding
+    # out -- and it does not block a retry after an empty result, because the
+    # key is withdrawn below when nothing came back.
     shopper_scope_key = (
         (_normalize_product_text(ctx.state.query), candidate_scope_key)
         if candidate_scope_key
         else None
     )
 
-    if request.taxonomy_status == "no_direct_catalog_match":
-        with ctx.scope.catalog_lock:
-            if (
-                shopper_scope_key is not None
-                and shopper_scope_key in ctx.scope.searched_shopper_scopes
-            ):
-                # Answered from the earlier search, as above. This arm is the
-                # model declaring no direct match for a role it already
-                # searched, which is the same repeat wearing a different
-                # status.
-                answer = _already_answered(ctx, attempt)
-                if answer is not None:
-                    return answer
-        evidence = SearchEvidence(
-            outcome="no_direct_catalog_match",
-            requested_product_type=request.requested_product_type,
-            scope_complete=bool(request.scope_complete),
-            scope_outcome={
-                "outcome": "no_direct_catalog_match",
-                "requested_product_type": request.requested_product_type,
-            },
-        )
-        lines = [
-            "STOP_TOOL_USE: No faithful advertised catalog taxonomy "
-            "matches the requested product type "
-            f"'{request.requested_product_type}'. "
-            "Do not search adjacent product types. Tell the shopper the "
-            "requested type is not advertised and ask before offering an "
-            "alternative.",
-            _format_catalog_scope_outcome(evidence.scope_outcome),
-        ]
-        if evidence.scope_complete:
-            lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
-        return _rejected(
-            attempt,
-            SearchRejection.NO_ADVERTISED_TAXONOMY_MATCH,
-            ("\n\n".join(lines), evidence.as_artifact()),
-        )
-
-    attempt.evidence = evidence
-    attempt.lines = lines
     attempt.shopper_scope_key = shopper_scope_key
     return None
 
@@ -1602,11 +1468,8 @@ def _reserved_search_slot(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             else ctx.scope.searched_shopper_scopes
         )
         # A scope asked for twice is answered twice, from what it found the
-        # first time. Both of these used to be refusals reading "use the
-        # result already returned" -- advice about data, in place of the data,
-        # and the model cannot act on advice about products it was not given.
-        # So it asked again, was told again, and J02 turn 4 spent 23 identical
-        # searches and the graph's whole recursion budget on the word "shoes".
+        # first time. A refusal would be advice about products the model was
+        # not given, and it would ask again.
         #
         # Serving the answer costs one dictionary lookup and no retrieval, and
         # leaves the model nothing to retry: it has the products.
@@ -1717,17 +1580,11 @@ def _published_in_plan_order(
 ) -> None:
     """Record what was found in the order the roles were asked for.
 
-    This used to run inside each retrieval, so the products reached the shopper
-    in whatever order the scopes happened to finish. Retrieval fans out across
-    a thread pool, so that order is not stable: the same request for a sweater
-    and boots arrived grouped on three runs and interleaved on a fourth.
-
-    Only the shopper's screen was affected -- the evidence the model reads has
-    always been rendered from `attempts`, in plan order, as `SCOPE 1`,
-    `SCOPE 2`. So the model described products in one order while the pictures
-    beside its words sat in another, and "the first one" meant two different
-    garments depending on which the shopper counted. Publishing here, from the
-    same list the renderer uses, is what makes the two agree.
+    Retrieval fans out across a thread pool, so scopes finish in no stable
+    order. The evidence the model reads is rendered from `attempts` in plan
+    order, as `SCOPE 1`, `SCOPE 2`; publishing here, from the same list, keeps
+    the products on screen in the order the model describes them, so "the
+    first one" means the same garment to both.
 
     Each attempt is also one group on that screen: the shopper asked for shoes
     and a bag, and the scope that answered for the shoes is the shoes. That
@@ -2055,9 +1912,9 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         )
         # A category the shopper never named, reached because a filter scoped
         # the search. It is shown rather than refused -- a partial answer beats
-        # "could you clarify", which is what three runs in five used to get --
-        # and it is said out loud, because the shopper asked for everything
-        # under their ceiling and this is one department of it.
+        # "could you clarify" -- and it is said out loud, because the shopper
+        # asked for everything under their ceiling and this is one department
+        # of it.
         chosen = _a_category_the_shopper_did_not_name(evidence, attempt)
         if chosen:
             lines.append(
@@ -2146,12 +2003,9 @@ def _resolved_against_the_catalogue(
     nothing, and nothing is the answer -- this shop does not sell them.
 
     What the model scoped the role to is overwritten rather than checked, and
-    that is the point. Checking produces a verdict about a guess, a verdict has
-    to be reported, and a report the model can read is an invitation to guess
-    again: told jeans are not skirts it tried jumpsuits, then dresses, blouses,
-    camisoles and sweaters, and one turn spent twelve searches walking the enum.
-    Overwriting leaves nothing to report and nothing to resubmit, so the twelve
-    searches have no shape to take.
+    that is the point. A verdict about a guess has to be reported, and a report
+    the model can read invites another guess -- one subcategory after another.
+    Overwriting leaves nothing to report and nothing to resubmit.
 
     Three outcomes, all of them final:
 
@@ -2169,8 +2023,7 @@ def _resolved_against_the_catalogue(
 
     So an outage costs accuracy on the cases the judge was added for -- a
     substitution can reach the shopper again while it lasts -- and costs
-    nothing on the ordinary ones. That is the trade the old gates made too,
-    with more code and worse results.
+    nothing on the ordinary ones.
     """
 
     named = attempt.judged_subcategories
@@ -2216,12 +2069,11 @@ def _role_this_shop_does_not_carry(
 ) -> StepResult:
     """Report a garment this shop does not sell, as this role's answer.
 
-    Returned as text rather than through `_rejected`, and the distinction is
-    the whole redesign in one line. A rejection arms the turn's repair locks,
-    whose single slot then belongs to this role, so every *other* role in the
-    call comes back `repair_changed_product_scope`: refusing the hat refused
-    the boots and the sweaters beside it, no legal move remained, and the turn
-    died on the graph's recursion limit with the shopper told to retry.
+    Returned as text rather than through `_rejected`. A rejection arms the
+    turn's repair locks, whose single slot would then belong to this role, so
+    every *other* role in the call would come back
+    `repair_changed_product_scope`: refusing the hat would refuse the boots and
+    sweaters beside it and leave the turn no legal move.
 
     There is also nothing to repair. "This shop does not sell jeans" is not a
     malformed argument, has no corrected form, and must leave the roles around
@@ -2266,7 +2118,7 @@ _PLAN_STEPS = (
     _classify_requirements,
     _validated_request,
     _reviewed_provenance,
-    _no_direct_match_outcome,
+    _role_key,
     _planned_search,
 )
 
@@ -2309,13 +2161,8 @@ def _a_category_the_shopper_did_not_name(evidence: Any, attempt: Any) -> str:
     # roles the model selects with, so the name has to be read from the
     # capabilities rather than assumed.
     #
-    # Flattened across every list here, as this was, it counted subcategories
-    # too and wanted exactly one value in total -- so it fired for a bare
-    # category and went quiet the moment the scope named what was under it,
-    # which is what browsing a department looks like. "Nothing over $50"
-    # searched bags and two of its subcategories, disclosed nothing, and the
-    # reply introduced four bags as everything in the shop under fifty
-    # dollars. Forty-three products qualified, across all five departments.
+    # Only the category list counts. Subcategories under it are what browsing
+    # a department looks like, and must not silence the disclosure.
     capabilities = getattr(attempt, "capabilities", None)
     field = getattr(getattr(capabilities, "taxonomy", None), "category_field", None)
     if not field:
@@ -2418,15 +2265,10 @@ def _one_scope_per_category(ctx: SearchContext, scopes: list[Any]) -> list[Any]:
             and _hard_filter_scopes_this(fields.get("required_constraints"))
         ):
             # No product type, no category, a filter and nothing else: the
-            # shopper asked about the shop. Named none, this used to stay one
-            # scope, and one scope with no category is ranked rather than
-            # spread -- "nothing over $50" went out as `category: []` with the
-            # guidance "everything in the shop, across all departments", and
-            # came back as four bags because they won a similarity contest
-            # against "affordable items under $50", a phrase with no product
-            # signal in it at all. Forty-three products qualified, twenty of
-            # them apparel. The reply then read its own results back as intent
-            # and opened "I'm assuming you're looking for bags".
+            # shopper asked about the shop. One scope with no category is
+            # ranked rather than spread, so "nothing over $50" would come back
+            # as whichever department won a similarity contest against a
+            # phrase with no product signal in it.
             #
             # Filling the categories in here rather than asking the model to
             # list them keeps the one request that means "everywhere" off the
@@ -2485,15 +2327,12 @@ def _colour_words_not_advertised(
 ) -> list[str]:
     """The colour words this scope asked to filter on and this catalog lacks.
 
-    Read here because here is the only place it can be read: the step that
-    sets an unhonourable value aside is the first of the plan steps, and by the
-    time it has run the word is gone from the constraints.
+    Must run before the plan step that sets an unhonourable value aside; after
+    it the word is no longer in the constraints.
 
-    Gated on membership rather than sending every colour the scope offered.
-    Measured over 3,040 scopes carrying a colour filter, 95.6% named advertised
-    values throughout -- the scope prompt asks the model to do this mapping and
-    it mostly does. Asking about those would bolt dead words onto almost every
-    search call to serve the 4% that need it.
+    Only colours missing from the catalog are returned, not every colour the
+    scope offered: most scopes already name advertised values, and sending
+    those would add dead words to almost every search call.
     """
 
     if not advertised:
@@ -2902,9 +2741,5 @@ def _merge_repair(target: Any, source: Any) -> None:
     ):
         if getattr(target, name) is None and getattr(source, name) is not None:
             setattr(target, name, getattr(source, name))
-    target.pending_no_direct_constraint_clear = (
-        target.pending_no_direct_constraint_clear
-        or source.pending_no_direct_constraint_clear
-    )
     if not target.pending_schema_requirements:
         target.pending_schema_requirements = list(source.pending_schema_requirements)

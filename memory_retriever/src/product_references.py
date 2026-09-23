@@ -69,10 +69,10 @@ class ProductReferenceDescriptor(_ReferenceModel):
         )
         if not any(selector is not None for selector in selectors):
             raise ValueError("At least one product reference selector is required")
-        # An ordinal used to require a turn or a candidate set, which the
-        # shopper saying "the second one" does not supply and the model can
-        # only guess at. Alone it counts within the most recent showing, which
-        # is the one they are looking at.
+        # An ordinal needs no turn or candidate set: the shopper saying "the
+        # second one" supplies neither, and the model could only guess. Alone
+        # it counts within the most recent showing, which is the one they are
+        # looking at.
         return self
 
 
@@ -605,16 +605,6 @@ def _one_per_product(
         matches_by_ref.pop(product_ref, None)
         matches_by_ref[product_ref] = occurrence
     return list(matches_by_ref.values())
-
-
-def _matched_occurrences(
-    descriptor: ProductReferenceDescriptor,
-    occurrences: list[ProductReferenceMatch],
-) -> list[ProductReferenceMatch]:
-    """Which products this descriptor refers to, one entry each."""
-
-    matches, _ignored, _refused = _resolution_pool(descriptor, occurrences)
-    return matches
 
 
 def _resolution_pool(

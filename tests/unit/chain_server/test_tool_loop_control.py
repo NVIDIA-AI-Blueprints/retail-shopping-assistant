@@ -687,7 +687,7 @@ def test_closed_loop_strips_a_model_emitted_tool_call() -> None:
     )
 
 
-def test_no_direct_match_fallback_does_not_claim_grounded_products() -> None:
+def test_closed_loop_fallback_does_not_claim_grounded_products() -> None:
     middleware = ToolLoopControlMiddleware()
     messages = _messages_with_result(
         _tool_result(

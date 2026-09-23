@@ -36,7 +36,7 @@ DETAIL_EVIDENCE_KEY = "product_detail_evidence"
 class SearchEvidence:
     """Everything a search established, as data rather than prose."""
 
-    outcome: str  # "results" | "zero_results" | "no_direct_catalog_match"
+    outcome: str  # "results" | "zero_results"
     taxonomy: dict[str, Any] = field(default_factory=dict)
     confirmed_filters: dict[str, Any] = field(default_factory=dict)
     semantic_query: str = ""

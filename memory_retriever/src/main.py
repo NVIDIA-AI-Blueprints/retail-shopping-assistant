@@ -22,10 +22,7 @@ from .database import (
 )
 from .migrations import (
     cart_mutation_digest,
-    ensure_cart_line_id_column,
-    ensure_product_id_column,
     expected_schema_version,
-    migrate_quantity_idempotency,
     run_schema_migrations,
 )
 from .models import (
@@ -58,32 +55,6 @@ __all__ = (
     "User",
     "build_engine",
 )
-
-
-def _ensure_cart_line_id_column() -> None:
-    """Add and backfill opaque cart-line IDs for existing SQLite databases."""
-    with engine.begin() as connection:
-        ensure_cart_line_id_column(connection)
-
-
-def _ensure_product_id_column() -> None:
-    """Idempotently add catalog product identity to existing cart rows."""
-    with engine.begin() as connection:
-        ensure_product_id_column(connection)
-
-
-def _cart_mutation_digest(
-    operation: str,
-    stable_target_id: str,
-    request_body: dict,
-) -> str:
-    return cart_mutation_digest(operation, stable_target_id, request_body)
-
-
-def _migrate_quantity_idempotency() -> None:
-    """Copy existing quantity replay records into the unified ledger once."""
-    with engine.begin() as connection:
-        migrate_quantity_idempotency(connection)
 
 
 def _run_schema_migrations() -> None:
@@ -310,7 +281,7 @@ def add_to_cart(
     price = item_update.price
     stable_target_id = item_update.product_id
     size = item_update.size
-    canonical_digest = _cart_mutation_digest(
+    canonical_digest = cart_mutation_digest(
         "add",
         stable_target_id,
         # Size belongs in the digest, or adding a 6 and then an 8 replays as
@@ -373,7 +344,7 @@ def remove_cart(
 ):
     amount = item_update.amount
     stable_target_id = item_update.cart_line_id
-    canonical_digest = _cart_mutation_digest(
+    canonical_digest = cart_mutation_digest(
         "remove",
         stable_target_id,
         {"amount": amount},
@@ -431,7 +402,7 @@ def update_cart_quantity(
     quantity_update: CartQuantityUpdate,
     db=Depends(get_db),
 ):
-    canonical_digest = _cart_mutation_digest(
+    canonical_digest = cart_mutation_digest(
         "update",
         cart_line_id,
         {"quantity": quantity_update.quantity},
@@ -542,8 +513,7 @@ def clear_context(user_id: int, db=Depends(get_db)):
 @app.post("/user/{user_id}/clear")
 def clear_user(user_id: int, db=Depends(get_db)):
     # The cart goes explicitly. `CartItem.user_id` carries no foreign key onto
-    # `users`, so deleting the user cascades nothing, and this endpoint used to
-    # report that it had deleted the cart while leaving every line in place.
+    # `users`, so deleting the user cascades nothing.
     cart_lines = (
         db.query(CartItem).filter(CartItem.user_id == user_id).delete(
             synchronize_session=False

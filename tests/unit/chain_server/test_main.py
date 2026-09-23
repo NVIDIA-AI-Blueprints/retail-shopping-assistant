@@ -225,7 +225,7 @@ class TestCreateInitialState:
         assert state.context == ""
         assert state.image == ""
         assert isinstance(state.cart, Cart)
-        assert state.cart.is_empty()
+        assert state.cart.contents == []
         assert state.guardrails is True
 
     def test_guardrails_request_overrides_config_default(self, main_module) -> None:
@@ -2339,7 +2339,6 @@ class TestDeepAgentsRuntimeRefs:
             "member_of_requested_umbrella",
             "parent_category_alternative",
             "agent_selected_type",
-            "no_direct_catalog_match",
             "image_only",
         ]
         assert schema["properties"]["taxonomy_status"]["description"] == (
@@ -2753,54 +2752,6 @@ class TestDeepAgentsRuntimeRefs:
                     "shopper_guidance": "",
                     "requested_product_type": None,
                     "taxonomy_status": "image_only",
-                }
-            )
-
-        no_direct_match = schema_model.model_validate(
-            {
-                "semantic_query": "casual sneakers",
-                "shopper_guidance": "",
-                "requested_product_type": "sneakers",
-                "taxonomy_status": "no_direct_catalog_match",
-                "taxonomy": {"category": [], "subcategory": []},
-                "required_constraints": {},
-                "scope_complete": True,
-            }
-        )
-        assert no_direct_match.taxonomy_status == "no_direct_catalog_match"
-        with pytest.raises(
-            ValueError,
-            match="a non-retrieval result cannot include required constraints",
-        ):
-            schema_model.model_validate(
-                {
-                    **no_direct_match.model_dump(),
-                    "required_constraints": {
-                        "unadvertised_requirements": ["sneakers"]
-                    },
-                }
-            )
-        with pytest.raises(
-            ValueError,
-            match="a non-retrieval result cannot include required constraints",
-        ):
-            schema_model.model_validate(
-                {
-                    **no_direct_match.model_dump(),
-                    "required_constraints": {
-                        "unadvertised_requirements": ["denim"]
-                    },
-                }
-            )
-        with pytest.raises(
-            ValueError,
-            match="a non-retrieval result requires empty taxonomy arrays",
-        ):
-            schema_model.model_validate(
-                {
-                    **complete_request,
-                    "shopper_guidance": "",
-                    "taxonomy_status": "no_direct_catalog_match",
                 }
             )
 
@@ -5798,142 +5749,6 @@ class TestDeepAgentsRuntimeRefs:
         assert '"primary_color": ["black"]' in evidence
         assert "does not establish" in evidence
         assert "black tailored trousers" not in evidence
-        assert runtime_mod_support._has_search_only_tool_evidence(
-            result,
-            request_id="current-request",
-        ) is False
-
-        cart_then_no_direct = {
-            "messages": [
-                {"role": "user", "content": "REQUEST ID: current-request"},
-                {
-                    "role": "tool",
-                    "name": "add_cart_items_tool",
-                    "content": "CART UPDATED\n  Work Bag → qty 1",
-                },
-                {
-                    "role": "tool",
-                    "name": "search_catalog_tool",
-                    "content": (
-                        "STOP_TOOL_USE: No faithful advertised catalog taxonomy "
-                        "matches casual sneakers."
-                    ),
-                },
-            ]
-        }
-        assert runtime_mod_support._no_direct_taxonomy_response(
-            cart_then_no_direct,
-            request_id="current-request",
-        ) is None
-
-    def test_no_direct_taxonomy_evidence_forbids_invented_alternatives(
-        self,
-    ) -> None:
-        from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import grounding_evidence as grounding_evidence_mod
-
-        message = search_tool_message(
-            search_evidence(
-                outcome="no_direct_catalog_match",
-                requested_product_type="casual sneakers",
-                scope_outcome={
-                    "outcome": "no_direct_catalog_match",
-                    "requested_product_type": "casual sneakers",
-                },
-            ),
-            content=(
-                "STOP_TOOL_USE: No faithful advertised catalog taxonomy matches "
-                "the requested product type in 'casual sneakers'. Do not search "
-                "adjacent product types."
-            ),
-        )
-        evidence = grounding_evidence_mod._customer_safe_tool_evidence(
-            message["content"],
-            message,
-        )
-
-        assert evidence.startswith("CUSTOMER_SAFE_NO_MATCH_EVIDENCE:")
-        assert "No retrieval ran" in evidence
-        assert "Do not name alternatives" in evidence
-        assert "STOP_TOOL_USE" not in evidence
-        assert "casual sneakers" not in evidence
-        assert "do not name alternatives unless" in (
-            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT.lower()
-        )
-
-    def test_no_direct_taxonomy_response_is_fixed_and_current_turn_scoped(
-        self,
-    ) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
-
-        result = {
-            "messages": [
-                {"role": "user", "content": "REQUEST ID: earlier-request"},
-                {
-                    "role": "tool",
-                    "content": (
-                        "STOP_TOOL_USE: No faithful advertised catalog taxonomy "
-                        "matches casual sneakers."
-                    ),
-                },
-                {"role": "user", "content": "REQUEST ID: current-request"},
-                {"role": "assistant", "content": "A later answer."},
-            ]
-        }
-
-        assert runtime_mod_support._no_direct_taxonomy_response(
-            result,
-            request_id="current-request",
-        ) is None
-
-        result["messages"].append(
-            {
-                "role": "tool",
-                "content": (
-                    "STOP_TOOL_USE: No faithful advertised catalog taxonomy "
-                    "matches casual sneakers."
-                ),
-            }
-        )
-        assert runtime_mod_support._no_direct_taxonomy_response(
-            result,
-            request_id="current-request",
-        ) == runtime_mod_support._NO_DIRECT_TAXONOMY_RESPONSE
-
-        repair_then_no_direct = {
-            "messages": [
-                {"role": "user", "content": "REQUEST ID: current-request"},
-                {
-                    "role": "tool",
-                    "name": "search_catalog_tool",
-                    "content": (
-                        tool_loop_control.SEARCH_VALIDATION_ERROR_PREFIX
-                        + "invalid taxonomy"
-                    ),
-                },
-                result["messages"][-1],
-            ]
-        }
-        assert runtime_mod_support._no_direct_taxonomy_response(
-            repair_then_no_direct,
-            request_id="current-request",
-        ) == runtime_mod_support._NO_DIRECT_TAXONOMY_RESPONSE
-
-        result["messages"].insert(
-            -1,
-            {
-                "role": "tool",
-                "name": "search_catalog_tool",
-                "content": (
-                    "SEARCH_RESULT_GROUNDING_NOTE: grounded.\n"
-                    "PRODUCT_REF: top-1\nNAME: Top One\nCATEGORY: blouses"
-                ),
-            },
-        )
-        assert runtime_mod_support._no_direct_taxonomy_response(
-            result,
-            request_id="current-request",
-        ) is None
         assert runtime_mod_support._has_search_only_tool_evidence(
             result,
             request_id="current-request",

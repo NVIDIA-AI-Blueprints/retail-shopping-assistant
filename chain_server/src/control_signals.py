@@ -24,7 +24,6 @@ class ControlSignal(StrEnum):
     """One deterministic tool-loop outcome, recorded where it is decided."""
 
     STOP_TOOL_USE = "stop_tool_use"
-    SCOPE_COMPLETE = "scope_complete"
     BUDGET_EXHAUSTED = "budget_exhausted"
     UNSUPPORTED_TAXONOMY = "unsupported_taxonomy"
     UNSUPPORTED_CONSTRAINT = "unsupported_constraint"
@@ -48,21 +47,13 @@ class SearchRejection(StrEnum):
     CAPABILITIES_SCHEMA_MISMATCH = "capabilities_schema_mismatch"
 
     # Provenance review: what the repair had to preserve, and what it changed.
-    # Two codes that policed the repair itself are gone. They asked whether a
-    # re-issued call kept what it was told to keep, and across 14,150 recorded
-    # turns it always had. `_retired_gate_reached` now logs those conditions
-    # instead of refusing, so a code with nothing to produce it would only be
-    # something to explain.
+    # Whether a re-issued call kept what it was told to keep is logged by
+    # `_retired_gate_reached`, not refused, so it has no code here.
     TAXONOMY_NOT_ADVERTISED_FOR_SCOPE = "taxonomy_not_advertised_for_scope"
     SHOPPER_SCOPE_TAXONOMY_MISMATCH = "shopper_scope_taxonomy_mismatch"
-    # The two codes for the constraint review are gone with the review. An
-    # unadvertised requirement is disclosed and ranked on now, never sent back
-    # to be justified, so neither code has anything left that can raise it.
+    # An unadvertised requirement is disclosed and ranked on, never sent back
+    # to be justified, so it has no code here either.
     EXACT_TAXONOMY_NOT_ADVERTISED = "exact_taxonomy_not_advertised"
-    ADVERTISED_MATCH_REPORTED_AS_GAP = "advertised_match_reported_as_gap"
-
-    # Outcome for a product type no advertised taxonomy faithfully covers.
-    NO_ADVERTISED_TAXONOMY_MATCH = "no_advertised_taxonomy_match"
 
     # Planning against the capability contract.
     UNSUPPORTED_CATALOG_TAXONOMY = "unsupported_catalog_taxonomy"

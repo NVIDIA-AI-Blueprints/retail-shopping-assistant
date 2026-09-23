@@ -55,11 +55,8 @@ _TIMEOUT_SECONDS = 20.0
 class ScopeQuestion:
     """One thing the shopper asked for, in the shopper's own word.
 
-    No subcategories. The model used to send its own guess at them and this
-    module graded it, which meant a wrong guess had to be caught, reported and
-    resubmitted -- and "report and resubmit" is what every retry storm in the
-    search path was made of. The judge names the values instead, so there is no
-    guess to be wrong and nothing to send back.
+    No subcategories. The judge names the values itself, so there is no guess
+    from the model to grade, report and send back.
     """
 
     requested_product_type: str
@@ -157,9 +154,7 @@ class CatalogVocabularyJudge:
                 max_tokens=_MAX_TOKENS,
                 timeout=_TIMEOUT_SECONDS,
                 # No thinking. The question is a lookup against two word lists,
-                # and reasoning traces were most of the completion when this was
-                # measured -- 562 tokens of output for fourteen one-word
-                # answers.
+                # and reasoning traces would be most of the completion.
                 extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             content = response.choices[0].message.content or ""

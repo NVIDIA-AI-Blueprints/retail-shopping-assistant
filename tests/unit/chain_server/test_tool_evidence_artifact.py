@@ -416,28 +416,6 @@ def test_composer_summary_for_product_detail() -> None:
     )
 
 
-def test_no_direct_catalog_match_is_a_refusal_not_an_empty_search() -> None:
-    """Running no retrieval and finding nothing are different claims.
-
-    Summarising this as an empty search result would let the composer imply the
-    catalog was checked and came back empty.
-    """
-
-    evidence = SearchEvidence(
-        outcome="no_direct_catalog_match",
-        requested_product_type="casual sneakers",
-    )
-
-    summary = grounding_evidence_mod._customer_safe_tool_evidence("", _StubToolMessage(evidence))
-
-    assert summary.startswith("CUSTOMER_SAFE_NO_MATCH_EVIDENCE:")
-    assert "No retrieval ran" in summary
-    assert "Do not name alternatives" in summary
-    # The requested type is withheld so the composer cannot echo it as advertised.
-    assert "casual sneakers" not in summary
-    assert "CUSTOMER_SAFE_SEARCH_EVIDENCE" not in summary
-
-
 def test_scope_relation_is_absent_when_no_parent_was_substituted() -> None:
     """A plain search must not gain a parent-scope caveat it never earned."""
 

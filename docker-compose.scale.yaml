@@ -21,9 +21,8 @@
 # there is nothing to configure; `docker compose port chain-server 8009 --index 2`
 # is how to find one by hand.
 #
-# Nothing about the application needed changing for this. A chain-server holds
-# no state between turns, which is what the horizontal-readiness work
-# established, so replicas need no coordination and no affinity.
+# A chain-server holds no state between turns, so replicas need no
+# coordination and no affinity.
 
 services:
   chain-server:

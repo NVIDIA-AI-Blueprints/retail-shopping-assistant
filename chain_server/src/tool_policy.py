@@ -22,7 +22,6 @@ class ToolPolicy:
 
     allowed_skills_any_of: frozenset[str]
     risk: ToolRisk
-    required_intent_kind: str | None = None
 
     def allows_any(self, skill_names: Collection[str]) -> bool:
         """Return whether any active skill grants this tool."""
@@ -95,17 +94,14 @@ SHOPPING_TOOL_POLICIES: Mapping[str, ToolPolicy] = MappingProxyType(
         "add_cart_items_tool": ToolPolicy(
             allowed_skills_any_of=frozenset({"cart-management"}),
             risk="mutating",
-            required_intent_kind="cart_add",
         ),
         "remove_cart_item_tool": ToolPolicy(
             allowed_skills_any_of=frozenset({"cart-management"}),
             risk="mutating",
-            required_intent_kind="cart_remove",
         ),
         "update_cart_items_tool": ToolPolicy(
             allowed_skills_any_of=frozenset({"cart-management"}),
             risk="mutating",
-            required_intent_kind="cart_update",
         ),
         # Questions about the shop rather than about a product. Read-only and
         # argument-free, so granting it widens nothing: it returns the same

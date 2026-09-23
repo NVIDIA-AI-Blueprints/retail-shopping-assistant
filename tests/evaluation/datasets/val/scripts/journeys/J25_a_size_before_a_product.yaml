@@ -27,9 +27,8 @@ why: >
   that, and a clearer rejection message would not help: the model would be
   told again that clothes are not carried.
 
-  The same fault is already recorded for "bag" in
-  scripts/does_the_judge_know_a_bag.py, which came back empty on six of seven
-  deployed turns. Every umbrella example in the judge's prompt sits inside one
+  The same fault was measured for "bag": the judge came back empty on six of
+  seven deployed turns. Every umbrella example in the judge's prompt sits inside one
   department -- shoes, tops, jewelry -- and a word spanning a whole department
   has nothing to pattern on. Teaching it the word was tried and reverted: it
   flips the answer into the second column rather than the right one.

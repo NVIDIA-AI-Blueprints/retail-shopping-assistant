@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 services:
-  # Chain Server - using bridge networking with port mapping
+  # Chain Server
   chain-server:
     build:
       context: ./chain_server
@@ -85,8 +85,6 @@ services:
       # Pass-through, no default here: shared/configs/catalog_retriever/config.yaml
       # declares it. Empty means unset, so config wins.
       - CATALOG_IMAGE_EMBEDDING_ENABLED=${CATALOG_IMAGE_EMBEDDING_ENABLED:-}
-      - MILVUS_HOST=milvus
-      - MILVUS_PORT=19530
     volumes:
       - ./shared:/app/shared
     depends_on:
@@ -113,8 +111,6 @@ services:
       # Pass-through, no default here: shared/configs/catalog_retriever/config.yaml
       # declares it. Empty means unset, so config wins.
       - CATALOG_IMAGE_EMBEDDING_ENABLED=${CATALOG_IMAGE_EMBEDDING_ENABLED:-}
-      - MILVUS_HOST=milvus
-      - MILVUS_PORT=19530
     volumes:
       - ./shared:/app/shared
     depends_on:
@@ -133,9 +129,8 @@ services:
   # and MEMORY_DATABASE_URL below decides whether anything uses it. SQLite stays
   # the default so local work and the test suite need nothing running.
   #
-  # This is what removes the last two ceilings. A SQLite file has one writer, and
-  # the volume holding it can be mounted by one pod, so no amount of CPU or
-  # replicas changes either. Neither is a tuning limit.
+  # Postgres is what lets memory scale out: a SQLite file has one writer, and the
+  # volume holding it can be mounted by one pod.
   memory-db:
     image: postgres:16-alpine
     container_name: memory-db
@@ -166,8 +161,6 @@ services:
     ports:
       - "127.0.0.1:8011:8011"
     environment:
-      - MILVUS_HOST=milvus
-      - MILVUS_PORT=19530
       - MEMORY_DATABASE_URL=${MEMORY_DATABASE_URL:-sqlite:////data/context.db}
       - MEMORY_SQLITE_BUSY_TIMEOUT_MS=${MEMORY_SQLITE_BUSY_TIMEOUT_MS:-5000}
       - MEMORY_MAX_CONCURRENT_REQUESTS=${MEMORY_MAX_CONCURRENT_REQUESTS:-64}
@@ -209,9 +202,7 @@ services:
     build:
       context: ./ui
     container_name: shopping-frontend
-    # Remove the ports section - nginx will handle external access
-    # ports:
-    #   - "3000:3000"
+    # No published port: nginx serves the UI on 3000.
     volumes:
       - ./shared:/app/shared
     depends_on:
@@ -219,7 +210,7 @@ services:
     networks:
       - shopping-network
 
-  # etcd - using bridge networking
+  # etcd
   etcd:
     container_name: milvus-etcd
     image: quay.io/coreos/etcd:v3.5.5
@@ -249,7 +240,7 @@ services:
     networks:
       - shopping-network
 
-  # Minio - using bridge networking
+  # Minio
   minio:
     container_name: milvus-minio
     image: minio/minio:RELEASE.2023-03-20T20-16-18Z
@@ -306,7 +297,7 @@ services:
     image: nginx:1.25.3-alpine
     container_name: nginx-proxy
     ports:
-      - "3000:80"  # Brev will expose this port
+      - "3000:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf
     depends_on:
@@ -334,9 +325,7 @@ services:
     networks:
       - shopping-network
 
-  # Arize Phoenix - trace viewer. Loopback-only: it is an operator surface and
-  # holds conversation content, following memory-retriever's precedent rather
-  # than the all-interfaces default.
+  # Arize Phoenix - trace viewer.
   phoenix:
     image: arizephoenix/phoenix:version-19.19.0
     container_name: phoenix

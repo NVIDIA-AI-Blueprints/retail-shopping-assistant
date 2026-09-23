@@ -636,39 +636,6 @@ class TestEmbedChunk:
 
 
 # --------------------------------------------------------------------------->
-# embeddings_exist
-# --------------------------------------------------------------------------->
-
-
-class TestEmbeddingsExist:
-    def test_returns_false_when_no_collections(self, retriever: Retriever) -> None:
-        retriever.text_db.col = None
-        retriever.image_db.col = None
-        assert retriever.embeddings_exist() is False
-
-    def test_returns_true_when_both_populated(self, retriever: Retriever) -> None:
-        retriever.text_db.col = SimpleNamespace(
-            flush=lambda: None, num_entities=5
-        )
-        retriever.image_db.col = SimpleNamespace(
-            flush=lambda: None, num_entities=7
-        )
-        assert retriever.embeddings_exist() is True
-
-    def test_returns_false_when_only_one_populated(self, retriever: Retriever) -> None:
-        retriever.text_db.col = SimpleNamespace(flush=lambda: None, num_entities=5)
-        retriever.image_db.col = SimpleNamespace(flush=lambda: None, num_entities=0)
-        assert retriever.embeddings_exist() is False
-
-    def test_exception_surface_as_false(self, retriever: Retriever) -> None:
-        def _boom():
-            raise RuntimeError("milvus down")
-
-        retriever.text_db.col = SimpleNamespace(flush=_boom, num_entities=0)
-        assert retriever.embeddings_exist() is False
-
-
-# --------------------------------------------------------------------------->
 # retrieve() end-to-end with mocked Milvus
 # --------------------------------------------------------------------------->
 

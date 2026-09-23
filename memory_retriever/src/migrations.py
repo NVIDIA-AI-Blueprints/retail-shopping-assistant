@@ -58,10 +58,10 @@ def _FLOAT_TYPE(connection: Connection) -> str:
 def _table_columns(connection: Connection, table_name: str) -> set[str]:
     """Column names for a table, whichever database this is.
 
-    This used to run `PRAGMA table_info`, which exists only in SQLite and
-    returns an empty result elsewhere -- so on Postgres every "add the column if
-    it is missing" check below would decide it was missing and then fail trying
-    to add it again. The inspector asks each dialect in its own language.
+    Not `PRAGMA table_info`, which exists only in SQLite and returns an empty
+    result elsewhere -- on Postgres every "add the column if it is missing"
+    check below would then try to add it again. The inspector asks each dialect
+    in its own language.
     """
 
     inspector = inspect(connection)

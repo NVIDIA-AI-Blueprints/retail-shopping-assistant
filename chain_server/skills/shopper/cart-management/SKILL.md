@@ -47,6 +47,9 @@ change the cart, and what the shopper is told afterwards.
 - A product the shopper names that nothing in this conversation has shown:
   search for it by name. If one result is clearly that product, add it and say
   which. If none or several could be, show them and ask.
+- A size in the request is part of the reference. "The black one in a size 8"
+  can only be a black product that comes in an 8: a one-size bag is not it,
+  however recently it was shown. If more than one shown product fits, ask which.
 - Pass `PRODUCT_REF` values established by this turn's search or by a successful
   resolution -- never display names. Include `expected_display_name` for each
   item so the tool can verify the ref resolves to the product you mean.

@@ -271,17 +271,6 @@ def _format_search_only_response(
                 else "Search candidates"
             )
             lines.append(f"- {scope}: {'; '.join(group['statements'])}.")
-    unavailable_types = _no_direct_search_types(
-        result,
-        request_id=request_id,
-    )
-    if unavailable_types:
-        lines.extend(("", "Unavailable requested catalog types:"))
-        lines.extend(
-            f"- **{product_type}** is not advertised; I did not substitute "
-            "an adjacent product type."
-            for product_type in unavailable_types
-        )
     if _has_unsupported_requirement_outcome(
         result,
         request_id=request_id,
@@ -370,24 +359,6 @@ def _grouped_search_response_lines(
     if lines and not lines[-1]:
         lines.pop()
     return lines, displayed_names
-
-
-
-def _no_direct_search_types(result: Any, *, request_id: str) -> list[str]:
-    """Return current-turn product types with a server-authored no-direct outcome."""
-
-    product_types: list[str] = []
-    for message in _current_turn_messages(_result_messages(result), request_id):
-        if _message_type(message) != "tool":
-            continue
-        payload = evidence_of(message)
-        if not payload or payload.get("outcome") != "no_direct_catalog_match":
-            continue
-        outcome = payload
-        product_type = str(outcome.get("requested_product_type") or "").strip()
-        if product_type and product_type not in product_types:
-            product_types.append(product_type)
-    return product_types
 
 
 

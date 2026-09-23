@@ -34,17 +34,6 @@ from .tool_loop_control import (
     SEARCH_VALIDATION_ERROR_PREFIX,
 )
 
-_NO_DIRECT_CATALOG_MATCH_EVIDENCE = (
-    "CUSTOMER_SAFE_NO_MATCH_EVIDENCE: The active catalog has no direct "
-    "advertised taxonomy match for this requested product role. "
-    "No retrieval ran and no alternative product type was selected. Say "
-    "that plainly, preserve any successful evidence for other roles, and "
-    "ask permission before searching a different advertised type. Do not "
-    "name alternatives."
-)
-
-
-
 _PRODUCT_DETAIL_EVIDENCE_NOTE = (
     "Product details were read for these products, but the available "
     "detail data contains only the listed facts. Do "
@@ -96,8 +85,6 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
 
     taxonomy = payload.get("taxonomy") or {}
     confirmed_filters = payload.get("confirmed_filters") or {}
-    if payload.get("outcome") == "no_direct_catalog_match":
-        return _NO_DIRECT_CATALOG_MATCH_EVIDENCE
     if payload.get("outcome") == "zero_results":
         lines = [
             (

@@ -87,8 +87,6 @@ from .tool_evidence import (
 )
 from .tool_loop_control import (
     SEARCH_BUDGET_EXHAUSTED_PREFIX,
-    SEARCH_VALIDATION_ERROR_PREFIX,
-    STOP_TOOL_USE_PREFIX,
 )
 
 logger = logging.getLogger(__name__)
@@ -137,12 +135,6 @@ _PARTIAL_GRAPH_SNAPSHOT_TIMEOUT_SECONDS = 1.0
 _UNSUPPORTED_SEARCH_MODE_MESSAGE = (
     "The requested search mode is not available for the active catalog. "
     "Ask the shopper to use an advertised mode."
-)
-
-
-_NO_DIRECT_TAXONOMY_RESPONSE = (
-    "The catalog doesn't advertise a product type that directly matches this "
-    "request. Would you like me to search a different advertised product type?"
 )
 
 
@@ -749,37 +741,6 @@ async def _partial_graph_messages(
     values = _value(snapshot, "values")
     messages = _value(values, "messages")
     return (messages if isinstance(messages, list) else []), None
-
-
-def _no_direct_taxonomy_response(
-    result: Any,
-    *,
-    request_id: str,
-) -> str | None:
-    """Return the fixed shopper response for a current-turn no-match result."""
-
-    outcomes = _business_tool_result_contents(
-        _current_turn_messages(_result_messages(result), request_id)
-    )
-    no_direct_outcomes = [
-        content
-        for content in outcomes
-        if content.startswith(
-            f"{STOP_TOOL_USE_PREFIX} No faithful advertised catalog taxonomy"
-        )
-    ]
-    repair_or_no_direct = all(
-        content.startswith(
-            (
-                SEARCH_VALIDATION_ERROR_PREFIX,
-                f"{STOP_TOOL_USE_PREFIX} No faithful advertised catalog taxonomy",
-            )
-        )
-        for content in outcomes
-    )
-    if no_direct_outcomes and repair_or_no_direct:
-        return _NO_DIRECT_TAXONOMY_RESPONSE
-    return None
 
 
 def _business_tool_result_contents(messages: list[Any]) -> list[str]:

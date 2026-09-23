@@ -183,7 +183,6 @@ from .turn_support import (
     _images_in_product_order,
     _in_presentation_order,
     _media_failure_response,
-    _no_direct_taxonomy_response,
     _partial_graph_messages,
     _product_detail_failure_message,
     _product_detail_record,
@@ -1574,23 +1573,18 @@ class DeepAgentsRuntime:
             # not a reason for the runtime to seize the turn. Deterministic code
             # establishes that the filter is not advertised; the model decides
             # what to say about it, constrained by the grounding editor.
-            state.response = _no_direct_taxonomy_response(
-                result,
-                request_id=identity.request_id,
+            # Never below the reserve, however long the loop actually ran.
+            remaining_seconds = max(
+                grounding_reserve,
+                execution_deadline - time.monotonic(),
             )
-            if not state.response:
-                # Never below the reserve, however long the loop actually ran.
-                remaining_seconds = max(
-                    grounding_reserve,
-                    execution_deadline - time.monotonic(),
-                )
-                state.response = await self._rewrite_response_for_grounding(
-                    state,
-                    result,
-                    draft_response,
-                    request_id=identity.request_id,
-                    timeout_seconds=remaining_seconds,
-                )
+            state.response = await self._rewrite_response_for_grounding(
+                state,
+                result,
+                draft_response,
+                request_id=identity.request_id,
+                timeout_seconds=remaining_seconds,
+            )
             if not state.response:
                 # The work is already done and paid for. Answering from it
                 # beats asking the shopper to run the turn again.

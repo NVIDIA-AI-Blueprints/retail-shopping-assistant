@@ -111,23 +111,11 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
         near_miss = _the_filter_removed_line(payload)
         if near_miss:
             lines.append(near_miss)
-        # Zero results told the model what was absent and nothing about what
-        # was present, so it asked. "No green dress in a size 2 -- would you
-        # like size 4 instead?" showed nothing, on a turn where the catalog
-        # held plenty of size 2 dresses in other colours. A shopper asked to
-        # choose between two things they cannot see has been given less than
-        # nothing.
-        #
-        # This used to be answered by running the search again here, without
-        # the optional filters, and handing the results over. That retry kept
-        # only the size and dropped the product type with everything else, so
-        # "a tote bag in a size 8" searched the whole catalog for size 8 --
-        # which bags, being one size, are excluded from -- and four boots and
-        # heels came back and were registered under a reply about tote bags.
-        # Across every zero-result turn in the suite the model had already
-        # issued the correct retry itself, keeping the garment and dropping the
-        # colour, so the second search only ever added what the reply disowned.
-        # What it knew that an instruction did not is said here instead.
+        # Zero results say what is absent and nothing about what is present,
+        # so on their own they invite a question the shopper cannot answer
+        # ("would you like size 4 instead?" with nothing shown). No search is
+        # re-run here: the model retries correctly itself, keeping the garment
+        # and dropping a colour, so the note below tells it what to keep.
         lines.append(
             "NEXT: nothing in the catalog matched all of these at once. Search "
             "again yourself, now, with one optional requirement dropped -- "

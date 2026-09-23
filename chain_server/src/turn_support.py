@@ -399,17 +399,9 @@ def primary_skills_by_group(
 def _one_primary_per_group(self: Any) -> Any:
     """Reject two primaries from one exclusive group, or a stranded modifier.
 
-    This used to intersect against the literal set
-    ``{"outfit-styling", "product-discovery"}``. `catalog-questions` shipped on
-    2026-08-25 declaring ``role: primary`` and ``exclusive_group:
-    product_procedure`` -- the same group as the other two -- and the check
-    could not see it. Measured on the shipped registry: selecting it beside
-    product-discovery was *accepted*, two primaries from one group, while
-    selecting it beside budget-shopping was *rejected* as a modifier with no
-    primary, which is the shape of "do you have anything for $5 to $10".
-
-    `ShopperSkill.exclusive_group` was parsed, validated and stored the whole
-    time, and nothing ever read it. So read it.
+    Groups are read from each skill's declared ``exclusive_group`` rather than
+    a list of skill names, so a newly registered primary is checked the same
+    way as the existing ones.
     """
 
     cls = type(self)
@@ -1085,9 +1077,8 @@ def _in_presentation_order(
     """The shown products, ordered as the reply presents them.
 
     The cards and the words are the same list to a shopper, so "the second one"
-    has to mean one product. They were two orders: the cards followed the
-    catalog's ranking and the sentences followed whatever the model wrote, and
-    across recorded turns they disagreed about half the time.
+    has to mean one product. Left alone, the cards would follow the catalog's
+    ranking and the sentences whatever the model wrote.
 
     The order is settled once, here, where the reply and the products are both
     in hand -- so every consumer downstream renders one order rather than
@@ -1614,18 +1605,11 @@ def _cart_product_choice_note(
 ) -> str:
     """Say when a product reached the cart from a description rather than a name.
 
-    This used to refuse. It refused on the ABSENCE of confirmation -- "nothing
-    here proves the shopper meant this one" -- which is a gap in our
-    bookkeeping rather than a fact about the world, and it cost a turn every
-    time it was wrong. It was wrong in both directions inside two days: it
-    turned down a correct resolution the assistant had itself proposed by name
-    on the two previous turns, and its word scorer put a different dress in a
-    cart because `black` happened to sit in that product's title.
-
-    So it discloses instead, on the same reasoning that took out the size and
-    quantity gates: a product nobody chose is caught by being visible, not by
-    blocking the turns that got it right. The cart is on screen, a wrong line
-    is one click to remove, and the shopper is told which reading was taken.
+    It discloses rather than refuses. The absence of confirmation is a gap in
+    our bookkeeping, not a fact about the world, and refusing on it costs a
+    turn every time it is wrong. A product nobody chose is caught by being
+    visible: the cart is on screen, a wrong line is one click to remove, and
+    the shopper is told which reading was taken.
 
     Silent when the choice is settled by something checkable:
 

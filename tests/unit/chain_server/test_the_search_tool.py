@@ -947,7 +947,24 @@ class TestASearchThatFindsNothing:
         _turn, text = empty
 
         assert "SEARCH_SCOPE_COMPLETE" not in text
-        assert "search again without it" in text
+        assert "Drop one filter, search again" in text
+
+    def test_it_ends_by_naming_the_filters_that_can_go(self, empty) -> None:
+        # The general rule sits above the evidence, which echoes the call just
+        # sent; replayed, the model copied that call 3 of 3 times. Named last,
+        # the filters it could drop were dropped 3 of 3.
+        _turn, text = empty
+
+        assert text.rstrip().endswith(
+            "NEXT STEP: search again without one of these filters: color. "
+            "Do not send the same search again."
+        )
+
+    def test_a_size_is_never_offered_as_the_filter_to_drop(self) -> None:
+        assert catalog_search._filters_that_can_go(
+            {"primary_color": ["green"], "sizes": ["2"]}
+        ) == ["primary_color"]
+        assert catalog_search._filters_that_can_go({"sizes": ["2"]}) == []
 
     def test_the_retry_is_the_model_s_to_issue_not_the_server_s(
         self, empty

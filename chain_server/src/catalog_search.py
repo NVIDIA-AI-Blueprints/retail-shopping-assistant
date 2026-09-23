@@ -99,6 +99,7 @@ from .turn_support import (
     _ONE_SIZE,
     _SEARCH_BUDGET_EXHAUSTED_NOTE,
     _SEARCH_NO_MATCH_GROUNDING_NOTE,
+    _SEARCH_NO_MATCH_NEXT_STEP,
     _SEARCH_RESULT_GROUNDING_NOTE,
     _SEARCH_SCOPE_COMPLETE_NOTE,
     _UNSUPPORTED_SEARCH_MODE_MESSAGE,
@@ -1658,6 +1659,15 @@ def _reserved_search_slot(ctx: SearchContext, attempt: _Attempt) -> StepResult:
 
 
 
+def _filters_that_can_go(confirmed_filters: dict[str, Any]) -> list[str]:
+    """The filters a search that found nothing may be retried without.
+
+    A size is a fact about a body, not a preference, so it is never one.
+    """
+
+    return [name for name in confirmed_filters if name != "sizes"]
+
+
 def _executed_search(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     """Run the retrieval and record what it cost and returned."""
 
@@ -1967,10 +1977,15 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
         # silently is still forbidden; the evidence requires saying which one
         # went.
         relaxable = bool(evidence.confirmed_filters)
+        droppable = _filters_that_can_go(evidence.confirmed_filters)
         if evidence.scope_complete and not relaxable:
             lines.append(_SEARCH_SCOPE_COMPLETE_NOTE)
         elif evidence.budget_exhausted:
             lines.append(_SEARCH_BUDGET_EXHAUSTED_NOTE)
+        elif droppable:
+            lines.append(
+                _SEARCH_NO_MATCH_NEXT_STEP.format(droppable=", ".join(droppable))
+            )
         return "\n\n".join(lines), evidence.as_artifact()
 
     evidence = SearchEvidence(

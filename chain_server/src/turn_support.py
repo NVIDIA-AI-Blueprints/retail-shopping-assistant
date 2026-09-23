@@ -1919,27 +1919,22 @@ _SEARCH_RESULT_GROUNDING_NOTE = (
 )
 
 _SEARCH_NO_MATCH_GROUNDING_NOTE = (
-    "SEARCH_NO_MATCH_GROUNDING_NOTE: Zero products matched this exact "
-    "advertised taxonomy and filter scope. This result does not establish "
-    "whether products exist in a different, unsearched, or unadvertised "
-    "product type.\n"
-    "When a filter can be given up, search again without it and show what "
-    "that finds, saying plainly which one you dropped: \"no black dress runs "
-    "to a 2 -- here are dresses in a 2 in other colours\". Offering the "
-    "shopper a numbered menu of things you could look for is not an answer; "
-    "you have the budget to look, so look, and never quietly drop a filter "
-    "and present the results as though they met it.\n"
-    "A size is never the filter you give up. Colour, pattern and style are "
-    "preferences; a size is a fact about a body, and a garment in the wrong "
-    "one is not an alternative, it is something the shopper cannot wear. "
-    "Keep the size and relax a preference. If nothing in the shop runs to "
-    "that size, say so and name the nearest one, but do not lay out garments "
-    "in it as though they were options -- offer to show them and let the "
-    "shopper decide.\n"
-    "If the shopper asked for only that thing, or asked you not to show "
-    "alternatives, relax nothing. Say plainly that there is none and stop. "
-    "Their instruction outranks your helpfulness, and showing alternatives "
-    "anyway tells them you were not listening."
+    "SEARCH_NO_MATCH_GROUNDING_NOTE: No product matched all of these filters "
+    "together. That says nothing about products outside this search.\n"
+    "- Drop one filter, search again, and tell the shopper which one you "
+    "dropped. Do not answer with a list of things you could search for.\n"
+    "- Never drop a size: a garment in the wrong size is not an alternative. "
+    "If nothing comes in that size, say so and name the nearest one.\n"
+    "- If the shopper asked for only this, drop nothing: say there is none."
+)
+
+#: The last line of a zero-result reply. It names this search's own filters:
+#: the general rule above sat before four blocks of evidence echoing the call,
+#: and replayed, the model sent the same search back 3 of 3 times; with this
+#: line after the evidence it dropped a filter 3 of 3.
+_SEARCH_NO_MATCH_NEXT_STEP = (
+    "NEXT STEP: search again without one of these filters: {droppable}. "
+    "Do not send the same search again."
 )
 
 _SEARCH_SCOPE_COMPLETE_NOTE = (

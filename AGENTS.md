@@ -57,8 +57,6 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 - The agent's forecast tool: `get_weather_forecast_tool` in
   `chain_server/src/deepagents_runtime.py`, granted by
   `chain_server/skills/shopper/destination-weather/SKILL.md`
-- Standalone weather wrapper used only by its own test:
-  `chain_server/src/weather_tool.py`
 - Shared request/state models: `chain_server/src/agenttypes.py`
 - The composer receives separated authority lanes. Never merge lanes with different authority into one block: dialogue carries intent, the product index carries identity, the cart is authoritative, tool evidence establishes current facts.
 - Deterministic code may establish that a catalog filter is unadvertised; it must not decide the conversational move. Never substitute a fixed refusal for the model's composed answer.

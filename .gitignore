@@ -88,7 +88,6 @@ shared/data/enriched_products_old.jsonl
 # describe and superseded by the next run, so they are kept locally.
 docs/reports/
 
-# Conversations saved on the way out by `scripts/reset_a_conversation.py`.
-# The whole point is that they left the database; they should not arrive in
-# the repository instead.
+# Conversations copied out of the database before it was reset. They left the
+# database; they should not arrive in the repository instead.
 debug_archive/

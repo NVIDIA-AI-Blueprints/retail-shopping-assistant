@@ -15,3 +15,7 @@ src = [
 [lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "W291", "W293"]
 ignore = ["E501"]
+
+[lint.flake8-bugbear]
+# FastAPI resolves these per request; as argument defaults they are its idiom.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path"]

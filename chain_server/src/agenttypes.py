@@ -129,6 +129,13 @@ class State(BaseModel):
         default="",
         description="Rendered dialogue only, excluding the product index"
     )
+    historical_product_index: str = Field(
+        default="",
+        description=(
+            "Rendered product index only, excluding the dialogue. Kept beside "
+            "the joined `context` so a turn can be reviewed lane by lane"
+        ),
+    )
     context: str = Field(
         default="",
         description="Rendered prompt text only; never parsed back into state"

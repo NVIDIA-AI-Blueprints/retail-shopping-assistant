@@ -1071,6 +1071,58 @@ async def test_trusted_query_responses_can_expose_agent_diagnostics(
     assert result["agent_diagnostics"] == state.agent_diagnostics
 
 
+@pytest.mark.asyncio
+async def test_diagnostics_carry_the_memory_the_turn_was_read_against(
+    base_config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both lanes, and only the ones a turn actually had.
+
+    What a turn did is half of why it answered as it did; the other half is
+    what it could see. That half used to be reconstructable only offline and
+    only approximately, from the products a run happened to report rather
+    than from the projection the turn actually read.
+    """
+
+    base_config.expose_agent_diagnostics = True
+    runtime = DeepAgentsRuntime(base_config)
+    state = State(user_id=1, query="hello", guardrails=False)
+    state.response = "done"
+    state.agent_diagnostics = {"final_termination_reason": "completed"}
+    state.dialogue_context = "RECENT DISCUSSION:\nshopper: show me heels"
+    state.historical_product_index = "HISTORICAL PRODUCT INDEX:\n1:Jade Suede Heels"
+    identity = RequestIdentity(
+        session_id="session-a",
+        conversation_id="conversation-a",
+        cart_id="cart-a",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id="request-a",
+    )
+
+    async def fake_run_turn(*args, **kwargs):
+        return state
+
+    monkeypatch.setattr(runtime, "_run_turn", fake_run_turn)
+
+    result = await runtime.ainvoke(state, identity)
+
+    assert result["agent_diagnostics"]["context_lanes"] == {
+        "dialogue": state.dialogue_context,
+        "historical_product_index": state.historical_product_index,
+    }
+
+    # An empty lane is not reported as a lane. A turn one into a conversation
+    # has no index, and a key whose value is "" reads as one that was rendered
+    # and came back blank.
+    state.historical_product_index = ""
+    result = await runtime.ainvoke(state, identity)
+
+    assert result["agent_diagnostics"]["context_lanes"] == {
+        "dialogue": state.dialogue_context
+    }
+
+
 def test_the_trace_scopes_each_product_to_the_role_that_retrieved_it() -> None:
     """A multi-role call's union of filters is not a claim about one product.
 

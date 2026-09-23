@@ -541,15 +541,29 @@ def clear_context(user_id: int, db=Depends(get_db)):
 
 @app.post("/user/{user_id}/clear")
 def clear_user(user_id: int, db=Depends(get_db)):
+    # The cart goes explicitly. `CartItem.user_id` carries no foreign key onto
+    # `users`, so deleting the user cascades nothing, and this endpoint used to
+    # report that it had deleted the cart while leaving every line in place.
+    cart_lines = (
+        db.query(CartItem).filter(CartItem.user_id == user_id).delete(
+            synchronize_session=False
+        )
+    )
     user = db.query(User).filter(User.id == user_id).first()
-    if not user:
+    if not user and not cart_lines:
         raise HTTPException(status_code=404, detail="User not found")
-    db.delete(user)
+    if user:
+        db.delete(user)
     db.commit()
     return {
         "user_id": user_id,
-        "message": f"In response to the user's request, deleted cart and context for user {user_id}"
-        }
+        "deleted_cart_lines": cart_lines,
+        "deleted_context": bool(user),
+        "message": (
+            f"In response to the user's request, deleted {cart_lines} cart "
+            f"line(s) and the stored context for user {user_id}"
+        ),
+    }
 
 @app.get("/ready")
 def readiness_check(db=Depends(get_db)):

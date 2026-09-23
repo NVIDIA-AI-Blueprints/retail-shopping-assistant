@@ -51,9 +51,13 @@ What follows is what those cannot say.
 - A search result already carries every confirmed attribute the catalog holds
   for that product -- material, composition, closure, colour, structure, care.
   Do not read details for something you searched this turn; the answer is
-  already in the search evidence. Read details only for a product recovered
-  from the historical index, which carries identity alone: reference, name,
-  category, and price when it was shown.
+  already in the search evidence.
+- A resolved product carries those same confirmed attributes, under `CONFIRMED
+  WHEN SHOWN`. Do not read details for it either: the resolution states which
+  facts it is carrying and when a fresh read is still required. This file used
+  to say a recovered product carried identity alone, which was true of an
+  earlier resolver and sent turns to the catalog for material and sizes the
+  record was already holding.
 
 ## Sizes
 

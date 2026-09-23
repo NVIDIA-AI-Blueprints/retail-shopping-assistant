@@ -787,6 +787,129 @@ def _delete_conversation(db, conversation_id: str) -> dict[str, Any]:
     }
 
 
+def _conversation_archive(db, conversation_id: str) -> dict[str, Any]:
+    """Everything this conversation holds, as one readable snapshot.
+
+    Returned rather than written anywhere, because the point of a reset is to
+    get this out of the operational tables, and an archive table in the same
+    database is not out. The caller decides where it lives.
+
+    `shopper_profiles` is deliberately absent. It reads like shopper memory and
+    is not: the rows are immutable representative shoppers created by startup
+    bootstrap and shared across conversations, which is why the turn's foreign
+    key onto them is `RESTRICT`. A reset that deleted one would take the
+    persona out from under every other conversation using it.
+    """
+
+    turns = (
+        db.query(ConversationTurn)
+        .filter_by(conversation_id=conversation_id)
+        .order_by(ConversationTurn.sequence)
+        .all()
+    )
+    turn_ids = [turn.turn_id for turn in turns]
+    events = (
+        db.query(ConversationEvent)
+        .filter(ConversationEvent.turn_id.in_(turn_ids))
+        .order_by(ConversationEvent.turn_id, ConversationEvent.logical_order)
+        .all()
+        if turn_ids
+        else []
+    )
+    projection = (
+        db.query(ConversationProjection).filter_by(conversation_id=conversation_id).first()
+    )
+    # One conversation is one shopper, so the cart is reachable from the turns
+    # and the caller does not have to know the id to reset what it started.
+    cart_user_ids = sorted({turn.cart_user_id for turn in turns})
+    cart_items = (
+        db.query(CartItem).filter(CartItem.user_id.in_(cart_user_ids)).all()
+        if cart_user_ids
+        else []
+    )
+    return {
+        "conversation_id": conversation_id,
+        "archived_at": time.time(),
+        "cart_user_ids": cart_user_ids,
+        "turns": [
+            {
+                column.name: getattr(turn, column.name)
+                for column in ConversationTurn.__table__.columns
+            }
+            for turn in turns
+        ],
+        "events": [
+            {
+                column.name: getattr(event, column.name)
+                for column in ConversationEvent.__table__.columns
+            }
+            for event in events
+        ],
+        "projection": (
+            {
+                column.name: getattr(projection, column.name)
+                for column in ConversationProjection.__table__.columns
+            }
+            if projection
+            else None
+        ),
+        "cart_items": [
+            {
+                column.name: getattr(item, column.name)
+                for column in CartItem.__table__.columns
+            }
+            for item in cart_items
+        ],
+    }
+
+
+def _reset_conversation(db, conversation_id: str) -> dict[str, Any]:
+    """Hand back everything this conversation held, then delete all of it.
+
+    One call, because a reset spread over three endpoints is a reset that half
+    happens: `DELETE /conversations/{id}` leaves the cart, and the cart endpoint
+    needs a user id the caller may not have kept.
+
+    The snapshot is taken before anything is deleted and returned to the caller,
+    so a session can be thrown away without throwing away the means to work out
+    what it did.
+    """
+
+    archive = _conversation_archive(db, conversation_id)
+    begin_write_transaction(db, f"conversation:{conversation_id}")
+    deleted_cart_lines = 0
+    if archive["cart_user_ids"]:
+        deleted_cart_lines = (
+            db.query(CartItem)
+            .filter(CartItem.user_id.in_(archive["cart_user_ids"]))
+            .delete(synchronize_session=False)
+        )
+    # Counted before the turns go, because the rows leave by cascade and there
+    # is nothing left to count afterwards.
+    deleted_events = len(archive["events"])
+    deleted_projection = (
+        db.query(ConversationProjection)
+        .filter_by(conversation_id=conversation_id)
+        .delete(synchronize_session=False)
+    )
+    deleted_turns = (
+        db.query(ConversationTurn)
+        .filter_by(conversation_id=conversation_id)
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {
+        "conversation_id": conversation_id,
+        "deleted": {
+            "turns": deleted_turns,
+            "events": deleted_events,
+            "projection": bool(deleted_projection),
+            "cart_lines": deleted_cart_lines,
+        },
+        "archive": archive,
+    }
+
+
 def abandoned_timeout_seconds() -> int:
     timeout = int(
         os.environ.get(
@@ -873,6 +996,15 @@ def create_conversation_router(get_db) -> APIRouter:
         _validate_conversation_id(conversation_id)
         try:
             return _delete_conversation(db, conversation_id)
+        except Exception:
+            db.rollback()
+            raise
+
+    @router.post("/conversations/{conversation_id}/reset")
+    def reset_conversation(conversation_id: str, db=Depends(get_db)):
+        _validate_conversation_id(conversation_id)
+        try:
+            return _reset_conversation(db, conversation_id)
         except Exception:
             db.rollback()
             raise

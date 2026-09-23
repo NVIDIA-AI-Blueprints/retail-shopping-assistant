@@ -1621,22 +1621,6 @@ def _shopper_words_this_conversation(state: Any) -> str:
     return "\n".join(parts)
 
 
-#: A word carries no identifying weight below this, and the short ones collide
-#: with ordinary sentences: "the" and "a" both belong to "The Office A-line
-#: Dress" and to "add the black one in a 2", which is how a navy dress was
-#: fitted to a request for a black one.
-_MIN_NAMING_WORD = 4
-#: How close a shopper's word has to be to a product's. Absorbs a typo or a
-#: missing plural without inventing a match: "ofice" is 0.91 against "office".
-_NAMING_LIKENESS = 0.85
-#: A fit has to be worth something, and it has to be clearly better than the
-#: next one. The margin is what protects the shopper: a threshold alone always
-#: has a best candidate, and picking the best of two near-equals is the silent
-#: choice this exists to prevent.
-_NAMING_FLOOR = 0.25
-_NAMING_MARGIN = 0.20
-
-
 def _most_recently_shown(state: Any) -> list[dict]:
     """The last set of products put in front of the shopper."""
 

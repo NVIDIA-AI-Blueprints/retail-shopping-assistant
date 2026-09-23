@@ -16,7 +16,6 @@ from chain_server.src.conversation_memory import (
     TurnReplayOutput,
     build_dialogue_context,
     build_request_digest,
-    format_conversation_context,
 )
 
 # The regex the runtime used to scrape shopper text back out of rendered prose,
@@ -423,7 +422,7 @@ def test_finalize_turn_posts_the_typed_event_contract() -> None:
 
 def test_context_formatter_preserves_separate_speaker_lines() -> None:
 
-    rendered = format_conversation_context(
+    _, rendered = build_dialogue_context(
         [
             RecentConversationTurn(
                 sequence=1,
@@ -440,7 +439,7 @@ def test_context_formatter_preserves_separate_speaker_lines() -> None:
 
 
 def test_context_formatter_excludes_blocked_turns() -> None:
-    rendered = format_conversation_context(
+    _, rendered = build_dialogue_context(
         [
             RecentConversationTurn(
                 sequence=1,
@@ -473,7 +472,7 @@ def test_context_formatter_is_bounded_and_keeps_the_newest_turn() -> None:
         for sequence in range(1, 5)
     ]
 
-    rendered = format_conversation_context(
+    _, rendered = build_dialogue_context(
         turns,
         max_chars=420,
     )
@@ -688,15 +687,6 @@ def test_ineligible_turns_reach_neither_lane() -> None:
     assert [turn.sequence for turn in dialogue] == [4]
     for excluded in ("Blocked", "Abandoned", "Unfinished"):
         assert excluded not in rendered
-
-
-def test_rendering_is_unchanged_for_the_wrapper() -> None:
-    turns = [_turn(1, "Start with a beige top.", "Here are three beige tops.")]
-
-    dialogue, rendered = build_dialogue_context(turns, max_chars=4096)
-
-    assert format_conversation_context(turns, max_chars=4096) == rendered
-    assert dialogue and rendered.startswith("RECENT CONVERSATION:")
 
 
 def test_empty_selection_yields_both_lanes_empty() -> None:

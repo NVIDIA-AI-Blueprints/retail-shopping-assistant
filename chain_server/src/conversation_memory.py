@@ -431,16 +431,6 @@ def build_dialogue_context(
     return [typed for typed, _ in ordered], rendered
 
 
-def format_conversation_context(
-    recent_turns: Sequence[RecentConversationTurn],
-    *,
-    max_chars: int = _DEFAULT_CONTEXT_MAX_CHARS,
-) -> str:
-    """Render model-safe service-bounded turns without merging speaker lines."""
-
-    return build_dialogue_context(recent_turns, max_chars=max_chars)[1]
-
-
 def _render_recent_turn(
     turn: RecentConversationTurn,
     *,

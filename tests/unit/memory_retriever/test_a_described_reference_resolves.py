@@ -17,7 +17,7 @@ from __future__ import annotations
 from memory_retriever.src.product_references import (
     ProductReferenceDescriptor,
     ProductReferenceMatch,
-    _matched_occurrences,
+    _resolution_pool,
     _resolve_descriptor,
 )
 
@@ -56,10 +56,8 @@ _OCCURRENCES = [
 
 def _resolved(**selectors: object) -> list[str]:
     descriptor = ProductReferenceDescriptor(reference_id="ref", **selectors)
-    return [
-        match.product["display_name"]
-        for match in _matched_occurrences(descriptor, _OCCURRENCES)
-    ]
+    matches, _ignored, _refused = _resolution_pool(descriptor, _OCCURRENCES)
+    return [match.product["display_name"] for match in matches]
 
 
 def _resolution(**selectors: object) -> tuple[str, list[str], list[str]]:

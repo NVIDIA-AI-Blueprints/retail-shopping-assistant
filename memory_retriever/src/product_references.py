@@ -607,16 +607,6 @@ def _one_per_product(
     return list(matches_by_ref.values())
 
 
-def _matched_occurrences(
-    descriptor: ProductReferenceDescriptor,
-    occurrences: list[ProductReferenceMatch],
-) -> list[ProductReferenceMatch]:
-    """Which products this descriptor refers to, one entry each."""
-
-    matches, _ignored, _refused = _resolution_pool(descriptor, occurrences)
-    return matches
-
-
 def _resolution_pool(
     descriptor: ProductReferenceDescriptor,
     occurrences: list[ProductReferenceMatch],

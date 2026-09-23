@@ -429,28 +429,6 @@ class Retriever:
 
         return text_count, image_count
 
-    def embeddings_exist(self) -> bool:
-        """
-        Check if embeddings already exist in both text and image collections.
-        Returns True if both collections have data, False otherwise.
-        """
-        try:
-            text_count, image_count = self._embedding_counts()
-
-            logging.info(f"CATALOG RETRIEVER | embeddings_exist() | Text collection has {text_count} entities. Image collection has {image_count} entities.")
-            # Check text and image collections
-            image_ready = (not self.image_enabled) or image_count > 0
-            if text_count > 0 and image_ready:
-                logging.info("CATALOG RETRIEVER | embeddings_exist() | Required embeddings found.")
-                return True
-            else:
-                logging.info("CATALOG RETRIEVER | embeddings_exist() | No embeddings found in either collection.")
-                return False
-
-        except Exception as e:
-            logging.info(f"CATALOG RETRIEVER | embeddings_exist() | Error checking embeddings: {e}")
-            return False
-
     def embed_chunk(
         self,
         chunk: str,

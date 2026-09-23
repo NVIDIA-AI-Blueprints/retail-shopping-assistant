@@ -21,10 +21,6 @@ class CatalogRepairState:
     A rejected search may be repaired once. These fields remember what was
     rejected so the repair cannot silently change product scope or drop
     capability-validated constraints.
-
-    The three fields that tracked constraint reviews are gone with the review
-    itself: an unenforceable requirement is now disclosed rather than sent
-    back to be justified, so there is no review to hold open.
     """
 
     failed_repair_scope_key: str | None = None
@@ -32,10 +28,9 @@ class CatalogRepairState:
     pending_schema_requirements: list[str] = field(default_factory=list)
     #: The last scope this turn was turned back on, as sent. A repair that
     #: comes back identical has not repaired anything, and the locks above
-    #: cannot tell the difference -- asked to shop a look of three, two roles
-    #: were rejected thirty-one times each, unchanged every time, until the
-    #: turn hit its recursion limit with nothing to show. Remembered here so
-    #: the second identical attempt is the last one.
+    #: cannot tell the difference. Remembered here so the second identical
+    #: attempt is the last one, rather than the turn running to its recursion
+    #: limit.
     last_rejected_scope: str | None = None
 
 
@@ -100,8 +95,8 @@ class TurnScope:
     # Historical product resolution. Guarded by ``resolution_lock``.
     resolution_lock: Lock = field(default_factory=Lock)
     #: Set when a call actually resolved something. A call that resolved
-    #: nothing used to spend the turn's only attempt, so the correction the
-    #: refusal itself asked for could never be made.
+    #: nothing does not spend the turn's only attempt, so the correction the
+    #: refusal itself asks for can still be made.
     product_resolution_used: bool = False
     #: Attempts made, resolving or not, so a call that keeps missing still
     #: terminates.

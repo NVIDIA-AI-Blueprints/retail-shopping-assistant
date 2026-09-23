@@ -63,7 +63,6 @@ from .conversation_memory import (
     FinalTurnStatus,
 )
 from .message_shape import (
-    _content_to_text,
     _current_turn_messages,
     _message_type,
     _result_messages,
@@ -75,12 +74,9 @@ from .response_format import (
     _format_product_refs,
 )
 from .skill_activation import (
-    SKILL_ACTIVATION_COMPLETE,
     SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
     SKILL_ACTIVATION_MULTIPLE_PRIMARY,
-    SKILL_ACTIVATION_REQUIRED,
     SKILL_ACTIVATION_TOOL_NAME,
-    SKILL_TOOL_NOT_GRANTED,
 )
 from .tool_evidence import (
     evidence_of,
@@ -733,28 +729,6 @@ async def _partial_graph_messages(
     values = _value(snapshot, "values")
     messages = _value(values, "messages")
     return (messages if isinstance(messages, list) else []), None
-
-
-def _business_tool_result_contents(messages: list[Any]) -> list[str]:
-    """Return non-activation tool outcomes in graph order."""
-
-    outcomes: list[str] = []
-    for message in messages:
-        if _message_type(message) != "tool":
-            continue
-        name = str(_value(message, "name") or "")
-        content = _content_to_text(_value(message, "content"))
-        if name == SKILL_ACTIVATION_TOOL_NAME or content.startswith(
-            (
-                SKILL_ACTIVATION_COMPLETE,
-                SKILL_ACTIVATION_REQUIRED,
-                SKILL_TOOL_NOT_GRANTED,
-                "SHOPPER_SKILL_ACTIVATION_FAILED:",
-            )
-        ):
-            continue
-        outcomes.append(content)
-    return outcomes
 
 
 def _wearer_audience_events(

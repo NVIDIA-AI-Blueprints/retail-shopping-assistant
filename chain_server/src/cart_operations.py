@@ -22,7 +22,7 @@ from shared.commerce_contracts import (
     UpdateCartItemInput,
 )
 
-from .agenttypes import State
+from .agenttypes import Cart, State
 from .cart_format import (
     _format_cart_add_result,
     _format_cart_remove_result,

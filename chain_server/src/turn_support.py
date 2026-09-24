@@ -173,27 +173,6 @@ def stated_media_terms(media_analysis: str) -> str:
     return " ".join(words)
 
 
-WEATHER_PLACE_NOT_STATED = (
-    "WEATHER_PLACE_NOT_STATED: no forecast -- the words you quoted as naming "
-    "the place are not in anything the shopper has said, in this turn or any "
-    "earlier one.\n"
-    "If they did name a place, here or on an earlier turn of this same trip, "
-    "quote their actual words and call again.\n"
-    "Carry on and answer them either way -- a forecast was not the whole "
-    "request. If they said what the conditions will be -- \"it's going to "
-    "snow when we get back\" -- that is the answer to the weather question, "
-    "they are the authority on their own trip, and you have everything you "
-    "need. Search for what those conditions call for and show it.\n"
-    "Ask only if you cannot tell what they need at all, and then ask for the "
-    "one thing you are missing. Do not end the turn on a question about a "
-    "place when they have already told you the weather, and do not tell them "
-    "they can work it out themselves. Above all, do not describe conditions "
-    "you did not fetch: typical, seasonal, usually and this time of year are "
-    "not forecasts, and a reply that says the weather is unavailable and then "
-    "supplies some is worse than either half alone."
-)
-
-
 def _generic_shopper_guidance(requested_product_type: str | None) -> str:
     """Return safe guidance after an inferred attribute is removed."""
 

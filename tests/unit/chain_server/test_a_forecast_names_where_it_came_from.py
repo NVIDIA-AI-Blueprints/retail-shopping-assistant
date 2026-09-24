@@ -33,7 +33,7 @@ has spoken, which is what stops an invented place and nothing more.
 from __future__ import annotations
 
 import pytest
-from chain_server.src.response_format import WeatherForecastInput
+from chain_server.src.tools.weather import WeatherForecastInput
 from pydantic import ValidationError
 
 

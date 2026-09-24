@@ -108,10 +108,10 @@ def test_the_ordering_rule_ships_with_the_grant_rather_than_the_prompt(
     most needs it: "going to Cancun next week, what's the weather like".
     """
 
-    from chain_server.src.deepagents_runtime import DeepAgentsRuntime
+    from chain_server.src.tools.weather import forecast_prompt_section
 
     on, off = _prompts_either_way(base_config)
-    section = DeepAgentsRuntime._forecast_prompt_section()
+    section = forecast_prompt_section()
 
     assert "look the weather" not in on
     assert "look the weather" not in off
@@ -129,13 +129,13 @@ def test_a_country_is_forecast_and_disclosed_rather_than_refused() -> None:
     """Refusing to call for a country left the model asserting the weather
     instead, which is worse than either asking or calling."""
 
-    source = (_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read_text()
+    source = (_REPO_ROOT / "chain_server/src/tools/weather.py").read_text()
     # The docstring grew when a bare conditions question became a call, when a
     # carried-over place stopped being disqualified by its age, and again when
     # the shopper's own statement of the conditions moved to the top as the
     # rule that outranks the rest. The window has to reach past all of that to
     # the country paragraph it is actually about.
     weather = source[source.index("def get_weather_forecast_tool") :][:6500]
-    assert "capital or\n            largest city" in weather
+    assert "capital or\n        largest city" in weather
     assert "never do is describe weather you did not fetch" in weather
     assert "Anything broader than a city, per above. Ask which city." not in weather

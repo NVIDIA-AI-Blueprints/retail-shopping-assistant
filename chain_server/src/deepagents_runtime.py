@@ -17,7 +17,6 @@ import time
 from collections.abc import AsyncIterator, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
-from datetime import date as CalendarDate
 from pathlib import Path
 from typing import Any, Literal
 
@@ -86,9 +85,6 @@ from .fencing import MEDIA_FENCE
 from .grounding_evidence import (
     _collect_tool_grounding_evidence,
 )
-from .lexical_provenance import (
-    a_place_the_shopper_named,
-)
 from .media_perception import MediaPerceptionClient
 from .media_summary import summarize_media_analysis
 from .message_shape import (
@@ -108,8 +104,6 @@ from .model_usage import (
     _should_short_circuit_media_failure,
 )
 from .response_format import (
-    WEATHER_BUDGET_EXHAUSTED,
-    WEATHER_NO_DATE,
     _format_availability_result,
     _format_cart,
     _format_cart_total,
@@ -121,14 +115,8 @@ from .response_format import (
     _format_shopper_context,
     _format_store_date,
     _format_wearer_audience,
-    _format_weather_result,
-    claim_weather_call,
     format_cart_change,
     format_catalog_shape,
-    weather_call_needs_a_date,
-)
-from .response_format import (
-    WeatherForecastInput as _WeatherForecastInput,
 )
 from .search_replies import (
     _format_search_only_response,
@@ -159,6 +147,7 @@ from .tool_schemas import (
     _search_catalog_scopes_input_model,
     _search_catalog_tool_input_model,
 )
+from .tools.weather import build_weather_tool, forecast_prompt_section
 from .turn_diagnostics import (
     _catalog_repair_clarification_response,
     _empty_agent_diagnostics,
@@ -169,7 +158,6 @@ from .turn_diagnostics import (
 from .turn_scope import TurnScope
 from .turn_support import (
     _ONE_SIZE,
-    WEATHER_PLACE_NOT_STATED,
     AddCartItemsToolItemInput,
     RequestIdentity,
     _a_list_written_as_json_text,
@@ -197,7 +185,7 @@ from .turn_support import (
     format_most_recent_subject,
 )
 from .vocabulary_judge import CatalogVocabularyJudge
-from .weather import WeatherConfig, WeatherRequest, build_weather_client
+from .weather import WeatherConfig, build_weather_client
 
 logger = logging.getLogger(__name__)
 
@@ -2319,129 +2307,7 @@ class DeepAgentsRuntime:
             )
             return _format_policy_result(result)
 
-        @tool(args_schema=_WeatherForecastInput, return_direct=False)
-        def get_weather_forecast_tool(
-            city: str,
-            shopper_words_naming_the_place: str,
-            date: CalendarDate | None = None,
-            start_date: CalendarDate | None = None,
-            end_date: CalendarDate | None = None,
-        ) -> str:
-            """Live daily forecast for one place, for the dates in question.
-
-            FIRST, AND OVER EVERYTHING BELOW: the shopper outranks this tool.
-            If they have told you what the conditions will be -- "it's going
-            to snow when we get back" -- the weather question is answered and
-            there is nothing to look up. They are the authority on their own
-            trip. Dress what they told you and do not call this tool at all.
-
-            Not because the call would be unnecessary, but because it is
-            actively worse than no forecast. Asked that, the assistant looked
-            up Rome -- the wedding two turns before -- reported rain at 65-82F
-            and recommended a satin sheath dress and blush ballet flats to a
-            shopper heading into snow. "When we get back" is home, and home is
-            not a place the assistant knows. Every clause after this one is
-            about a shopper ASKING what the conditions are, never about one
-            telling you.
-
-            Call it, without being asked, when all three hold of the question
-            you are answering. The shopper named a CITY, town or postal code.
-            They named a date or window. That window is within about 15 days
-            of TODAY. A destination wedding, a trip, an outdoor event.
-            Conditions change what to wear more than anything else about a
-            destination.
-
-            Those three are the whole test, and they are a test on the
-            question rather than on one turn's wording. Two things follow.
-
-            It does not also have to be an outfit request. "I'm going to
-            Cancun next week, what's the weather like" names the place, names
-            the window, and is inside it -- so it is a call, and the forecast
-            is the entire answer. Asked exactly that, the assistant instead
-            replied that it had no live forecast and then described what
-            September in Cancun is typically like, which is both a refusal and
-            the thing a refusal is supposed to prevent.
-
-            And when they are asking, the place and the dates may have been
-            established earlier in the same conversation. Nine turns into
-            planning one trip to Cancun, "will I need a jacket in the evening"
-            is a question about Cancun on those dates. It was refused for
-            naming no city, and the reply then said there was no live forecast
-            for Cancun and described the evenings there anyway -- naming the
-            city it claimed not to be able to look up. If they are asking, and
-            you have the place and the date from the trip under discussion,
-            you are not missing a forecast; you have not asked for one yet.
-            Say which city and dates the numbers are for, so they can correct
-            you.
-
-            That is licence to carry a place forward for a shopper who wants
-            conditions they do not have. It is not licence to look one up for
-            a shopper who already gave you theirs, and it is not licence for a
-            place they have moved off.
-
-            The `city` argument takes a city, town or postal code. A country
-            or region has no single weather, so prefer asking which city over
-            calling with one. If you do call with something broad, the reply
-            must say the numbers cover that whole area and ask which city --
-            never present them as the weather where the shopper will be.
-
-            Do not call it otherwise. Specifically:
-            - The shopper already said what the weather will be. "It's going to
-              snow when we get back" is the answer, and they are the authority
-              on their own trip. A forecast cannot improve on it and a forecast
-              for somewhere else contradicts it. This is the rule at the top:
-              no call, and no lookup of any kind.
-            - No date, here or anywhere in the conversation.
-              Today is not what they are dressing for; ask instead.
-            - A date further out than about 15 days. There is no forecast that
-              far ahead, so a call cannot produce anything true.
-            - No place at all. A place is the one thing that cannot be
-              supplied from anywhere else.
-
-            In each of those cases, name the one thing you are missing and ask
-            for it. Do not answer the question anyway from what you know about
-            the place: typical, seasonal, this time of year and tends to be are
-            not forecasts, and a reply that opens by saying the weather is
-            unavailable and then supplies some is the failure above.
-
-            A country or region does not stop you. "We're going to Italy at the
-            weekend" was answered with no forecast at all and a flat assertion
-            that the weather would be warm -- worse than either asking or
-            calling. Call it for the place they named, using its capital or
-            largest city when they named a country, then say which city the
-            numbers are for and ask whether that is where they will be. What
-            you may never do is describe weather you did not fetch.
-
-            Dress the date they are dressing for, not the one they travel on:
-            "flying to Rome tomorrow, what do I wear at the weekend" is a
-            forecast for the weekend. Resolve relative dates against TODAY
-            first -- one exact ISO date, or a complete inclusive ISO start/end
-            range -- and never send a relative date or invent a place.
-            """
-
-            if not a_place_the_shopper_named(
-                (state.query, *(turn.shopper_text for turn in state.dialogue)),
-                shopper_words_naming_the_place,
-            ):
-                return WEATHER_PLACE_NOT_STATED
-            if weather_call_needs_a_date(date, start_date, end_date):
-                # The library treats a missing date as local today, which is
-                # right for "what is it like there now" and wrong for the only
-                # thing a shopper asks: "a wedding in Cancun" would silently
-                # get today's weather for an event months away. Ask instead.
-                return WEATHER_NO_DATE
-            if not claim_weather_call(scope):
-                return WEATHER_BUDGET_EXHAUSTED
-            return _format_weather_result(
-                self._weather_client.get_forecast(
-                    WeatherRequest(
-                        location=city,
-                        date=date,
-                        start_date=start_date,
-                        end_date=end_date,
-                    )
-                )
-            )
+        get_weather_forecast_tool = build_weather_tool(self, state, scope)
 
         # ``content_and_artifact`` because a repeat is refused with a typed
         # control signal, and a signal rides on the artifact. Returning the
@@ -2639,7 +2505,7 @@ class DeepAgentsRuntime:
                 "search_catalog_tool": self._catalog_prompt_section(
                     turn_capabilities
                 ),
-                "get_weather_forecast_tool": self._forecast_prompt_section(),
+                "get_weather_forecast_tool": forecast_prompt_section(),
             },
             spent_tool_context=tool_loop_control.spent_tool_context,
             widen_for_tool=_widen_for_tool,
@@ -3147,38 +3013,6 @@ class DeepAgentsRuntime:
             f"{CATALOG_SEARCH_RULES}"
         )
 
-    @staticmethod
-    def _forecast_prompt_section() -> str:
-        """When to fetch a forecast, for a request that was granted the tool.
-
-        Its own section rather than part of the search fan-out rule, because a
-        turn with nothing to search -- "going to Cancun next week, what's the
-        weather like" -- still needs it.
-
-        Held out of the static prompt for the same reason the catalog rules
-        are: ordering instructions for a tool the request was not granted are
-        unreadable cost.
-        """
-
-        return """Forecast ordering:
-- A shopper who has told you the conditions has already answered the weather
-  question. "It's going to snow when we get back" needs no lookup at all:
-  they are the authority on their own trip, and a forecast fetched for
-  anywhere else contradicts them. Dress what they said. Measured: that
-  sentence produced a forecast for the wedding city two turns earlier, rain
-  at 65-82F, and a satin dress with ballet flats for a shopper heading into
-  snow. Every rule below is about a shopper asking what the conditions are.
-- For a shopper who is asking, whether to look the weather up is answered on
-  the tool's own schema, by the place, the date and the window -- not by
-  whether the turn also asks for products. A question about the conditions
-  somewhere is answered by fetching them, with or without an outfit attached.
-- When the turn does fan out to product roles, look the weather up BEFORE that
-  fan-out, not after: once the roles are out you are told to stop and
-  synthesize, and the forecast never gets asked for. Conditions change which
-  pieces you would even search for, so they belong first. Measured: the same
-  sentence about a trip fetched a forecast on its own and skipped it entirely
-  once it arrived mid-conversation and read as an outfit request."""
-
     def _system_prompt(
         self,
         *,
@@ -3203,7 +3037,7 @@ class DeepAgentsRuntime:
         # filesystem and a todo list that were not there.
         #
         # The ordering rule has since moved out of here entirely, to
-        # `_forecast_prompt_section`, which ships with the grant and so needs
+        # `forecast_prompt_section`, which ships with the grant and so needs
         # no flag: a turn that was not granted the tool cannot be told to
         # order its calls around one.
         #

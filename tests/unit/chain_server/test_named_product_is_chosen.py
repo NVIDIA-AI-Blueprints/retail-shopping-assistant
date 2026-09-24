@@ -47,7 +47,7 @@ def test_a_catalog_silent_about_sizes_is_not_a_one_size_product() -> None:
 
 
 def test_the_lookup_instruction_tells_it_to_add_a_named_one_size_product() -> None:
-    source = open(_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read()
+    source = open(_REPO_ROOT / "chain_server/src/tools/catalog.py").read()
     block = source[source.index("is the product they named") :][:1600]
     assert "They have chosen it" in block
     assert "Do not ask whether to add what they asked you to add" in block

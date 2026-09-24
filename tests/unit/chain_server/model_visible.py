@@ -124,12 +124,14 @@ def reachable_on_a_turn_using(
 ) -> str:
     """Whitespace-normalised union of every channel that turn reads."""
 
+    from chain_server.src.tools.catalog import catalog_prompt_section
+
     capabilities = capabilities or a_catalog_like_the_real_one()
     parts = [
         runtime._system_prompt(),
         # Reaches the model only once a skill grants the search tool, which any
         # turn that searches does. Still a channel the turn reads.
-        runtime._catalog_prompt_section(capabilities),
+        catalog_prompt_section(capabilities),
         search_tool_schema(capabilities),
         shopping_tool_descriptions(),
         *(skill_body(name) for name in skill_names),

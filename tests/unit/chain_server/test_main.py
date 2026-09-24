@@ -40,6 +40,7 @@ from chain_server.src.shopper_profiles import (
     ShopperProfilesError,
 )
 from chain_server.src.tools import cart as cart_tools
+from chain_server.src.tools import catalog as catalog_tools
 from chain_server.src.tools import store as store_tools
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -3145,7 +3146,7 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert (
             tools_by_name["resolve_conversation_products_tool"].args_schema
-            is runtime_mod.ResolveConversationProductsRequest
+            is catalog_tools.ResolveConversationProductsRequest
         )
         assert tools_by_name["search_catalog_tool"].return_direct is False
         assert tools_by_name["activate_shopper_skills_tool"].return_direct is False
@@ -3491,7 +3492,7 @@ class TestDeepAgentsRuntimeRefs:
         def fail_product_read(*_args, **_kwargs):
             raise AssertionError("ambiguous resolution cannot authorize a product")
 
-        monkeypatch.setattr(runtime_mod, "get_product_details", fail_product_read)
+        monkeypatch.setattr(catalog_tools, "get_product_details", fail_product_read)
         monkeypatch.setattr(cart_ops_mod, "get_product_details", fail_product_read)
         blocked_add = tool_text(
             tools_by_name["add_cart_items_tool"](
@@ -6561,7 +6562,7 @@ class TestDeepAgentsRuntimeRefs:
 
         searches = []
         monkeypatch.setattr(
-            runtime_mod,
+            catalog_tools,
             "execute_catalog_search",
             lambda plan, url, **kw: searches.append(plan)
             or SimpleNamespace(
@@ -6712,7 +6713,7 @@ class TestDeepAgentsRuntimeRefs:
             price=Money(amount=169.99),
         )
         monkeypatch.setattr(
-            runtime_mod,
+            catalog_tools,
             "execute_catalog_search",
             lambda plan, url, **kw: SimpleNamespace(
                 result=SearchCatalogResult(ok=True, products=[gown, lace]),
@@ -6721,7 +6722,7 @@ class TestDeepAgentsRuntimeRefs:
             ),
         )
         monkeypatch.setattr(
-            runtime_mod,
+            catalog_tools,
             "get_product_details",
             lambda request, *a, **k: GetProductDetailsResult(
                 ok=True,
@@ -6879,7 +6880,7 @@ class TestDeepAgentsRuntimeRefs:
                 fallback_used=False,
             )
 
-        monkeypatch.setattr(runtime_mod, "execute_catalog_search", fake_execute)
+        monkeypatch.setattr(catalog_tools, "execute_catalog_search", fake_execute)
 
         added = []
         monkeypatch.setattr(
@@ -6889,7 +6890,7 @@ class TestDeepAgentsRuntimeRefs:
             or CartMutationResult(ok=True, message="ok"),
         )
         monkeypatch.setattr(
-            runtime_mod,
+            catalog_tools,
             "get_product_details",
             lambda request, *a, **k: GetProductDetailsResult(
                 ok=True,
@@ -7080,7 +7081,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
         monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
         monkeypatch.setattr(
-            runtime_mod,
+            catalog_tools,
             "execute_catalog_search",
             lambda plan, url, **kw: SimpleNamespace(
                 result=SearchCatalogResult(ok=True, products=[]),
@@ -7336,7 +7337,7 @@ class TestDeepAgentsRuntimeRefs:
             )
 
         monkeypatch.setattr(
-            runtime_mod,
+            catalog_tools,
             "get_product_details",
             fake_product_details,
         )
@@ -7391,7 +7392,7 @@ class TestDeepAgentsRuntimeRefs:
         # reference was not valid. Nothing the model does repairs a fault on
         # this side, so it is told not to search and not to ask.
         def read_of_the_record_fails(*_args, **_kwargs):
-            raise runtime_mod.ConversationProductsError(
+            raise catalog_tools.ConversationProductsError(
                 "conversation_products_response_invalid",
                 "Historical product resolution returned an invalid response.",
             )
@@ -7562,7 +7563,7 @@ class TestDeepAgentsRuntimeRefs:
         assert added == []
 
         monkeypatch.setattr(
-            runtime_mod,
+            catalog_tools,
             "get_product_details",
             lambda *args, **kwargs: GetProductDetailsResult(
                 ok=False,
@@ -7600,7 +7601,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "no longer present" not in transient_response
         assert added == []
 
-        monkeypatch.setattr(runtime_mod, "get_product_details", fake_product_details)
+        monkeypatch.setattr(catalog_tools, "get_product_details", fake_product_details)
         monkeypatch.setattr(cart_ops_mod, "get_product_details", fake_product_details)
 
         runtime._conversation_products = SimpleNamespace(
@@ -7752,7 +7753,7 @@ class TestDeepAgentsRuntimeRefs:
         )
 
         monkeypatch.setattr(
-            runtime_mod,
+            catalog_tools,
             "get_product_details",
             lambda *args, **kwargs: GetProductDetailsResult(
                 ok=True,
@@ -7789,7 +7790,7 @@ class TestDeepAgentsRuntimeRefs:
         assert "No product with PRODUCT_REF 'Work Bag'" in missing
 
         monkeypatch.setattr(
-            runtime_mod,
+            catalog_tools,
             "get_product_details",
             lambda *args, **kwargs: GetProductDetailsResult(
                 ok=False,
@@ -7858,7 +7859,7 @@ class TestDeepAgentsRuntimeRefs:
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
         monkeypatch.setattr(
-            runtime_mod,
+            catalog_tools,
             "get_product_details",
             lambda request, *args, **kwargs: GetProductDetailsResult(
                 ok=True,

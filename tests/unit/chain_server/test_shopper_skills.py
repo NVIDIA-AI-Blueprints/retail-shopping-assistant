@@ -179,7 +179,7 @@ def test_product_discovery_separates_request_lanes(base_config) -> None:
     you want rules to move.
     """
 
-    from chain_server.src import deepagents_runtime as runtime_mod
+    from chain_server.src.runtime import runtime as runtime_mod
 
     from .model_visible import reachable_on_a_turn_using
 
@@ -263,15 +263,15 @@ def test_skill_bodies_reference_only_tools_they_grant() -> None:
 
 def test_skill_registry_matches_runtime_skill_file() -> None:
     registry = (REPO_ROOT / "docs" / "SHOPPER_AGENT_SKILL_REGISTRY.md").read_text()
-    runtime_source = (
-        REPO_ROOT / "chain_server" / "src" / "deepagents_runtime.py"
+    skills_source = (
+        REPO_ROOT / "chain_server" / "src" / "tools" / "skills.py"
     ).read_text()
 
     assert "| `outfit-styling` |" in registry
     assert "chain_server/skills/shopper/outfit-styling/SKILL.md" in registry
-    assert "skill_registry = _shopper_skill_registry(skills_root)" in runtime_source
-    assert "ShopperSkillActivationMiddleware(" in runtime_source
-    assert "skills=[" not in runtime_source
+    assert "skill_registry = load_shopper_skill_registry(skills_root)" in skills_source
+    assert "ShopperSkillActivationMiddleware(" in skills_source
+    assert "skills=[" not in skills_source
 
 
 def test_skill_registry_lists_all_registered_skill_files() -> None:

@@ -11,7 +11,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from chain_server.src.deepagents_runtime import _today_for_the_shopper
+from chain_server.src.runtime.prompts import _today_for_the_shopper
 
 # Resolved from this file, not the working directory: CI runs pytest with
 # `working-directory: tests`, where a path relative to the repo root does not
@@ -36,7 +36,7 @@ def test_it_reads_like_a_person_wrote_it() -> None:
 
 
 def test_the_prompt_states_the_date_and_what_it_is_for() -> None:
-    source = (_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read_text()
+    source = (_REPO_ROOT / "chain_server/src/runtime/runtime.py").read_text()
     assert "TODAY IS {_today_for_the_shopper()}" in source
     block = source[source.index("TODAY IS") :][:600]
     assert "only date you know" in block
@@ -58,7 +58,7 @@ def _prompts_either_way(base_config) -> tuple[str, str]:
 
     from types import SimpleNamespace
 
-    from chain_server.src import deepagents_runtime as runtime_mod
+    from chain_server.src.runtime import runtime as runtime_mod
 
     runtime = runtime_mod.DeepAgentsRuntime(base_config)
     original = getattr(runtime.config, "weather", None)
@@ -108,10 +108,10 @@ def test_the_ordering_rule_ships_with_the_grant_rather_than_the_prompt(
     most needs it: "going to Cancun next week, what's the weather like".
     """
 
-    from chain_server.src.deepagents_runtime import DeepAgentsRuntime
+    from chain_server.src.tools.weather import forecast_prompt_section
 
     on, off = _prompts_either_way(base_config)
-    section = DeepAgentsRuntime._forecast_prompt_section()
+    section = forecast_prompt_section()
 
     assert "look the weather" not in on
     assert "look the weather" not in off
@@ -129,13 +129,13 @@ def test_a_country_is_forecast_and_disclosed_rather_than_refused() -> None:
     """Refusing to call for a country left the model asserting the weather
     instead, which is worse than either asking or calling."""
 
-    source = (_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read_text()
+    source = (_REPO_ROOT / "chain_server/src/tools/weather.py").read_text()
     # The docstring grew when a bare conditions question became a call, when a
     # carried-over place stopped being disqualified by its age, and again when
     # the shopper's own statement of the conditions moved to the top as the
     # rule that outranks the rest. The window has to reach past all of that to
     # the country paragraph it is actually about.
     weather = source[source.index("def get_weather_forecast_tool") :][:6500]
-    assert "capital or\n            largest city" in weather
+    assert "capital or\n        largest city" in weather
     assert "never do is describe weather you did not fetch" in weather
     assert "Anything broader than a city, per above. Ask which city." not in weather

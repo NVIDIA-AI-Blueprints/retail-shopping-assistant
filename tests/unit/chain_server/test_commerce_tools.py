@@ -898,7 +898,7 @@ def test_one_search_worth_of_products_fits_in_one_availability_call() -> None:
     """
 
     from chain_server.src.config import ChainServerConfig
-    from chain_server.src.deepagents_runtime import _CheckAvailabilityInput
+    from chain_server.src.tools.store import _CheckAvailabilityInput
 
     one_search = int(
         ChainServerConfig.model_fields["search_products_per_call"].default

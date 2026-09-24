@@ -10,7 +10,7 @@ has no size to ask about. Four of the ten worst journeys fail on this shape.
 import re
 from pathlib import Path
 
-from chain_server.src.turn_support import _ONE_SIZE, _advertised_sizes
+from chain_server.src.sizes import _ONE_SIZE, _advertised_sizes
 
 # Resolved from this file, not the working directory: CI runs pytest with
 # `working-directory: tests`, where a path relative to the repo root does not
@@ -47,7 +47,7 @@ def test_a_catalog_silent_about_sizes_is_not_a_one_size_product() -> None:
 
 
 def test_the_lookup_instruction_tells_it_to_add_a_named_one_size_product() -> None:
-    source = open(_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read()
+    source = (_REPO_ROOT / "chain_server/src/tools/catalog.py").read_text()
     block = source[source.index("is the product they named") :][:1600]
     assert "They have chosen it" in block
     assert "Do not ask whether to add what they asked you to add" in block

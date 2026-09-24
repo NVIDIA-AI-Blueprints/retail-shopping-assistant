@@ -21,7 +21,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from .control_signals import ControlSignal, signals_of
+from ..runtime.control_signals import ControlSignal, signals_of
 
 SEARCH_TOOL_NAME = "search_catalog_tool"
 SEARCH_VALIDATION_ERROR_PREFIX = (

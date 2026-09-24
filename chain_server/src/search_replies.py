@@ -1,7 +1,4 @@
-"""Turning what a search found into what the shopper is told.
-
-Lifted out of `turn_support.py` unchanged.
-"""
+"""Turning what a search found into what the shopper is told."""
 
 
 from __future__ import annotations
@@ -15,21 +12,18 @@ import json
 from typing import Any
 
 from .agenttypes import State
-from .message_shape import (
+from .catalog_format import _format_filter_statement, _format_search_group
+from .runtime.message_shape import (
     _content_to_text,
     _current_turn_messages,
     _message_type,
     _result_messages,
     _value,
 )
-from .response_format import (
-    _format_filter_statement,
-    _format_search_group,
-)
-from .tool_evidence import (
+from .tools.evidence import (
     evidence_of,
 )
-from .tool_loop_control import (
+from .tools.loop_control import (
     SEARCH_SCOPE_COMPLETE_PREFIX,
     UNSUPPORTED_CONSTRAINT_PREFIX,
 )

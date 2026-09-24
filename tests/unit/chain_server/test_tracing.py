@@ -13,12 +13,12 @@ import json
 from types import SimpleNamespace
 
 from chain_server.src.agenttypes import State
-from chain_server.src.deepagents_runtime import (
+from chain_server.src.runtime.identity import RequestIdentity
+from chain_server.src.runtime.runtime import (
     _record_turn_diagnostics,
     _turn_span,
     _turn_trace_session,
 )
-from chain_server.src.turn_support import RequestIdentity
 
 
 def _identity() -> RequestIdentity:
@@ -190,7 +190,7 @@ def test_the_session_is_the_conversation_not_the_graph_thread() -> None:
 
     import sys
 
-    import chain_server.src.deepagents_runtime as runtime
+    import chain_server.src.runtime.runtime as runtime
 
     module = SimpleNamespace(using_attributes=fake_using_attributes)
     saved = sys.modules.get("openinference.instrumentation")

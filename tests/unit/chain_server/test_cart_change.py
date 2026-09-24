@@ -8,7 +8,7 @@ that replaces it.
 """
 
 from chain_server.src.agenttypes import Cart
-from chain_server.src.response_format import format_cart_change
+from chain_server.src.cart_format import format_cart_change
 
 
 def _cart(*lines):
@@ -79,7 +79,7 @@ def test_the_update_schema_accepts_a_size_so_it_can_be_acted_on() -> None:
     signature alone leaves the wrapper silently discarding it.
     """
 
-    from chain_server.src.deepagents_runtime import _UpdateCartItemsInput
+    from chain_server.src.tools.cart import _UpdateCartItemsInput
 
     parsed = _UpdateCartItemsInput(cart_line_id="abc", quantity=1, size="8")
     assert parsed.size == "8", "a size the model sends must survive validation"

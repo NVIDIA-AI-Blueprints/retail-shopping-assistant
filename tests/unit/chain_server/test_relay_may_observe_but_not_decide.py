@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from chain_server.src.deepagents_runtime import _relay_may_observe_but_not_decide
+from chain_server.src.runtime.runtime import _relay_may_observe_but_not_decide
 
 
 class _Request:
@@ -228,7 +228,7 @@ def test_the_middleware_relay_adds_is_actually_guarded(
     import sys
     import types
 
-    from chain_server.src import deepagents_runtime as runtime
+    from chain_server.src.runtime import runtime
 
     class _Added:
         @staticmethod

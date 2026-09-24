@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from chain_server.src.tool_policy import SHOPPING_TOOL_POLICIES
+from chain_server.src.tools.policy import SHOPPING_TOOL_POLICIES
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -24,8 +24,8 @@ def test_weather_tool_is_registered_on_every_serving_surface() -> None:
 
     assert "get_weather_forecast_tool" in SHOPPING_TOOL_POLICIES
 
-    runtime = (REPO_ROOT / "chain_server/src/deepagents_runtime.py").read_text()
-    policy = (REPO_ROOT / "chain_server/src/tool_policy.py").read_text()
+    runtime = (REPO_ROOT / "chain_server/src/runtime/runtime.py").read_text()
+    policy = (REPO_ROOT / "chain_server/src/tools/policy.py").read_text()
 
     assert "get_weather_forecast_tool" in runtime
     assert "get_weather_forecast_tool" in policy

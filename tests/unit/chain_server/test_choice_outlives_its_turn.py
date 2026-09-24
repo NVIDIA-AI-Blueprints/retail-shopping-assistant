@@ -16,12 +16,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from chain_server.src.conversation_products import ProductEvidence
-from chain_server.src.turn_support import (
+from chain_server.src.cart_references import (
     _cart_product_choice_note,
     _identified_in_the_current_showing,
-    _system_identification_events,
 )
+from chain_server.src.conversation_products import ProductEvidence
+from chain_server.src.runtime.audience_events import _system_identification_events
 
 
 def _product(ref: str, name: str) -> SimpleNamespace:

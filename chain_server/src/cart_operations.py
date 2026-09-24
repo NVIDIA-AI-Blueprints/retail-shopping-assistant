@@ -22,25 +22,15 @@ from shared.commerce_contracts import (
     UpdateCartItemInput,
 )
 
-from .agenttypes import State
-from .commerce_tools import (
-    add_cart_item,
-    get_product_details,
-    remove_cart_item,
-    update_cart_item,
-)
-from .control_signals import EFFECTS_KEY, committed_effect
-from .conversation_products import ConversationProductsError, ProductReferenceDescriptor
-from .response_format import (
+from .agenttypes import Cart, State
+from .cart_format import (
     _format_cart_add_result,
     _format_cart_remove_result,
     _format_size_change_result,
     _format_update_cart_result,
 )
-from .turn_scope import TurnScope
-from .turn_support import (
+from .cart_references import (
     AddCartItemsToolItemInput,
-    RequestIdentity,
     _cart_add_scope_failures,
     _cart_line_by_id,
     _cart_product_choice_note,
@@ -50,15 +40,79 @@ from .turn_support import (
     _most_recently_shown,
     _normalize_cart_add_tool_items,
     _one_size_note,
-    _product_detail_failure_message,
-    _same_product_display_name,
     _shopper_words_this_conversation,
 )
+from .commerce_tools import (
+    add_cart_item,
+    get_product_details,
+    remove_cart_item,
+    update_cart_item,
+)
+from .conversation_products import ConversationProductsError, ProductReferenceDescriptor
+from .product_records import _product_detail_failure_message, _same_product_display_name
+from .runtime.control_signals import EFFECTS_KEY, committed_effect
+from .runtime.identity import RequestIdentity
+from .runtime.turn_scope import TurnScope
 
 if TYPE_CHECKING:
-    from .deepagents_runtime import DeepAgentsRuntime
+    from .runtime.runtime import DeepAgentsRuntime
 
 logger = logging.getLogger(__name__)
+
+
+def _size_key(size: Any) -> str:
+    value = str(size or "").strip().lower()
+    return "" if value == "onesize" else value
+
+
+def _lines_of(cart: Cart, product_id: str) -> list[dict[str, Any]]:
+    return [
+        line
+        for line in cart.contents or []
+        if str(line.get("product_id") or "") == product_id
+    ]
+
+
+def _already_held(product: ProductSummary, size: Any, line: dict[str, Any]) -> str:
+    """An add of a line the cart already holds, answered without writing.
+
+    "Size 2" after the dress went in as a 2 confirms that line, and writing
+    it again gave the shopper two. More of a line is a quantity, which the
+    update tool sets, so that route stays open and says so.
+    """
+
+    return (
+        f"- {product.display_name}"
+        + (f", size {size}" if size else "")
+        + f": already in the cart (CART_LINE_ID {line.get('cart_line_id')}, "
+        f"qty {line.get('amount')}), so it was not added again. If the "
+        "shopper asked for more of it, set the new total with "
+        "update_cart_items_tool on that line; otherwise tell them it is "
+        "already in their cart."
+    )
+
+
+def _another_size_held(
+    product: ProductSummary, size: Any, others: list[dict[str, Any]]
+) -> str:
+    """A second size added beside one the cart held, with the way back.
+
+    "Add it in a 4 as well" and "make those a 7" both arrive here as an add.
+    Which one the shopper said is the model's to read, so the add stands and
+    the old line is named for the case where it should go.
+    """
+
+    held = ", ".join(
+        f"size {line.get('size')} (CART_LINE_ID {line.get('cart_line_id')})"
+        for line in others
+    )
+    return (
+        f"- {product.display_name}: the cart already held {held}, and now "
+        f"also holds size {size}. If the shopper asked for size {size} as "
+        "well, that is done. If they asked to change the size, remove the "
+        "old line with remove_cart_item_tool now, so they do not pay for "
+        "both."
+    )
 
 
 def add_items_to_the_cart(
@@ -132,6 +186,8 @@ def add_items_to_the_cart(
     resolved: list[tuple[str, ProductSummary, int]] = []
     failed: list[str] = []
     blocked: list[str] = []
+    already_held: list[str] = []
+    cart_before = runtime._read_cart(identity.cart_user_id)
     for (product_ref, size), request in requested_items.items():
         product = scope.product_evidence.get(product_ref)
         if product is None:
@@ -244,6 +300,20 @@ def add_items_to_the_cart(
         one_size_note = _one_size_note(active_detail.product, size)
         if one_size_note:
             size = None
+        same_line = next(
+            (
+                line
+                for line in _lines_of(cart_before, active_detail.product.product_id)
+                if _size_key(line.get("size")) == _size_key(size)
+            ),
+            None,
+        )
+        if same_line is not None:
+            already_held.append(
+                _already_held(active_detail.product, size, same_line)
+            )
+            continue
+        if one_size_note:
             choices_from_a_description.append(one_size_note)
         # Disclosed, not refused. A description the model read one way
         # is added and said out loud, because the cart is on screen and
@@ -298,12 +368,14 @@ def add_items_to_the_cart(
             for ref, product, quantity, size in resolved
             if ref not in out_of_scope
         ]
-        return _format_cart_add_result(
-            [], failed + blocked, state.cart, ready
-        )
+        rendered = _format_cart_add_result([], failed + blocked, state.cart, ready)
+        if already_held:
+            rendered += "\n\n" + "\n".join(already_held)
+        return rendered
 
     added: list[str] = []
     committed: list[dict[str, Any]] = []
+    other_sizes: list[str] = []
     for product_ref, product, quantity, size in resolved:
         result = add_cart_item(
             AddCartItemInput(
@@ -345,6 +417,13 @@ def add_items_to_the_cart(
                 + (f", size {size}" if size else "")
                 + f" (PRODUCT_REF: {product.product_id})"
             )
+            others = [
+                line
+                for line in _lines_of(cart_before, product.product_id)
+                if _size_key(line.get("size")) != _size_key(size)
+            ]
+            if size and others:
+                other_sizes.append(_another_size_held(product, size, others))
         else:
             message = (
                 result.error.message if result.error else "Cart add failed."
@@ -360,6 +439,10 @@ def add_items_to_the_cart(
     rendered = _format_cart_add_result(added, failed, state.cart)
     if choices_from_a_description:
         rendered += "\n\n" + "\n".join(choices_from_a_description)
+    if already_held:
+        rendered += "\n\n" + "\n".join(already_held)
+    if other_sizes:
+        rendered += "\n\n" + "\n".join(other_sizes)
     if not committed:
         return rendered
     return rendered, {EFFECTS_KEY: committed}

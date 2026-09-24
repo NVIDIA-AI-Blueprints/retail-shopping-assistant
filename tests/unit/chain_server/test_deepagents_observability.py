@@ -13,26 +13,24 @@ from typing import Any
 
 import pytest
 from chain_server.src.agenttypes import State
-from chain_server.src.deepagents_runtime import (
+from chain_server.src.runtime.identity import RequestIdentity
+from chain_server.src.runtime.runtime import (
     DeepAgentsRuntime,
 )
-from chain_server.src.skill_activation import (
-    SKILL_ACTIVATION_COMPLETE,
-    SKILL_ACTIVATION_REQUIRED,
-    SKILL_ACTIVATION_TOOL_NAME,
-)
-from chain_server.src.tool_evidence import SearchEvidence
-from chain_server.src.tool_loop_control import (
-    SEARCH_VALIDATION_ERROR_PREFIX,
-    SERVER_RESTORED_TOOL_CALL_FIELDS,
-)
-from chain_server.src.turn_diagnostics import (
+from chain_server.src.runtime.turn_diagnostics import (
     _REJECTED_CATALOG_SEARCH_RESPONSE,
     _collect_agent_diagnostics,
     _rejected_catalog_search_response,
 )
-from chain_server.src.turn_support import (
-    RequestIdentity,
+from chain_server.src.tools.evidence import SearchEvidence
+from chain_server.src.tools.loop_control import (
+    SEARCH_VALIDATION_ERROR_PREFIX,
+    SERVER_RESTORED_TOOL_CALL_FIELDS,
+)
+from chain_server.src.tools.skill_gate import (
+    SKILL_ACTIVATION_COMPLETE,
+    SKILL_ACTIVATION_REQUIRED,
+    SKILL_ACTIVATION_TOOL_NAME,
 )
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -1376,7 +1374,7 @@ class TestRelayInstrumentation:
     def _instrument(self, kwargs, enabled=True):
         from types import SimpleNamespace
 
-        from chain_server.src.deepagents_runtime import _relay_instrumented
+        from chain_server.src.runtime.runtime import _relay_instrumented
 
         return _relay_instrumented(kwargs, SimpleNamespace(relay_enabled=enabled))
 
@@ -1490,7 +1488,7 @@ class TestRelayTurnScope:
     def _scope(self, monkeypatch, *, enabled=True, opened=None):
         from types import SimpleNamespace
 
-        from chain_server.src.deepagents_runtime import _relay_turn_scope
+        from chain_server.src.runtime.runtime import _relay_turn_scope
 
         return _relay_turn_scope(SimpleNamespace(relay_enabled=enabled), "convo-7")
 
@@ -1561,7 +1559,7 @@ class TestRelayExport:
     def _configure(self, monkeypatch, *, enabled=True, endpoint="http://collector:4318"):
         from types import SimpleNamespace
 
-        from chain_server.src.deepagents_runtime import configure_relay_tracing
+        from chain_server.src.runtime.runtime import configure_relay_tracing
 
         if endpoint is None:
             monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
@@ -1668,7 +1666,7 @@ class TestRelayExport:
         import builtins
         import logging
 
-        from chain_server.src import deepagents_runtime
+        from chain_server.src.runtime import runtime as deepagents_runtime
 
         monkeypatch.setattr(deepagents_runtime, "_relay_warnings_said", set())
         real_import = builtins.__import__

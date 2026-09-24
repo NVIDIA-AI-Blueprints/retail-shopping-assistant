@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from chain_server.src.response_format import _format_store_date
+from chain_server.src.runtime.prompts import _format_store_date
 
 
 def _block() -> str:

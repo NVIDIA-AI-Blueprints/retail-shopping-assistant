@@ -29,7 +29,7 @@ from shared.commerce_contracts import (
 @pytest.fixture
 def cart_module(monkeypatch: pytest.MonkeyPatch, base_config) -> Iterator[Any]:
     from chain_server.src import config as config_mod
-    from chain_server.src import deepagents_runtime as runtime_mod
+    from chain_server.src.runtime import runtime as runtime_mod
 
     monkeypatch.setattr(config_mod, "load_config", lambda *a, **k: base_config)
     monkeypatch.setattr(runtime_mod, "DeepAgentsRuntime", lambda *_: object())

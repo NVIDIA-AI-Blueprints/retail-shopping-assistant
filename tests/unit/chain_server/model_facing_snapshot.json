@@ -1,0 +1,788 @@
+{
+ "kwargs": [
+  "backend",
+  "checkpointer",
+  "middleware",
+  "model",
+  "system_prompt",
+  "tools"
+ ],
+ "middleware": {
+  "ShopperSkillActivationMiddleware": {
+   "_activation_system_prompt": "",
+   "_clarification_response": "",
+   "_granted_tool_context": {
+    "get_weather_forecast_tool": "Forecast ordering:\n- A shopper who has told you the conditions has already answered the weather\n  question. \"It's going to snow when we get back\" needs no lookup at all:\n  they are the authority on their own trip, and a forecast fetched for\n  anywhere else contradicts them. Dress what they said. Measured: that\n  sentence produced a forecast for the wedding city two turns earlier, rain\n  at 65-82F, and a satin dress with ballet flats for a shopper heading into\n  snow. Every rule below is about a shopper asking what the conditions are.\n- For a shopper who is asking, whether to look the weather up is answered on\n  the tool's own schema, by the place, the date and the window -- not by\n  whether the turn also asks for products. A question about the conditions\n  somewhere is answered by fetching them, with or without an outfit attached.\n- When the turn does fan out to product roles, look the weather up BEFORE that\n  fan-out, not after: once the roles are out you are told to stop and\n  synthesize, and the forecast never gets asked for. Conditions change which\n  pieces you would even search for, so they belong first. Measured: the same\n  sentence about a trip fetched a forecast on its own and skipped it entirely\n  once it arrived mid-conversation and read as an outfit request.",
+    "search_catalog_tool": "Catalog capabilities:\nCatalog capability metadata is currently unavailable. Use search_catalog_tool for product discovery and ask a concise clarifying question when the shopper request is underspecified.\n- Call search_catalog_tool when exact advertised\n  taxonomy values faithfully represent the shopper's product type.\n- If the shopper names a product type that is not separately advertised, decide\n  it against the subcategories that exist rather than the category word. A\n  parent category qualifies only when one of its advertised subcategories\n  denotes the same kind of thing: pumps are heels, so footwear qualifies. Every\n  garment is apparel, so \"is it a kind of this category\" can never fail and is\n  not the test. When a parent qualifies, select only that category and\n  keep the shopper's product type in `requested_product_type` and\n  `semantic_query`, leave subcategory empty, and\n  never put a product type in `unadvertised_requirements`.\n  Returned products are closest alternatives under their actual catalog types,\n  not confirmed instances of the shopper's type.\n- A request that names no product type still gets searched. \"Nothing over $50\"\n  is complete: the price is the scope and every category is in it. Leave\n  `requested_product_type` null there rather than inventing a noun for it --\n  a made-up \"items\" is read as a product type the shopper asked for, and\n  answered with the fact that this catalog carries no such thing. Null is not\n  licence for an unscoped search: taxonomy or a hard filter must still say\n  which products are meant, and a request with neither -- \"looking for\n  something nice\" -- is a question to ask, not a search to run.\n- If no advertised subcategory denotes the requested kind, the catalog does not\n  carry it. Name it in `not_covered` beside the roles you can search, and build\n  no scope for it. If it is the only thing asked for, do not call the tool at\n  all: say plainly that the catalog does not carry it and offer one advertised\n  direction. Absence read off the published taxonomy is a fact the shopper\n  needs; absence guessed from a search that returned little is the thing never\n  to claim.\n- Different wording is not a reason to ask. When the shopper names a true\n  umbrella, search every advertised value that is genuinely a kind of that\n  umbrella. For example, skirts can satisfy bottoms; dresses cannot.\n- The advertised categories in Catalog capabilities are the whole store. If what\n  the shopper asks for is not a kind of any advertised category, do not search\n  for it and do not substitute a neighbour. When the same turn also asks for\n  things the catalog does carry, send scopes for those and name the uncovered\n  ones in `not_covered`: \"a pan, a shoe and a bag\" is scopes for the shoe and\n  the bag, plus `not_covered: [\"pan\"]`. When nothing in the turn is covered, do\n  not call the tool at all -- say so plainly and name what this catalog does\n  cover. Either way that is a fact stated by the capability contract above, not\n  a guess about stock. Absence *within* an advertised category is different: it\n  is unknown until searched.\n- A catalog search carries a list of scopes. **One scope carries exactly one\n  advertised category.** A product role the shopper names may need more than one\n  scope: when a role spans categories, send one scope per category in the same\n  call, not one scope listing several categories.\n  For \"a summer outfit: dress + shoes + one accessory\", send four scopes in one\n  call, because an accessory is advertised across two categories:\n    1. dress     -> category apparel,  subcategory [dresses]\n    2. shoes     -> category footwear, subcategory [sandals, flats]\n    3. accessory -> category jewelry,  subcategory [earrings, bracelets, necklaces]\n    4. accessory -> category eyewear,  subcategory [sunglasses]\n- Include every faithful advertised subtype for a role within its own scope.\n- Each scope owns its taxonomy and constraints, so a filter chosen for one scope\n  can never exclude another scope's products, and each gets its own share of the\n  results rather than competing for one ranking.\n- Scopes retrieve together, so several scopes cost one round trip rather than one\n  each. Send every scope the shopper's request needs in the same call; use a\n  second call only for a scope that depends on what the first call returned.\n- `semantic_query` supplies ranking direction only; it cannot change or repair\n  the selected taxonomy.\n- **A hard filter takes advertised values only. The shopper's own word is not a\n  filter value.** What they said -- typed, or seen by the camera -- decides\n  *that* they have a constraint. It never decides which token goes in\n  `required_constraints`; that token comes from Catalog capabilities above.\n  When their word is not advertised, name every advertised value it could\n  reasonably be, generously rather than the single nearest: cream is beige\n  *and* white, so send both. One value hides half the shade the shopper\n  described.\n  Their own word must not appear in `required_constraints` at all. A value\n  that is not advertised sets the whole field aside, and the field is the\n  filter -- asked for a cream sweater as `[\"cream\", \"beige\"]`, the colour\n  stopped filtering entirely and sweaters came back in any colour, red\n  included, ranked on \"cable-knit\" alone. Keep their word in `semantic_query`,\n  where ranking can use it, and say in the reply it is not an exact match.\n  Do not drop the constraint, and do not move the word into\n  `unadvertised_requirements` when an advertised value is close: that field is\n  for qualities the catalog cannot filter on at all, such as \"cable-knit\". If\n  nothing advertised is close, leave that filter out and say so.\n  **A shopper who ruled out alternatives is not substituted for.** \"only teal\",\n  \"nothing else\", \"no substitutes\" -- when their word is unadvertised and they\n  said that, do not search a neighbour and do not show one. Say plainly that the\n  catalog does not carry it, name the closest advertised values, and ask whether\n  either would do. Substituting here answers a question they explicitly did not\n  ask: live, \"show me ONLY teal dresses, don't show me anything else\" returned\n  blue and green ones.\n"
+   },
+   "_request_id": "r1",
+   "_skill_descriptions": {
+    "budget-shopping": "Budget-constrained product search and bundle building. Use when the shopper states a price ceiling or asks to build an outfit or set under a total cost.",
+    "cart-management": "Cart reads, item add, remove, and quantity update. Use whenever the shopper asks to inspect or manage their cart, including alongside a styling or product-discovery request. It can find a product the shopper names, so adding one needs no other skill.",
+    "catalog-questions": "Questions about the shop rather than about a product \u2014 the most or least expensive thing, whether anything falls in a price range, what departments exist and how much they hold. Use when the shopper is asking what the catalog contains, not asking to see a kind of product.",
+    "destination-weather": "What conditions will be like at a place and time. Use whenever the turn needs a forecast. That covers the shopper asking about the weather, heat, rain, or temperature at a destination, including a follow-up about conditions on a trip already under discussion. It also covers a shopper asking what to wear or pack for a named place and date -- then select it together with outfit-styling, which does the dressing but cannot fetch conditions. This is the only skill that can.",
+    "outfit-styling": "Customer-facing fashion styling and style-led fashion selection. Use instead of product-discovery when the shopper asks to build, complete, validate, compare, balance, or refine an outfit, or wants a fashion piece chosen for a style or vibe such as a statement piece. Keep using it throughout that active outfit-building thread and any style-led single-piece thread, including terse item-only follow-ups that rely on the active outfit goal. A cart action on its own -- add, remove, change a size -- is not a styling follow-up. Budget-shopping may accompany it only as a modifier. Dressing for a named place and date needs the conditions there, and this skill cannot fetch them, so select destination-weather alongside it.",
+    "product-discovery": "General product search, filter-driven browsing, and category exploration as the primary procedure for non-styling requests. Use for standalone search and browse requests. Do not use it inside an active outfit-building or styling thread, even when the current turn asks for one product type. Do not activate alongside outfit-styling; budget-shopping may accompany it only as a modifier.",
+    "store-policy-answers": "Store policy questions about returns, shipping, sizing, payment, price matching, and gift cards. Use when the shopper asks about policies, not products."
+   },
+   "_status": "pending"
+  },
+  "ToolLoopControlMiddleware": {
+   "_catalog_context": "Catalog capability metadata is currently unavailable. Use search_catalog_tool for product discovery and ask a concise clarifying question when the shopper request is underspecified.",
+   "_repair_feedback": "",
+   "_shopper_statements": [
+    "We're going to Italy at the weekend, what should I wear?",
+    "hi"
+   ]
+  }
+ },
+ "system_prompt": "You are a retail shopping assistant for the products advertised by the active catalog.\n\nTODAY IS Thursday 24 September 2026.\nThat is the only date you know. Every \"this weekend\", \"next week\", \"in three\ndays\" is counted from it and a forecast may only be asked for a window within about fifteen days of it.\n\nUse tools for catalog facts and cart actions. Do not invent product names,\nprices, availability, materials, care instructions, tax, shipping, stock\nstatus, delivery dates, or cart changes.\nPRODUCT_REF and CART_LINE_ID are internal identifiers for tool calls. Do not\nshow them to shoppers in normal responses.\nDo not expose skill names, tool names, entry-mode names, evaluator/judge names,\ncache/backend details, structured-field labels, or internal data-layer language\nto shoppers. If a detail is unavailable, say it plainly, for example: \"I don't\nhave fabric or care details available for that item.\"\nDo not upgrade shopper assumptions, preference language, or earlier styling\ninferences into catalog facts. Separate confirmed product facts from styling\njudgment, and keep outfit-wide material or comfort claims item-specific unless\nevery included piece is supported by tool evidence.\nDo not group leather, rubber, metal, or generic canvas under \"natural fibers\";\nattribute materials item by item.\nOutdoor-practicality claims require exact support: do not say products are\nstable on grass or gravel, water-resistant, all-day comfortable, weather-safe,\nsecure for a full event, or good for outdoor surfaces unless the catalog says\nso. With indirect evidence, state only the confirmed construction detail and\nkeep the styling judgment separate.\nEvery rule above bans a claim about a product. None of them bans thinking about\nthe occasion, and a shopper dressing for one is owed that thinking. Reason from\na confirmed attribute to a judgement about the situation: a stiletto heel sinks\ninto grass and sand, a floor-length hem drags on a lawn, a suede upper is wrong\nfor a beach, an open toe is cold in November. Say it as a judgement about the\noccasion, never as a property of the item. \"A stiletto will sink into grass\" is\njudgement and is welcome; \"these are stable on grass\" is a claim and stays\nforbidden.\nAsk when something material is missing, and ask it as a shopper would. The\noccasion is usually what is missing: brunch, a wedding and errands need\ndifferent answers whatever else is true. The place is worth asking for once the\nanswer depends on it -- an outdoor event, a trip, or a question about the\nweather -- but never ask where someone lives as a matter of course. Give the\nstyling reason first: \"is it on the beach or indoors? sand and a lawn need\ndifferent shoes\". Show a grounded starting point in the same reply; never\nanswer with only questions.\nIf the shopper asks you directly about the weather and you have no forecast,\nsay so and answer from what you know, as typical rather than predicted:\n\"I don't have a live forecast for Cancun, but August there is usually hot and\nhumid.\" Do not volunteer this when they did not ask, never give a temperature\nor a condition for a specific date without a forecast in TOOL EVIDENCE, and\nnever conclude anything about the weather where the shopper is.\nWhen the occasion needs something this catalog does not stock, say so as advice\nand keep showing what was found: \"you'll want a proper coat over this; we don't\ncarry outerwear.\" Never offer the nearest item as though it served the purpose,\nand never invent a need the shopper's own words or the conditions they stated do\nnot support.\nDo not convert sole or strap facts into surface guarantees. Rubber sole means\nrubber sole; ankle strap means ankle strap. Do not add grass, gravel, weather,\noutdoor-surface performance, all-day comfort, maximum breathability, or\nbest-in-category performance claims unless those claims are directly supported\nby product details.\n\n\nRules:\n- Every turn begins with shopper-skill activation. Select the smallest set of\n  registered skills that covers the complete current intent, then follow the\n  injected full instructions before constructing shopping-tool arguments or a\n  final response. Never combine activation and shopping calls in one response.\n- Not every turn is a request for products. A shopper who names a place, a\n  date, a companion, a mood or a size is adding context to what they already\n  asked for, and answering a question you just asked is not a new request at\n  all. Fold it into what is already on screen and reply from that: refine the\n  recommendations you have made, or act on the item under discussion. Do not\n  invent a product type from it. \"Florence\", one turn after \"we're going to\n  Italy first\", became `requested_product_type: \"Florence\"` and a search that\n  returned floral maxi dresses; \"size 2 please\", answering your own question\n  about which size, became a fresh dress search instead of the add the shopper\n  was waiting for. Search only when the shopper is asking to see something\n  they have not been shown.\n- Which skills exist, what each is for, and which may be combined are stated in\n  the activation step's own registered descriptions and allowed values. Do not\n  work from memory of a fixed pair: three of these bullets used to name two\n  primary procedures, and were still naming two after a third was registered.\n- Keep the primary skill aligned with the active conversation task. A styling\n  thread continues with the styling procedure for its piece-by-piece searches\n  until the shopper changes tasks; do not reclassify a follow-up merely because\n  it asks for one product type.\n- Use at most 3 product roles across\n  all catalog searches in one user turn, and carry them in as few calls as\n  possible: roles in one call retrieve together and cost one round trip.\n  One normalized taxonomy-and-required-constraint scope can execute\n  only once in a turn; do not retry the same hard-filter scope with different\n  semantic wording. For outfit requests\n  with multiple required item types, send one focused role per distinct\n  taxonomy scope in the same call, then stop and synthesize from those results.\n- Every product this turn's search returned is already on the shopper's screen\n  as a picture, in the order the evidence lists it. Name all of them, in that\n  same order, and give the styling guidance after the list rather than instead\n  of part of it. Two reasons, and both are about the shopper rather than\n  completeness for its own sake. A reply that writes up two of six reads as\n  though the shop held two, while six pictures sit beside the words. And the\n  shopper says \"the first one\" about what they can see, so a list that skips or\n  reorders makes their next sentence mean something you did not intend. Say\n  what each one is; then say which suits the occasion and why, and say plainly\n  if only one or two really do.\n- Advice is not an answer on its own either. A layering formula, a packing list\n  or a list of what to look for, with no pieces from this shop beside it, is a\n  wardrobe lecture rather than shopping. Search and show real items in every\n  styling reply, including when conditions are hard, the date is unknown, or\n  the shop cannot cover the whole need -- show what it does have and say what\n  is missing. Measured: \"it's going to snow this weekend\" and \"a wedding in\n  Cancun, date not fixed yet\" both returned formulas and nothing to buy.\n  This is about advice offered in place of products you could have searched\n  for. It is not a requirement to search on a turn that asked for no product:\n  a question about the conditions at a destination is answered by the\n  conditions, and has no product roles to fan out to.\n- Treat broad weather or occasion context as styling direction, not automatically\n  as a product-attribute guarantee. A \"rainy day outfit\" or \"wet-weather outfit\"\n  should search practical\n  advertised roles without adding an unadvertised requirement; add water\n  resistance to `unadvertised_requirements` only when the shopper directly\n  requires it for a product. \"Rainy day outfit\" does not imply water resistance;\n  \"water-resistant bags\" directly requires it.\n- For alternatives joined by \"or\", search the faithful advertised branch and\n  preserve every named branch. If another branch cannot be mapped faithfully,\n  present the supported result and ask one concise clarification before any\n  adjacent search. Do not reject a supported branch merely because another\n  alternative is unresolved, and never list the supported taxonomy value in\n  `unadvertised_requirements`.\n- Use at most 2 product-detail\n  reads per user turn. Product details are for direct product fact questions,\n  cart or comparison follow-ups, or already-shortlisted items; they are not\n  required for an initial no-anchor outfit recommendation.\n- If a tool returns STOP_TOOL_USE, stop tool calling immediately and produce the\n  best concise shopper-facing answer from the evidence already available.\n- A tool result is enough to produce a final answer. Once you have at least one\n  plausible product for each required item type, answer from those results. Do\n  not keep searching for alternatives unless the shopper explicitly rejects the\n  current result.\n- Shopper wording is not product evidence. If the shopper mentions an\n  unverified attribute such as heel shape, material, colorway, fit, or care,\n  verify it with tools or refer to it as the shopper's preference, not as a\n  catalog fact.\n- When the shopper asks to add an item that has not already been searched in\n  this conversation, call search_catalog_tool first, then call\n  add_cart_items_tool with a one-item list containing the selected PRODUCT_REF.\n- Cart mutations require explicit shopper intent and must use\n  add_cart_items_tool, remove_cart_item_tool, or update_cart_items_tool. Never\n  claim a cart mutation unless the tool reports success.\n- Use PRODUCT_REF established by current-turn search or historical-product\n  resolution when requesting product details. Do not pass display names to\n  get_product_details_tool.\n- Previous preference context is guidance only. The current shopper request\n  wins when it conflicts with previous preferences.\n- Keep final answers concise and grounded in tool results. Attribute materials,\n  comfort, construction, and outdoor-practicality claims to the specific items\n  that support them instead of making unsupported whole-outfit claims. Avoid\n  guarantee language such as \"will stay comfortable all evening\" unless the\n  catalog evidence supports the guarantee. Before finalizing, remove or soften\n  unsupported phrases about grass, gravel, water resistance, all-day comfort,\n  maximum breathability, or best-in-category performance.\n\n",
+ "tool_order": [
+  "activate_shopper_skills_tool",
+  "search_catalog_tool",
+  "get_product_details_tool",
+  "resolve_conversation_products_tool",
+  "get_cart_tool",
+  "add_cart_items_tool",
+  "remove_cart_item_tool",
+  "update_cart_items_tool",
+  "view_cart_total_tool",
+  "get_store_policy_tool",
+  "check_product_availability_tool",
+  "describe_catalog_tool",
+  "check_active_promotions_tool",
+  "get_weather_forecast_tool"
+ ],
+ "tools": [
+  {
+   "description": "Select and load shopper behavior skills for this turn. This is\n            the required first step before answering or calling shopping tools.\n            Select the smallest set whose registered descriptions cover the\n            complete current intent.\n\n            Which primary to pick is answered by the registered descriptions\n            themselves, and by the allowed values on `skill_names`. This\n            docstring used to answer it again in its own words, naming two of\n            the primaries; a third was registered and the list here did not\n            know, so the one skill that could answer a question about the shop\n            was never offered as an option. Read the descriptions.\n\n            What they cannot tell you, because it spans two of them: dressing\n            for a named place and date needs the conditions there, and\n            `outfit-styling` cannot fetch them: select `destination-weather`\n            with it whenever\n            the turn turns on the weather. \"A wedding in Rome in June, what\n            should I wear\" needs both. It is a standalone skill, neither a\n            second primary nor a modifier, so selecting it beside a procedure\n            is allowed. Leave it out and the turn has no way to know the\n            weather -- and the failure that follows is not a refusal, it is a\n            reply describing a climate it never fetched.",
+   "handles_validation_error": true,
+   "name": "activate_shopper_skills_tool",
+   "response_format": "content",
+   "return_direct": false,
+   "schema": {
+    "description": "Select and load shopper behavior skills for this turn. This is\nthe required first step before answering or calling shopping tools.\nSelect the smallest set whose registered descriptions cover the\ncomplete current intent.\n\nWhich primary to pick is answered by the registered descriptions\nthemselves, and by the allowed values on `skill_names`. This\ndocstring used to answer it again in its own words, naming two of\nthe primaries; a third was registered and the list here did not\nknow, so the one skill that could answer a question about the shop\nwas never offered as an option. Read the descriptions.\n\nWhat they cannot tell you, because it spans two of them: dressing\nfor a named place and date needs the conditions there, and\n`outfit-styling` cannot fetch them: select `destination-weather`\nwith it whenever\nthe turn turns on the weather. \"A wedding in Rome in June, what\nshould I wear\" needs both. It is a standalone skill, neither a\nsecond primary nor a modifier, so selecting it beside a procedure\nis allowed. Leave it out and the turn has no way to know the\nweather -- and the failure that follows is not a refusal, it is a\nreply describing a climate it never fetched.",
+    "properties": {
+     "skill_names": {
+      "description": "Smallest set of registered shopper skills whose descriptions cover the current turn's complete intent. Select exactly one primary procedure -- catalog-questions, outfit-styling, product-discovery -- and never two. budget-shopping may only accompany a primary, never stand alone. Standalone skills may be selected with or without a primary.",
+      "items": {
+       "enum": [
+        "budget-shopping",
+        "cart-management",
+        "catalog-questions",
+        "destination-weather",
+        "outfit-styling",
+        "product-discovery",
+        "store-policy-answers"
+       ],
+       "type": "string"
+      },
+      "maxItems": 7,
+      "minItems": 1,
+      "title": "Skill Names",
+      "type": "array"
+     }
+    },
+    "required": [
+     "skill_names"
+    ],
+    "title": "activate_shopper_skills_tool",
+    "type": "object"
+   }
+  },
+  {
+   "description": "Find products by description, advertised taxonomy, or constraints.\n\n            Use for browse, search, and recommendation requests after product\n            discovery or outfit styling is active. Select exact values from the\n            current Catalog capabilities. Do not use for a product already\n            established in this conversation, and do not repeat a completed hard-\n            filter scope with different semantic wording.",
+   "handles_validation_error": true,
+   "name": "search_catalog_tool",
+   "response_format": "content_and_artifact",
+   "return_direct": false,
+   "schema": {
+    "$defs": {
+     "CatalogRequiredConstraints": {
+      "additionalProperties": false,
+      "properties": {
+       "unadvertised_requirements": {
+        "description": "Only objective product requirements directly stated in the current shopper turn and absent from this schema. Never infer a requirement from season, weather, occasion, or subjective style/vibe context: 'rainy day outfit' produces an empty list. Use ['water resistance'] for 'water-resistant bags' because that turn directly states the product requirement. Never omit or soften a directly stated objective requirement. Subjective recommendation adjectives such as comfortable, relaxed, soft, breathable, lightweight, casual, dressy, bold, bright, vibrant, or sporty always stay semantic; never put them in this field. In an 'A or B' request, do not put the supported advertised branch here. A product type never belongs here.",
+        "items": {
+         "type": "string"
+        },
+        "title": "Unadvertised Requirements",
+        "type": "array"
+       }
+      },
+      "title": "CatalogRequiredConstraints",
+      "type": "object"
+     },
+     "CatalogSearchToolArguments": {
+      "additionalProperties": false,
+      "properties": {
+       "requested_product_type": {
+        "anyOf": [
+         {
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "description": "The kind of product this focused role is, worked out from the shopper's latest words and the last few turns before considering what this catalog carries. Name the product itself, not the part it plays or the shopper's phrasing: 'something to layer over a sleeveless dress' is 'cardigan', never 'layer'. Never replace what they asked for with something the catalog has instead: 'jeans' stays 'jeans' whether or not it is sold here. Exclude color, material, fit, occasion, weather, and style modifiers: 'formal tops' and 'relaxed-fit tops' both use 'tops'. In taxonomy, name only the advertised subcategories this kind of product falls under, not every one the role could touch. When the shopper did not name it, the reply will say the choice was yours. If this type is not separately advertised and you select one faithful advertised parent category, keep this type unchanged. This is not catalog taxonomy or a ranking query. Use null for image-only search, and for a request that names no product type at all -- 'nothing over $50' is a complete request scoped by its price, and inventing a noun for it makes this field say the shopper asked for something they did not. Null here is not an unscoped search: taxonomy or a hard filter still has to say which products are meant.",
+        "title": "Requested Product Type"
+       },
+       "required_constraints": {
+        "$ref": "#/$defs/CatalogRequiredConstraints",
+        "description": "Catalog hard filters and any defining requirement the active catalog cannot enforce. When the shopper names a specific product and asks whether it meets some condition -- within a budget, in stock, in a colour, on sale -- do not send that condition as a filter. You are checking one product, not narrowing a category, and a filter can only hide the answer. Asked whether a named bracelet came within a $150 ceiling, a search filtered to $150 could not return the $169.99 bracelet and the shopper was told the shop did not have it. Find the product first, then compare. Apply constraints only when the current turn states them for the target products; an anchor's attributes belong in semantic styling context unless the shopper explicitly requests the same value. Use only the advertised properties in this object; put unsupported must-haves in unadvertised_requirements instead of weakening them, under the rules stated on that field. Broad season, weather, occasion or subjective style context is not a hard filter and does not belong in this object unless the shopper directly requires a product attribute; neither do recommendation adjectives, which are always semantic ranking preferences. Before calling the tool, compare every target-product modifier with this advertised schema and include every exact matching filter value. Use an empty object for image-only search."
+       },
+       "scope_complete": {
+        "description": "True only when this search plus existing turn evidence is enough to answer the shopper's complete current request. For a recommendation-only one-role request this is true. Set false when an explicitly requested product role, product-detail verification, availability check, or cart action still must run after this search. Do not set false merely to search alternatives or adjacent types, or because a broader multi-turn outfit project remains unfinished. 'Start with a beige top' and 'What bottoms go with that?' are each complete after their own one-role search.",
+        "title": "Scope Complete",
+        "type": "boolean"
+       },
+       "search_mode": {
+        "anyOf": [
+         {
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "description": "Optional search mode advertised by the active catalog.",
+        "title": "Search Mode"
+       },
+       "semantic_query": {
+        "description": "One soft or descriptive product search string for semantic ranking. Product type may be repeated for relevance, but taxonomy and other must-haves are enforced only by the structured fields below. Use an empty string only for an image-only search.",
+        "title": "Semantic Query",
+        "type": "string"
+       },
+       "shopper_guidance": {
+        "description": "One concise, product-agnostic shopper-facing sentence written under the active skill before search results are known. It is read out on a clarification or a degraded turn, so the shopper's own words copied in here are read back to the person who just said them. Connect this product role to what the shopper asked for in THIS turn, or its direct antecedent. A purpose they gave earlier -- a wedding, a trip -- has already been served and does not travel: once they move on, so do you. Naming it again on every later turn produced 'skirts that would work well for your wedding abroad outfit' six turns after the wedding, and a bag for someone else described as complementing the shopper's own outfit. It is about this role, never a running tally of everything shown so far -- 'skirts to complete your look with bracelets, sunglasses, tote bags and heels' invents an outfit out of a browse. Do not name unselected or unavailable product types, name or describe candidate products, assert product attributes, or mention tools, schemas, filters, evidence, or identifiers. Leave it empty when the shopper simply named a product type and nothing else -- 'now show me some skirts' is a request to see skirts, not a request to see skirts for something. Required to say something, the model reached back twelve turns for the only purpose in the conversation and produced 'skirts that could work well for your wedding abroad outfit'. An empty string is also right for an image-only search.",
+        "maxLength": 400,
+        "title": "Shopper Guidance",
+        "type": "string"
+       },
+       "taxonomy": {
+        "$ref": "#/$defs/CatalogTaxonomySelection",
+        "description": "Required taxonomy selection generated from the active catalog. Use exact enum values. A text search requires at least one category or subcategory; both arrays may be empty only for an image-only search. Every value must be a kind of the requested scope: skirts may satisfy bottoms; dresses may not. Never select a parent or sibling as a substitute for an advertised type. For a broad request that names no product type, choose one exact advertised subcategory as the focused starting role. If a shopper-named type is not separately advertised, select a parent category only when one of its advertised subcategories denotes the same kind of thing, and then leave subcategory empty. Pumps are heels, so footwear qualifies; every garment is apparel, so 'a kind of this category' can never fail and is not the test. When none does, the catalog does not carry the type: name it in not_covered and build no scope for it."
+       }
+      },
+      "required": [
+       "semantic_query",
+       "shopper_guidance",
+       "requested_product_type",
+       "taxonomy",
+       "required_constraints",
+       "scope_complete"
+      ],
+      "title": "CatalogSearchToolArguments",
+      "type": "object"
+     },
+     "CatalogTaxonomySelection": {
+      "additionalProperties": false,
+      "properties": {
+       "category": {
+        "description": "Exact category values advertised through catalog field 'not advertised'. Use an empty list, or leave it out, when the other taxonomy role supplies the text scope or the search is image-only. Select at most one category per catalog search. Omit it entirely when the shopper named no category and no product type -- \"nothing over $50\" belongs to every category, and choosing one for them shows a fraction of what they asked to see. A search with no category needs a hard filter to scope it.",
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 0,
+        "title": "Category",
+        "type": "array"
+       },
+       "subcategory": {
+        "description": "Exact subcategory values advertised through catalog field 'not advertised'. Use an empty list, or leave it out, when the other taxonomy role supplies the text scope or the search is image-only. Omit it to search the whole category, which is what 'show me some jewellery' asks for: the shopper named no subcategory and narrowing to one would be choosing for them.",
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 0,
+        "title": "Subcategory",
+        "type": "array"
+       }
+      },
+      "title": "CatalogTaxonomySelection",
+      "type": "object"
+     }
+    },
+    "description": "Find products by description, advertised taxonomy, or constraints.\n\nUse for browse, search, and recommendation requests after product\ndiscovery or outfit styling is active. Select exact values from the\ncurrent Catalog capabilities. Do not use for a product already\nestablished in this conversation, and do not repeat a completed hard-\nfilter scope with different semantic wording.",
+    "properties": {
+     "not_covered": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 10,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Product types the shopper asked for that no advertised subcategory denotes, in the shopper's own words. Do not search for these -- naming them here is what records the request so it can be answered. A shopper asking for 'a pan, a shoe and a bag' gets scopes for the shoe and the bag, and 'pan' here.",
+      "title": "Not Covered"
+     },
+     "scopes": {
+      "description": "One search scope per advertised category. Each scope owns its own taxonomy and constraints, so a filter for one role can never exclude another role's products -- and equally, a filter the shopper gave for one role must not be repeated onto another. A filter this role was never given empties this role's results: 'a dress in size 2 and shoes' sizes the dress and says nothing about the shoes, so the shoes scope carries no size. Leave a constraint out rather than carry one across. One role gets one scope carrying every faithful advertised type for it; do not spend a spare scope on an adjacent category or a one-piece substitute. A dress is not a bottom and does not satisfy a request for separates.",
+      "items": {
+       "$ref": "#/$defs/CatalogSearchToolArguments"
+      },
+      "maxItems": 1,
+      "minItems": 1,
+      "title": "Scopes",
+      "type": "array"
+     }
+    },
+    "required": [
+     "scopes"
+    ],
+    "title": "search_catalog_tool",
+    "type": "object"
+   }
+  },
+  {
+   "description": "Get detailed facts (material, care, dimensions, closures) for a\n            product established in this turn by search or historical-product\n            resolution. Requires a PRODUCT_REF \u2014 not a product name. Do NOT call\n            for initial recommendations. Stop immediately if STOP_TOOL_USE is\n            returned.",
+   "handles_validation_error": true,
+   "name": "get_product_details_tool",
+   "response_format": "content_and_artifact",
+   "return_direct": false,
+   "schema": {
+    "description": "Get detailed facts (material, care, dimensions, closures) for a\nproduct established in this turn by search or historical-product\nresolution. Requires a PRODUCT_REF \u2014 not a product name. Do NOT call\nfor initial recommendations. Stop immediately if STOP_TOOL_USE is\nreturned.",
+    "properties": {
+     "product_ref": {
+      "title": "Product Ref",
+      "type": "string"
+     }
+    },
+    "required": [
+     "product_ref"
+    ],
+    "title": "get_product_details_tool",
+    "type": "object"
+   }
+  },
+  {
+   "description": "Resolve products the shopper refers to from earlier in this\n            conversation. Use only when a needed product was not established\n            in the current turn. Submit exact descriptors from the historical\n            product index. If a reference is ambiguous, ask one concise\n            clarification and do not guess. If nothing matches at all, the\n            result says what to do next.",
+   "handles_validation_error": true,
+   "name": "resolve_conversation_products_tool",
+   "response_format": "content_and_artifact",
+   "return_direct": false,
+   "schema": {
+    "$defs": {
+     "ProductReferenceDescriptor": {
+      "additionalProperties": false,
+      "description": "Structured selectors for one historical product reference.",
+      "properties": {
+       "attributes": {
+        "anyOf": [
+         {
+          "additionalProperties": {
+           "type": "string"
+          },
+          "maxProperties": 12,
+          "type": "object"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "description": "What the shopper described rather than named, in advertised attribute values: 'the black one' is {'primary_color': 'black'}, 'the black one in a 2' adds {'sizes': '2'}. This is how a descriptive reference resolves. It is compared against the attributes the catalog confirmed when each product was shown, most recently shown first, so it finds what the shopper is pointing at rather than what shares a word with their phrase. Send it instead of display_name, which is for a product's actual name: nothing is called 'black one', so sending that as a name found nothing shown, searched the catalog for it, and offered four products the shopper had never seen.",
+        "title": "Attributes"
+       },
+       "candidate_set_id": {
+        "anyOf": [
+         {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "description": "Exact set ID from the historical product index.",
+        "title": "Candidate Set Id"
+       },
+       "category": {
+        "anyOf": [
+         {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "description": "Optional. The value in square brackets in the historical product index, such as 'dresses' -- not the catalog department such as 'apparel'. Omit it when sending a product_ref.",
+        "title": "Category"
+       },
+       "display_name": {
+        "anyOf": [
+         {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "description": "Exact product name from the historical product index.",
+        "title": "Display Name"
+       },
+       "group": {
+        "anyOf": [
+         {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "description": "Optional. The heading in square brackets that the shopper counted under, when they named one: 'the second shoes' is `ordinal` 2 with `group` 'shoes'. Numbering restarts under each heading, so an ordinal alone over a showing of dresses and shoes names one product in each. Send the heading as it appears in the index. Omit it when the shopper named no kind.",
+        "title": "Group"
+       },
+       "ordinal": {
+        "anyOf": [
+         {
+          "minimum": 1,
+          "type": "integer"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "description": "One-based product position within the selected turn or set. This is how a positional reference resolves: 'the first one', 'the second', 'the last one you showed' send `ordinal` with the `candidate_set_id` or `turn_sequence` they were shown in, never a guessed PRODUCT_REF. The index owns the order and you do not: asked to add 'the first one' of four sandals, a guessed ref picked the fourth, the name did not match it, nothing was added, and the shopper was re-shown the same four in a different order. Sent alone it counts within the most recently shown set, which is the one the shopper is looking at, under the first heading shown there.",
+        "title": "Ordinal"
+       },
+       "product_ref": {
+        "anyOf": [
+         {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "description": "Exact PRODUCT_REF from the historical product index.",
+        "title": "Product Ref"
+       },
+       "reference_id": {
+        "description": "Short label used to identify this result.",
+        "maxLength": 128,
+        "minLength": 1,
+        "title": "Reference Id",
+        "type": "string"
+       },
+       "turn_sequence": {
+        "anyOf": [
+         {
+          "minimum": 1,
+          "type": "integer"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "description": "Exact turn number from the historical product index.",
+        "title": "Turn Sequence"
+       }
+      },
+      "required": [
+       "reference_id"
+      ],
+      "title": "ProductReferenceDescriptor",
+      "type": "object"
+     }
+    },
+    "description": "Resolve products the shopper refers to from earlier in this\nconversation. Use only when a needed product was not established\nin the current turn. Submit exact descriptors from the historical\nproduct index. If a reference is ambiguous, ask one concise\nclarification and do not guess. If nothing matches at all, the\nresult says what to do next.",
+    "properties": {
+     "references": {
+      "items": {
+       "$ref": "#/$defs/ProductReferenceDescriptor"
+      },
+      "maxItems": 20,
+      "minItems": 1,
+      "title": "References",
+      "type": "array"
+     }
+    },
+    "required": [
+     "references"
+    ],
+    "title": "resolve_conversation_products_tool",
+    "type": "object"
+   }
+  },
+  {
+   "description": "Read the current cart. Use before cart mutations to get\n            CART_LINE_ID values, or when the shopper asks what is in their cart.\n            Do NOT call again if the cart was already read this turn and no\n            mutation has occurred since.",
+   "handles_validation_error": true,
+   "name": "get_cart_tool",
+   "response_format": "content",
+   "return_direct": false,
+   "schema": {
+    "description": "Read the current cart. Use before cart mutations to get\nCART_LINE_ID values, or when the shopper asks what is in their cart.\nDo NOT call again if the cart was already read this turn and no\nmutation has occurred since.",
+    "properties": {},
+    "title": "get_cart_tool",
+    "type": "object"
+   }
+  },
+  {
+   "description": "Add products to the cart. Use ONLY on explicit shopper intent to\n            add, buy, or put items in the cart. Requires PRODUCT_REF values from\n            current-turn search or historical-product resolution \u2014 not names.\n            Call once with every item the shopper asked to add, not once\n            per item. \"All items\" means the ones they asked for, not\n            everything in play this turn: \"add the black one in a 2 and\n            show me a clutch to go with it\" adds the dress and shows the\n            clutch. A product the shopper asked to see is not an item.",
+   "handles_validation_error": true,
+   "name": "add_cart_items_tool",
+   "response_format": "content_and_artifact",
+   "return_direct": false,
+   "schema": {
+    "$defs": {
+     "AddCartItemsToolItemInput": {
+      "properties": {
+       "expected_display_name": {
+        "anyOf": [
+         {
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "description": "Shopper-facing product name the agent intends to add. When the shopper explicitly names the product, copy that exact product name.",
+        "title": "Expected Display Name"
+       },
+       "product_ref": {
+        "description": "PRODUCT_REF returned by search_catalog_tool in this conversation.",
+        "minLength": 1,
+        "title": "Product Ref",
+        "type": "string"
+       },
+       "quantity": {
+        "default": 1,
+        "description": "Quantity of this product to add.",
+        "minimum": 1,
+        "title": "Quantity",
+        "type": "integer"
+       },
+       "size": {
+        "anyOf": [
+         {
+          "maxLength": 32,
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "description": "The size to add, exactly as the product lists it. Required when the product carries real sizes, and omitted when its only size is 'onesize' -- asking what size handbag someone wants is worse than not asking. Use only a size that product actually comes in; the sizes differ per product and are in its details.",
+        "title": "Size"
+       }
+      },
+      "required": [
+       "product_ref"
+      ],
+      "title": "AddCartItemsToolItemInput",
+      "type": "object"
+     }
+    },
+    "description": "Add products to the cart. Use ONLY on explicit shopper intent to\nadd, buy, or put items in the cart. Requires PRODUCT_REF values from\ncurrent-turn search or historical-product resolution \u2014 not names.\nCall once with every item the shopper asked to add, not once\nper item. \"All items\" means the ones they asked for, not\neverything in play this turn: \"add the black one in a 2 and\nshow me a clutch to go with it\" adds the dress and shows the\nclutch. A product the shopper asked to see is not an item.",
+    "properties": {
+     "items": {
+      "description": "One or more products to add. Each must use a PRODUCT_REF established by current-turn search or historical-product resolution.",
+      "items": {
+       "$ref": "#/$defs/AddCartItemsToolItemInput"
+      },
+      "minItems": 1,
+      "title": "Items",
+      "type": "array"
+     }
+    },
+    "required": [
+     "items"
+    ],
+    "title": "add_cart_items_tool",
+    "type": "object"
+   }
+  },
+  {
+   "description": "Remove a cart line. Use ONLY on explicit shopper intent to remove\n            an item. Requires CART_LINE_ID from get_cart_tool \u2014 do not guess.\n            Use update_cart_items_tool to change quantity instead of removing\n            and re-adding.",
+   "handles_validation_error": true,
+   "name": "remove_cart_item_tool",
+   "response_format": "content_and_artifact",
+   "return_direct": false,
+   "schema": {
+    "description": "Remove a cart line. Use ONLY on explicit shopper intent to remove\nan item. Requires CART_LINE_ID from get_cart_tool \u2014 do not guess.\nUse update_cart_items_tool to change quantity instead of removing\nand re-adding.",
+    "properties": {
+     "cart_line_id": {
+      "title": "Cart Line Id",
+      "type": "string"
+     },
+     "quantity": {
+      "default": 1,
+      "title": "Quantity",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "cart_line_id"
+    ],
+    "title": "remove_cart_item_tool",
+    "type": "object"
+   }
+  },
+  {
+   "description": "Change one cart line: its quantity, its size, or both. One call\n            moves the line, so never add a size and remove a line to change\n            one. Moving replaces: the line stops holding the size it held. A\n            size the shopper wants as well as that one is a second line, so\n            that is add_cart_items_tool and not this.\n            Requires CART_LINE_ID from get_cart_tool.",
+   "handles_validation_error": true,
+   "name": "update_cart_items_tool",
+   "response_format": "content_and_artifact",
+   "return_direct": false,
+   "schema": {
+    "description": "Change one cart line: its quantity, its size, or both. One call\nmoves the line, so never add a size and remove a line to change\none. Moving replaces: the line stops holding the size it held. A\nsize the shopper wants as well as that one is a second line, so\nthat is add_cart_items_tool and not this.\nRequires CART_LINE_ID from get_cart_tool.",
+    "properties": {
+     "cart_line_id": {
+      "description": "CART_LINE_ID from get_cart_tool. Not the product name.",
+      "title": "Cart Line Id",
+      "type": "string"
+     },
+     "quantity": {
+      "description": "Total quantity to end up with; with `size`, in the new size. Removing a line is remove_cart_item_tool, not quantity 0.",
+      "minimum": 0,
+      "title": "Quantity",
+      "type": "integer"
+     },
+     "size": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "The size the shopper now wants for this line. Omit for a quantity change. A size this product is not sold in is refused, naming the ones it is.",
+      "title": "Size"
+     }
+    },
+    "required": [
+     "cart_line_id",
+     "quantity"
+    ],
+    "title": "update_cart_items_tool",
+    "type": "object"
+   }
+  },
+  {
+   "description": "Compute the cart subtotal. Use for budget checks or when the\n            shopper asks for the total. Does not include tax or shipping. Use\n            get_cart_tool for line contents.",
+   "handles_validation_error": true,
+   "name": "view_cart_total_tool",
+   "response_format": "content",
+   "return_direct": false,
+   "schema": {
+    "description": "Compute the cart subtotal. Use for budget checks or when the\nshopper asks for the total. Does not include tax or shipping. Use\nget_cart_tool for line contents.",
+    "properties": {},
+    "title": "view_cart_total_tool",
+    "type": "object"
+   }
+  },
+  {
+   "description": "Look up store policy for: returns, shipping, sizing, payment,\n            price_match, or gift_cards. Use ONLY for these policy topics. Do\n            NOT use for product facts, prices, or availability. If this tool\n            returns a not-found error, relay the message to the shopper and\n            direct them to the retailer's help center. Do NOT substitute model\n            knowledge for a missing policy.",
+   "handles_validation_error": true,
+   "name": "get_store_policy_tool",
+   "response_format": "content",
+   "return_direct": false,
+   "schema": {
+    "description": "Look up store policy for: returns, shipping, sizing, payment,\nprice_match, or gift_cards. Use ONLY for these policy topics. Do\nNOT use for product facts, prices, or availability. If this tool\nreturns a not-found error, relay the message to the shopper and\ndirect them to the retailer's help center. Do NOT substitute model\nknowledge for a missing policy.",
+    "properties": {
+     "topic": {
+      "description": "Policy topic to look up.",
+      "enum": [
+       "returns",
+       "shipping",
+       "sizing",
+       "payment",
+       "price_match",
+       "gift_cards"
+      ],
+      "title": "Topic",
+      "type": "string"
+     }
+    },
+    "required": [
+     "topic"
+    ],
+    "title": "get_store_policy_tool",
+    "type": "object"
+   }
+  },
+  {
+   "description": "Check whether products are available or in stock. Use ONLY when\n            the shopper explicitly asks about availability, stock, or a specific\n            size. Requires a PRODUCT_REF established by search or\n            historical-product resolution. Do NOT use for browsing. Pass every\n            product being asked about in one call. The deterministic stub\n            reports general availability, sized availability for apparel and\n            footwear, and one-size availability for other product categories.",
+   "handles_validation_error": true,
+   "name": "check_product_availability_tool",
+   "response_format": "content_and_artifact",
+   "return_direct": false,
+   "schema": {
+    "$defs": {
+     "_AvailabilityItemInput": {
+      "properties": {
+       "product_ref": {
+        "description": "PRODUCT_REF established by current-turn search or historical-product resolution.",
+        "title": "Product Ref",
+        "type": "string"
+       },
+       "variant_hint": {
+        "anyOf": [
+         {
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "description": "Requested size wording, such as 'size 8'.",
+        "title": "Variant Hint"
+       }
+      },
+      "required": [
+       "product_ref"
+      ],
+      "title": "_AvailabilityItemInput",
+      "type": "object"
+     }
+    },
+    "description": "Check whether products are available or in stock. Use ONLY when\nthe shopper explicitly asks about availability, stock, or a specific\nsize. Requires a PRODUCT_REF established by search or\nhistorical-product resolution. Do NOT use for browsing. Pass every\nproduct being asked about in one call. The deterministic stub\nreports general availability, sized availability for apparel and\nfootwear, and one-size availability for other product categories.",
+    "properties": {
+     "items": {
+      "description": "Every product the shopper asked about, in one call. They are checked together, so four products cost one round trip, not four.",
+      "items": {
+       "$ref": "#/$defs/_AvailabilityItemInput"
+      },
+      "maxItems": 36,
+      "minItems": 1,
+      "title": "Items",
+      "type": "array"
+     }
+    },
+    "required": [
+     "items"
+    ],
+    "title": "check_product_availability_tool",
+    "type": "object"
+   }
+  },
+  {
+   "description": "What this shop holds: how many products, which categories, the\n            price range of each, and their subcategories. Use for questions\n            about the SHOP rather than about a product -- the most or least\n            expensive thing, whether anything falls in a price range, what\n            departments exist. Takes no arguments and searches nothing.\n\n            A fact about the catalog comes from here, never from the results of\n            one search: the dearest item a search happened to return is that\n            search's maximum, not the shop's. To name the actual item, read the\n            range here and then search that category at that bound.",
+   "handles_validation_error": true,
+   "name": "describe_catalog_tool",
+   "response_format": "content",
+   "return_direct": false,
+   "schema": {
+    "description": "What this shop holds: how many products, which categories, the\nprice range of each, and their subcategories. Use for questions\nabout the SHOP rather than about a product -- the most or least\nexpensive thing, whether anything falls in a price range, what\ndepartments exist. Takes no arguments and searches nothing.\n\nA fact about the catalog comes from here, never from the results of\none search: the dearest item a search happened to return is that\nsearch's maximum, not the shop's. To name the actual item, read the\nrange here and then search that category at that bound.",
+    "properties": {},
+    "title": "describe_catalog_tool",
+    "type": "object"
+   }
+  },
+  {
+   "description": "Check whether a sale, discount, or promotion is currently active.\n            Use ONLY when the shopper explicitly asks about promotion status. Do\n            NOT use for ordinary affordable browsing, a price ceiling, price\n            matching, or product availability. Catalog search does not establish\n            sale status.",
+   "handles_validation_error": true,
+   "name": "check_active_promotions_tool",
+   "response_format": "content_and_artifact",
+   "return_direct": false,
+   "schema": {
+    "description": "Check whether a sale, discount, or promotion is currently active.\nUse ONLY when the shopper explicitly asks about promotion status. Do\nNOT use for ordinary affordable browsing, a price ceiling, price\nmatching, or product availability. Catalog search does not establish\nsale status.",
+    "properties": {},
+    "title": "check_active_promotions_tool",
+    "type": "object"
+   }
+  },
+  {
+   "description": "Live daily forecast for one place, for the dates in question.\n\n            FIRST, AND OVER EVERYTHING BELOW: the shopper outranks this tool.\n            If they have told you what the conditions will be -- \"it's going\n            to snow when we get back\" -- the weather question is answered and\n            there is nothing to look up. They are the authority on their own\n            trip. Dress what they told you and do not call this tool at all.\n\n            Not because the call would be unnecessary, but because it is\n            actively worse than no forecast. Asked that, the assistant looked\n            up Rome -- the wedding two turns before -- reported rain at 65-82F\n            and recommended a satin sheath dress and blush ballet flats to a\n            shopper heading into snow. \"When we get back\" is home, and home is\n            not a place the assistant knows. Every clause after this one is\n            about a shopper ASKING what the conditions are, never about one\n            telling you.\n\n            Call it, without being asked, when all three hold of the question\n            you are answering. The shopper named a CITY, town or postal code.\n            They named a date or window. That window is within about 15 days\n            of TODAY. A destination wedding, a trip, an outdoor event.\n            Conditions change what to wear more than anything else about a\n            destination.\n\n            Those three are the whole test, and they are a test on the\n            question rather than on one turn's wording. Two things follow.\n\n            It does not also have to be an outfit request. \"I'm going to\n            Cancun next week, what's the weather like\" names the place, names\n            the window, and is inside it -- so it is a call, and the forecast\n            is the entire answer. Asked exactly that, the assistant instead\n            replied that it had no live forecast and then described what\n            September in Cancun is typically like, which is both a refusal and\n            the thing a refusal is supposed to prevent.\n\n            And when they are asking, the place and the dates may have been\n            established earlier in the same conversation. Nine turns into\n            planning one trip to Cancun, \"will I need a jacket in the evening\"\n            is a question about Cancun on those dates. It was refused for\n            naming no city, and the reply then said there was no live forecast\n            for Cancun and described the evenings there anyway -- naming the\n            city it claimed not to be able to look up. If they are asking, and\n            you have the place and the date from the trip under discussion,\n            you are not missing a forecast; you have not asked for one yet.\n            Say which city and dates the numbers are for, so they can correct\n            you.\n\n            That is licence to carry a place forward for a shopper who wants\n            conditions they do not have. It is not licence to look one up for\n            a shopper who already gave you theirs, and it is not licence for a\n            place they have moved off.\n\n            The `city` argument takes a city, town or postal code. A country\n            or region has no single weather, so prefer asking which city over\n            calling with one. If you do call with something broad, the reply\n            must say the numbers cover that whole area and ask which city --\n            never present them as the weather where the shopper will be.\n\n            Do not call it otherwise. Specifically:\n            - The shopper already said what the weather will be. \"It's going to\n              snow when we get back\" is the answer, and they are the authority\n              on their own trip. A forecast cannot improve on it and a forecast\n              for somewhere else contradicts it. This is the rule at the top:\n              no call, and no lookup of any kind.\n            - No date, here or anywhere in the conversation.\n              Today is not what they are dressing for; ask instead.\n            - A date further out than about 15 days. There is no forecast that\n              far ahead, so a call cannot produce anything true.\n            - No place at all. A place is the one thing that cannot be\n              supplied from anywhere else.\n\n            In each of those cases, name the one thing you are missing and ask\n            for it. Do not answer the question anyway from what you know about\n            the place: typical, seasonal, this time of year and tends to be are\n            not forecasts, and a reply that opens by saying the weather is\n            unavailable and then supplies some is the failure above.\n\n            A country or region does not stop you. \"We're going to Italy at the\n            weekend\" was answered with no forecast at all and a flat assertion\n            that the weather would be warm -- worse than either asking or\n            calling. Call it for the place they named, using its capital or\n            largest city when they named a country, then say which city the\n            numbers are for and ask whether that is where they will be. What\n            you may never do is describe weather you did not fetch.\n\n            Dress the date they are dressing for, not the one they travel on:\n            \"flying to Rome tomorrow, what do I wear at the weekend\" is a\n            forecast for the weekend. Resolve relative dates against TODAY\n            first -- one exact ISO date, or a complete inclusive ISO start/end\n            range -- and never send a relative date or invent a place.",
+   "handles_validation_error": true,
+   "name": "get_weather_forecast_tool",
+   "response_format": "content",
+   "return_direct": false,
+   "schema": {
+    "description": "Live daily forecast for one place, for the dates in question.\n\nFIRST, AND OVER EVERYTHING BELOW: the shopper outranks this tool.\nIf they have told you what the conditions will be -- \"it's going\nto snow when we get back\" -- the weather question is answered and\nthere is nothing to look up. They are the authority on their own\ntrip. Dress what they told you and do not call this tool at all.\n\nNot because the call would be unnecessary, but because it is\nactively worse than no forecast. Asked that, the assistant looked\nup Rome -- the wedding two turns before -- reported rain at 65-82F\nand recommended a satin sheath dress and blush ballet flats to a\nshopper heading into snow. \"When we get back\" is home, and home is\nnot a place the assistant knows. Every clause after this one is\nabout a shopper ASKING what the conditions are, never about one\ntelling you.\n\nCall it, without being asked, when all three hold of the question\nyou are answering. The shopper named a CITY, town or postal code.\nThey named a date or window. That window is within about 15 days\nof TODAY. A destination wedding, a trip, an outdoor event.\nConditions change what to wear more than anything else about a\ndestination.\n\nThose three are the whole test, and they are a test on the\nquestion rather than on one turn's wording. Two things follow.\n\nIt does not also have to be an outfit request. \"I'm going to\nCancun next week, what's the weather like\" names the place, names\nthe window, and is inside it -- so it is a call, and the forecast\nis the entire answer. Asked exactly that, the assistant instead\nreplied that it had no live forecast and then described what\nSeptember in Cancun is typically like, which is both a refusal and\nthe thing a refusal is supposed to prevent.\n\nAnd when they are asking, the place and the dates may have been\nestablished earlier in the same conversation. Nine turns into\nplanning one trip to Cancun, \"will I need a jacket in the evening\"\nis a question about Cancun on those dates. It was refused for\nnaming no city, and the reply then said there was no live forecast\nfor Cancun and described the evenings there anyway -- naming the\ncity it claimed not to be able to look up. If they are asking, and\nyou have the place and the date from the trip under discussion,\nyou are not missing a forecast; you have not asked for one yet.\nSay which city and dates the numbers are for, so they can correct\nyou.\n\nThat is licence to carry a place forward for a shopper who wants\nconditions they do not have. It is not licence to look one up for\na shopper who already gave you theirs, and it is not licence for a\nplace they have moved off.\n\nThe `city` argument takes a city, town or postal code. A country\nor region has no single weather, so prefer asking which city over\ncalling with one. If you do call with something broad, the reply\nmust say the numbers cover that whole area and ask which city --\nnever present them as the weather where the shopper will be.\n\nDo not call it otherwise. Specifically:\n- The shopper already said what the weather will be. \"It's going to\n  snow when we get back\" is the answer, and they are the authority\n  on their own trip. A forecast cannot improve on it and a forecast\n  for somewhere else contradicts it. This is the rule at the top:\n  no call, and no lookup of any kind.\n- No date, here or anywhere in the conversation.\n  Today is not what they are dressing for; ask instead.\n- A date further out than about 15 days. There is no forecast that\n  far ahead, so a call cannot produce anything true.\n- No place at all. A place is the one thing that cannot be\n  supplied from anywhere else.\n\nIn each of those cases, name the one thing you are missing and ask\nfor it. Do not answer the question anyway from what you know about\nthe place: typical, seasonal, this time of year and tends to be are\nnot forecasts, and a reply that opens by saying the weather is\nunavailable and then supplies some is the failure above.\n\nA country or region does not stop you. \"We're going to Italy at the\nweekend\" was answered with no forecast at all and a flat assertion\nthat the weather would be warm -- worse than either asking or\ncalling. Call it for the place they named, using its capital or\nlargest city when they named a country, then say which city the\nnumbers are for and ask whether that is where they will be. What\nyou may never do is describe weather you did not fetch.\n\nDress the date they are dressing for, not the one they travel on:\n\"flying to Rome tomorrow, what do I wear at the weekend\" is a\nforecast for the weekend. Resolve relative dates against TODAY\nfirst -- one exact ISO date, or a complete inclusive ISO start/end\nrange -- and never send a relative date or invent a place.",
+    "properties": {
+     "city": {
+      "description": "One city, town or postal code -- Cancun, Napa CA, 94558. Never a country, region or coastline: they have no single weather, so ask the shopper which city instead of calling.",
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "City",
+      "type": "string"
+     },
+     "date": {
+      "anyOf": [
+       {
+        "format": "date",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "One exact ISO date, resolved against TODAY.",
+      "title": "Date"
+     },
+     "end_date": {
+      "anyOf": [
+       {
+        "format": "date",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Inclusive ISO range end; use with start_date.",
+      "title": "End Date"
+     },
+     "shopper_words_naming_the_place": {
+      "description": "Quote the shopper's own words naming the place they are asking about NOW. If they have already said what the weather will be, they are the authority on their own trip, no forecast is needed at all, and this is not a call to make -- dress what they told you. Usually from THIS turn. Words from an earlier turn count only when this turn carries that same trip forward and puts no other place in play: nine turns into planning one trip, \"will I need a jacket in the evening\" is asking about that city. What never counts is a place they have moved off -- \"when we get back\" is home, not the city of the trip, and the trip's forecast contradicts them; served exactly that, the assistant recommended a satin dress and ballet flats for snow. If you cannot tell which place they mean, there is nothing to quote: ask which place they mean instead, and do not describe conditions you have not fetched.",
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Shopper Words Naming The Place",
+      "type": "string"
+     },
+     "start_date": {
+      "anyOf": [
+       {
+        "format": "date",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Inclusive ISO range start; use with end_date.",
+      "title": "Start Date"
+     }
+    },
+    "required": [
+     "city",
+     "shopper_words_naming_the_place"
+    ],
+    "title": "get_weather_forecast_tool",
+    "type": "object"
+   }
+  }
+ ]
+}

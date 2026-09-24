@@ -48,7 +48,7 @@ def runtime(monkeypatch: pytest.MonkeyPatch) -> Any:
     test with whichever ending is being checked.
     """
 
-    from chain_server.src.deepagents_runtime import DeepAgentsRuntime
+    from chain_server.src.runtime.runtime import DeepAgentsRuntime
 
     runtime = DeepAgentsRuntime.__new__(DeepAgentsRuntime)
     runtime._checkpointer = _CountingCheckpointer()
@@ -56,7 +56,7 @@ def runtime(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 def _identity() -> Any:
-    from chain_server.src.turn_support import RequestIdentity
+    from chain_server.src.runtime.identity import RequestIdentity
 
     return RequestIdentity(
         session_id="s1",
@@ -134,7 +134,7 @@ async def test_the_thread_belongs_to_one_request_and_never_to_a_conversation(
     nothing that could still want this thread after its request ends.
     """
 
-    from chain_server.src.turn_support import RequestIdentity
+    from chain_server.src.runtime.identity import RequestIdentity
 
     common = dict(
         session_id="s1", conversation_id="c1", cart_id="cart1",
@@ -160,7 +160,7 @@ async def test_a_genuinely_cancelled_task_still_frees_its_checkpoint() -> None:
     import asyncio
     from types import SimpleNamespace
 
-    from chain_server.src.deepagents_runtime import DeepAgentsRuntime
+    from chain_server.src.runtime.runtime import DeepAgentsRuntime
 
     runtime = DeepAgentsRuntime.__new__(DeepAgentsRuntime)
     runtime._checkpointer = _CountingCheckpointer()

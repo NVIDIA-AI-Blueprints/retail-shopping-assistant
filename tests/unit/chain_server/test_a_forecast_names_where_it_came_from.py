@@ -33,7 +33,7 @@ has spoken, which is what stops an invented place and nothing more.
 from __future__ import annotations
 
 import pytest
-from chain_server.src.response_format import WeatherForecastInput
+from chain_server.src.tools.weather import WeatherForecastInput
 from pydantic import ValidationError
 
 
@@ -131,8 +131,8 @@ def _weather_tool(
     from unittest.mock import patch
 
     from chain_server.src.agenttypes import DialogueTurn, State
-    from chain_server.src.deepagents_runtime import DeepAgentsRuntime
-    from chain_server.src.turn_support import RequestIdentity
+    from chain_server.src.runtime.identity import RequestIdentity
+    from chain_server.src.runtime.runtime import DeepAgentsRuntime
     from chain_server.src.weather import WeatherConfig
 
     base_config.weather = WeatherConfig(enabled=True)
@@ -284,8 +284,8 @@ def test_the_request_is_the_last_thing_the_prompt_says(base_config) -> None:
     """
 
     from chain_server.src.agenttypes import State
-    from chain_server.src.deepagents_runtime import DeepAgentsRuntime
-    from chain_server.src.turn_support import RequestIdentity
+    from chain_server.src.runtime.identity import RequestIdentity
+    from chain_server.src.runtime.runtime import DeepAgentsRuntime
 
     runtime = DeepAgentsRuntime(base_config)
     state = State(

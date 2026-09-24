@@ -3,10 +3,8 @@
 
 """One catalog search, from tool arguments to the evidence the model reads.
 
-This was a 943-line closure inside `DeepAgentsRuntime._create_agent`, which made
-it unreachable from a test and impossible to read without also reading the agent
-that built it. It captured six things from that scope; `SearchContext` names them
-explicitly so the search can be called, and read, on its own.
+`SearchContext` names everything the search reads from the turn, so the search
+can be called, and read, without the agent that built it.
 
 The order of what follows is the order a search actually goes through: admit the
 call, validate its arguments against current catalog capabilities, establish that
@@ -37,6 +35,26 @@ from shared.commerce_contracts import (
 
 from .agenttypes import State
 from .catalog_execution import execute_catalog_search
+from .catalog_format import (
+    _SEARCH_BUDGET_EXHAUSTED_NOTE,
+    _SEARCH_NO_MATCH_GROUNDING_NOTE,
+    _SEARCH_NO_MATCH_NEXT_STEP,
+    _SEARCH_RESULT_GROUNDING_NOTE,
+    _SEARCH_SCOPE_COMPLETE_NOTE,
+    SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE,
+    _format_catalog_scope_outcome,
+    _format_colour_words_read_as_advertised_ones,
+    _format_excluded_near_miss,
+    _format_product_record,
+    _format_search_composed_role_evidence,
+    _format_search_direction_evidence,
+    _format_search_filter_evidence,
+    _format_search_guidance_evidence,
+    _format_search_scope_relation_evidence,
+    _format_search_taxonomy_evidence,
+    _format_search_unadvertised_type_evidence,
+    _format_words_this_catalog_cannot_filter_on,
+)
 from .catalog_request import (
     CatalogSearchIntent,
     _filter_values,
@@ -54,67 +72,46 @@ from .catalog_vocabulary import (
     _products_with_subcategory_coverage,
     _same_product_scope,
 )
-from .control_signals import (
+from .lexical_provenance import (
+    _resolved_agent_selected_product_type,
+    _shopper_stated_product_scope,
+)
+from .product_records import _append_product_results, _search_product_record
+from .runtime.control_signals import (
     NOT_CARRIED_KEY,
     REJECTIONS_KEY,
     ControlSignal,
     SearchRejection,
     control,
 )
-from .lexical_provenance import (
-    _resolved_agent_selected_product_type,
-    _shopper_stated_product_scope,
-)
-from .model_usage import (
+from .runtime.model_usage import (
     _record_catalog_model_usage,
 )
-from .response_format import (
-    SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE,
-    _format_catalog_scope_outcome,
-    _format_colour_words_read_as_advertised_ones,
-    _format_excluded_near_miss,
-    _format_product_record,
-    _format_search_composed_role_evidence,
-    _format_search_direction_evidence,
-    _format_search_filter_evidence,
-    _format_search_guidance_evidence,
-    _format_search_scope_relation_evidence,
-    _format_search_taxonomy_evidence,
-    _format_search_unadvertised_type_evidence,
-    _format_words_this_catalog_cannot_filter_on,
-)
-from .tool_evidence import (
-    EVIDENCE_KEY,
-    SearchEvidence,
-)
-from .tool_loop_control import (
-    SEARCH_VALIDATION_ERROR_PREFIX,
-)
-from .tool_schemas import (
-    SearchCatalogToolArguments,
-)
-from .turn_scope import CatalogRepairState, TurnScope
-from .turn_support import (
-    _ONE_SIZE,
-    _SEARCH_BUDGET_EXHAUSTED_NOTE,
-    _SEARCH_NO_MATCH_GROUNDING_NOTE,
-    _SEARCH_NO_MATCH_NEXT_STEP,
-    _SEARCH_RESULT_GROUNDING_NOTE,
-    _SEARCH_SCOPE_COMPLETE_NOTE,
+from .runtime.turn_scope import CatalogRepairState, TurnScope
+from .search_input import (
     _UNSUPPORTED_SEARCH_MODE_MESSAGE,
     _advertised_subcategories_for_selection,
-    _append_product_results,
     _catalog_search_scope,
     _generic_shopper_guidance,
     _multi_subcategory_candidate_limit,
     _normalized_scope_value,
     _safe_shopper_guidance,
-    _search_product_record,
     _selected_advertised_subcategories,
     _taxonomy_hard_constraints,
     _tool_search_mode,
     _unsupported_requirement_message,
     stated_media_terms,
+)
+from .sizes import _ONE_SIZE
+from .tools.evidence import (
+    EVIDENCE_KEY,
+    SearchEvidence,
+)
+from .tools.loop_control import (
+    SEARCH_VALIDATION_ERROR_PREFIX,
+)
+from .tools.schemas import (
+    SearchCatalogToolArguments,
 )
 from .vocabulary_judge import ScopeQuestion
 
@@ -2366,8 +2363,7 @@ def _judge_this_call(ctx: SearchContext, attempts: list[_Attempt]) -> None:
     a 47,753-token median turn.
 
     Nothing is raised out of here. A judge that cannot be reached leaves every
-    scope unruled, and an unruled scope is decided by the gates that decided it
-    before this existed.
+    scope unruled, and an unruled scope is decided by the remaining gates alone.
     """
 
     judge = getattr(ctx, "vocabulary_judge", None)
@@ -2655,10 +2651,9 @@ def _merged_artifacts(artifacts: list[dict[str, Any]]) -> dict[str, Any] | None:
 
     Every consumer -- turn diagnostics, the grounding editor, and the durable
     presented-product record a later turn resolves against -- reads one evidence
-    dict and checks `outcome`. An earlier version merged by key and produced a
-    list of dicts, so those readers silently skipped it: a four-scope search
-    completed, returned products, and recorded none of them. The shape is the
-    contract, so merging must preserve it.
+    dict and checks `outcome`. A list of dicts is skipped silently by all of
+    them, so a multi-scope search would return products and record none. The
+    shape is the contract, so merging must preserve it.
     """
 
     payloads = [a[EVIDENCE_KEY] for a in artifacts if a and EVIDENCE_KEY in a]

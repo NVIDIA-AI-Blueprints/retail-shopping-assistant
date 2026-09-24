@@ -1,7 +1,7 @@
-"""Building the tool schema the model is shown, from the catalog's capabilities.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
-Lifted out of `turn_support.py` unchanged.
-"""
+"""Building the tool schema the model is shown, from the catalog's capabilities."""
 
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     pass
 
 import hashlib
+import json
 from collections.abc import Sequence
 from typing import Any, Literal
 
@@ -28,7 +29,7 @@ from shared.commerce_contracts import (
     CatalogCapabilities,
 )
 
-from .catalog_capabilities import (
+from ..catalog_capabilities import (
     effective_filter_capabilities,
 )
 
@@ -1018,3 +1019,58 @@ def _required_constraints_input_model(
     )
 
 
+def _a_list_written_as_json_text(value: Any) -> Any:
+    """Read a list the model encoded as a string.
+
+    "add the Xenial Aviator Sunglasses" found the product, read its details,
+    and then sent `{"items": "[{\\"product_ref\\": \\"generated:9b8...\\"}]"}` --
+    the list JSON-encoded inside a string. The call was rejected whole and the
+    shopper's cart stayed empty on a turn where everything else had gone right.
+
+    The same punctuation cost a cart again through skill activation, where it
+    was not forgiven. A cart tool called without cart-management is refused,
+    and the right recovery is to activate it and try again -- which the model
+    did, as `{"skill_names": "[\\"cart-management\\"]"}`. That errored, the
+    retry never came, and the reply said the dress was in the cart when it was
+    not. Two turns of J01 ended that way in three runs.
+
+    Decoding it changes nothing about what was asked for: the contents are
+    validated against the same model either way, so a malformed item still
+    fails. Only the punctuation around it is forgiven.
+    """
+
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    try:
+        decoded = json.loads(text)
+    except (TypeError, ValueError):
+        decoded = _a_list_whose_last_bracket_never_arrived(text)
+        if decoded is None:
+            return value
+    return decoded if isinstance(decoded, list) else value
+
+
+def _a_list_whose_last_bracket_never_arrived(text: str) -> Any | None:
+    """Read a list missing only its closing bracket, or None if that is not it.
+
+    "do you have that first one in a size 6" resolved correctly -- the right
+    product_ref, the right ordinal, the right turn -- and arrived as 301
+    characters of JSON with one `]` absent. The call errored, the error said
+    nothing the model could act on, and it sent the identical 301 characters
+    twenty-two times until the graph's recursion limit ended the turn.
+
+    Only the bracket is supplied, never a brace. A missing `]` means every
+    object in the list closed, so nothing is being guessed at. A missing `}`
+    would mean an object was cut mid-field, and completing that invents a
+    descriptor: a reference that lost its `ordinal` but kept its `category`
+    would resolve, quietly, to a different product than the shopper meant.
+    Those still fail, which is the outcome they should have.
+    """
+
+    if not text.startswith("[") or text.endswith("]"):
+        return None
+    try:
+        return json.loads(text + "]")
+    except (TypeError, ValueError):
+        return None

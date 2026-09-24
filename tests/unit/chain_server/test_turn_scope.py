@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from chain_server.src.turn_scope import CatalogRepairState, TurnScope
+from chain_server.src.runtime.turn_scope import CatalogRepairState, TurnScope
 
 
 def test_each_turn_gets_independent_mutable_state() -> None:

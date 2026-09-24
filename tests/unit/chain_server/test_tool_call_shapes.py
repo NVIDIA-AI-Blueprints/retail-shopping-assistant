@@ -6,7 +6,7 @@ around them. The call was rejected whole and the assistant told the shopper it
 could not complete a valid catalog search for a plainly named product.
 """
 
-from chain_server.src.tool_schemas import _one_scope_is_a_list_of_one
+from chain_server.src.tools.schemas import _one_scope_is_a_list_of_one
 
 
 def _wrapped(data):
@@ -57,7 +57,7 @@ def test_an_items_list_encoded_as_a_string_is_read() -> None:
     JSON-encoded inside a string and the call was rejected whole. The cart
     stayed empty on a turn where everything else had gone right."""
 
-    from chain_server.src.deepagents_runtime import AddCartItemsToolInput
+    from chain_server.src.tools.cart import AddCartItemsToolInput
 
     parsed = AddCartItemsToolInput.model_validate(
         {"items": '[{"product_ref": "generated:abc", "quantity": 1}]'}
@@ -66,7 +66,7 @@ def test_an_items_list_encoded_as_a_string_is_read() -> None:
 
 
 def test_a_proper_list_is_untouched() -> None:
-    from chain_server.src.deepagents_runtime import AddCartItemsToolInput
+    from chain_server.src.tools.cart import AddCartItemsToolInput
 
     parsed = AddCartItemsToolInput.model_validate(
         {"items": [{"product_ref": "generated:abc", "quantity": 2}]}
@@ -78,7 +78,7 @@ def test_decoding_forgives_the_punctuation_and_nothing_else() -> None:
     """A malformed item must still fail: only the wrapper is forgiven."""
 
     import pytest as _pytest
-    from chain_server.src.deepagents_runtime import AddCartItemsToolInput
+    from chain_server.src.tools.cart import AddCartItemsToolInput
     from pydantic import ValidationError
 
     with _pytest.raises(ValidationError):

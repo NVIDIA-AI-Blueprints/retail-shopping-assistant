@@ -6,8 +6,22 @@ Updated: 2026-08-02
 
 The current working tree extends the shopper-serving Deep Agent architecture:
 
+- the chain server is grouped by role: the runtime and its per-turn modules
+  under `chain_server/src/runtime/`, and each agent tool beside its input
+  model and prompt section under `chain_server/src/tools/`. The tools were
+  lifted out of `_create_agent` unchanged, and descriptions are rebuilt in the
+  form they are evaluated with, so what the model reads is byte-identical to
+  before. `test_what_the_model_reads.py` checks it against a checked-in
+  snapshot, whitespace included;
+- a cart change (add, remove, update) runs only on a turn whose first skill
+  selection, made from the shopper's words, granted it. Widening and
+  re-activation still grant reads mid-turn, but no longer a cart write;
+- a cart add is checked against the cart: a product and size already held is
+  not written again (more of it is a quantity, set by the update tool), and a
+  second size beside one already held is added with the old line named, so a
+  size change sent as an add can be finished before the reply;
 - per-turn mutable state is owned by one typed `TurnScope`
-  (`chain_server/src/turn_scope.py`) rather than by `nonlocal` variables shared
+  (`chain_server/src/runtime/turn_scope.py`) rather than by `nonlocal` variables shared
   across tool closures, so a tool can now be read, tested, and relocated on its
   own;
 - recent conversation turns reach the runtime as a typed `State.dialogue`
@@ -22,7 +36,7 @@ The current working tree extends the shopper-serving Deep Agent architecture:
   `functions.py` were unreachable from `chain_server/src/main.py` and are
   deleted along with their unit tests and the dead required configuration they
   alone consumed (`routing_prompt`, `chatter_prompt`, `agent_choices`, and the
-  optional legacy `categories` list). `deepagents_runtime.py` is now the only
+  optional legacy `categories` list). `runtime/runtime.py` is now the only
   chain-server serving path. This removes no serving behavior, catalog data,
   catalog or memory service capability, cart path, or dormant weather boundary;
   note that `chain_server/src/retriever.py` was the legacy `RetrieverAgent`, not

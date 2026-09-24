@@ -6,14 +6,14 @@ They are not shopper-facing UI language and should not appear in assistant
 responses.
 
 The runtime sources of truth are
-`chain_server/src/tool_policy.py` for the immutable tool policy and validated
+`chain_server/src/tools/policy.py` for the immutable tool policy and validated
 frontmatter grants,
-`chain_server/src/deepagents_runtime.py::DeepAgentsRuntime._create_agent` for
+`chain_server/src/runtime/runtime.py::DeepAgentsRuntime._create_agent` for
 wrapper registration, and
-`chain_server/src/skill_activation.py::ShopperSkillActivationMiddleware` for
+`chain_server/src/tools/skill_gate.py::ShopperSkillActivationMiddleware` for
 model binding and dispatch enforcement, with
 termination policy in
-`chain_server/src/tool_loop_control.py::ToolLoopControlMiddleware`. A tool is
+`chain_server/src/tools/loop_control.py::ToolLoopControlMiddleware`. A tool is
 registered with the shopper-serving Deep Agent only when it appears in the
 `create_deep_agent(..., tools=[...])` call. Per-turn availability is also
 controlled by the activation and loop-control phases described below.
@@ -228,7 +228,10 @@ requests rather than executed searches. A completed activation records each inje
 `/shopper/<name>/SKILL.md` path in `skill_files_read`; a later successful
 `read_file` of a skill file is recorded there as well. Pre-activation commerce
 rejections use `skill_activation_required`; post-activation ungranted calls use
-`skill_tool_not_granted`. On graph failure, bounded
+`skill_tool_not_granted`. A mutating cart call runs only when the turn's first
+activation granted it: that selection is made from the shopper's words before
+any tool result, so a skill gained mid-turn grants reads but not a cart write,
+and the refusal tells the model the cart is unchanged. On graph failure, bounded
 current-turn assistant/tool messages are read from the checkpoint before
 cleanup. Diagnostics also include at most 24 records and 32,000 serialized
 characters of structured current-turn product evidence from successful catalog
@@ -1079,7 +1082,7 @@ added to the Deep Agents runtime:
    the model so multi-step cart requests can finish before the shopper-facing
    answer.
 10. Matching entries in the granting skills' `tools_granted` frontmatter and
-    `tool_policy.py`; exact startup validation must reject drift in either
+    `tools/policy.py`; exact startup validation must reject drift in either
     direction.
 11. Unit coverage proving registration, pre-activation rejection, model-visible
     allow/deny binding, direct-dispatch rejection for ungranted skills, and

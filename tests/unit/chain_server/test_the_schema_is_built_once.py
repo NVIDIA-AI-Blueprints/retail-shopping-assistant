@@ -5,9 +5,9 @@
 
 Their enums come from the catalog, and the catalog does not change under a
 running process: CatalogCapabilitiesClient caches its first successful contract
-and never refetches. So the built schema was identical on every turn -- verified
-byte-for-byte before this change -- and rebuilding it cost 14ms per turn on the
-same event loop that has to serve the turn.
+and never refetches. So the built schema is identical on every turn, and
+rebuilding it costs 14ms per turn on the same event loop that has to serve the
+turn.
 
 The risk a cache introduces is serving one catalog's schema for another's, so
 that is what most of these tests are about.
@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 from catalog_retriever.src.catalog import load_catalog
 from chain_server.src.catalog_capabilities import CatalogCapabilities
-from chain_server.src.tool_schemas import (
+from chain_server.src.tools.schemas import (
     _search_catalog_scopes_input_model,
     _search_catalog_tool_input_model,
     clear_schema_cache,
@@ -131,7 +131,7 @@ def test_the_cached_schema_is_the_one_the_builder_produces(capabilities) -> None
     that what reaches the model is unchanged.
     """
 
-    from chain_server.src.tool_schemas import _build_search_catalog_tool_input_model
+    from chain_server.src.tools.schemas import _build_search_catalog_tool_input_model
 
     built = _build_search_catalog_tool_input_model(
         capabilities, wearer_audience_field="target_audience"

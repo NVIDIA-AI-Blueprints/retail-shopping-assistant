@@ -91,7 +91,7 @@ def a_catalog_like_the_real_one() -> CatalogCapabilities:
 def search_tool_schema(capabilities: CatalogCapabilities | None = None) -> str:
     """The search tool's JSON schema, exactly as the model receives it."""
 
-    from chain_server.src.tool_schemas import _search_catalog_scopes_input_model
+    from chain_server.src.tools.schemas import _search_catalog_scopes_input_model
 
     return json.dumps(
         _search_catalog_scopes_input_model(
@@ -109,7 +109,10 @@ def shopping_tool_descriptions() -> str:
     needs a live runtime, and the text is what is under test.
     """
 
-    return (REPO_ROOT / "chain_server" / "src" / "deepagents_runtime.py").read_text()
+    src = REPO_ROOT / "chain_server" / "src"
+    paths = [src / "runtime" / "runtime.py", src / "runtime" / "prompts.py"]
+    paths += sorted((src / "tools").glob("*.py"))
+    return "\n".join(path.read_text() for path in paths)
 
 
 def skill_body(name: str) -> str:
@@ -124,12 +127,14 @@ def reachable_on_a_turn_using(
 ) -> str:
     """Whitespace-normalised union of every channel that turn reads."""
 
+    from chain_server.src.tools.catalog import catalog_prompt_section
+
     capabilities = capabilities or a_catalog_like_the_real_one()
     parts = [
         runtime._system_prompt(),
         # Reaches the model only once a skill grants the search tool, which any
         # turn that searches does. Still a channel the turn reads.
-        runtime._catalog_prompt_section(capabilities),
+        catalog_prompt_section(capabilities),
         search_tool_schema(capabilities),
         shopping_tool_descriptions(),
         *(skill_body(name) for name in skill_names),

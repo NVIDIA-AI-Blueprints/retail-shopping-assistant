@@ -27,8 +27,8 @@ from chain_server.src.catalog_search import (
     _Attempt,
     _published_in_plan_order,
 )
-from chain_server.src.deepagents_runtime import the_showing
-from chain_server.src.turn_scope import TurnScope
+from chain_server.src.runtime.runtime import the_showing
+from chain_server.src.runtime.turn_scope import TurnScope
 from shared.commerce_contracts import ProductSummary
 
 

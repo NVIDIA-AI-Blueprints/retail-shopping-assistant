@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from chain_server.src.turn_support import format_most_recent_subject
+from chain_server.src.runtime.prompts import format_most_recent_subject
 
 
 def _state(sets):
@@ -78,7 +78,7 @@ def test_the_lane_actually_reaches_the_prompt() -> None:
     """
 
     from chain_server.src.agenttypes import Cart
-    from chain_server.src.deepagents_runtime import DeepAgentsRuntime
+    from chain_server.src.runtime.runtime import DeepAgentsRuntime
 
     state = SimpleNamespace(
         query="actually make those a 7",
@@ -105,7 +105,7 @@ def test_an_opening_turn_has_no_empty_section() -> None:
     """A heading with nothing under it is noise the model learns to skip."""
 
     from chain_server.src.agenttypes import Cart
-    from chain_server.src.deepagents_runtime import DeepAgentsRuntime
+    from chain_server.src.runtime.runtime import DeepAgentsRuntime
 
     state = SimpleNamespace(
         query="show me black dresses",

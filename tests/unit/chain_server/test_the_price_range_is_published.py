@@ -14,7 +14,7 @@ described every filter as "Advertised hard filter 'price'." and dropped it.
 
 from __future__ import annotations
 
-from chain_server.src.tool_schemas import _advertised_range, _search_catalog_tool_input_model
+from chain_server.src.tools.schemas import _advertised_range, _search_catalog_tool_input_model
 from shared.commerce_contracts import CatalogCapabilities, CatalogFilterCapability
 
 

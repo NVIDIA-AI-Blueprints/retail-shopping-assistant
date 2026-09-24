@@ -10,7 +10,7 @@ import types
 from pathlib import Path
 
 import pytest
-from chain_server.src.deepagents_runtime import (
+from chain_server.src.runtime.runtime import (
     _MODEL_REQUEST_TIMEOUT_CEILING_SECONDS,
     DeepAgentsRuntime,
 )
@@ -56,7 +56,7 @@ def test_a_tiny_budget_still_leaves_a_usable_deadline() -> None:
 
 
 def test_the_client_is_built_with_it() -> None:
-    source = (_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read_text()
+    source = (_REPO_ROOT / "chain_server/src/runtime/runtime.py").read_text()
     # The whole method, not its first 1600 characters. The window was a proxy
     # for "inside this method" and any comment added above the argument broke
     # it: documenting why sampling is settable moved `timeout=` past the cut

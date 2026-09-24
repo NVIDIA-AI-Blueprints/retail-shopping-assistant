@@ -3,15 +3,11 @@
 
 """Typed tool evidence, and the text rendered from it.
 
-A catalog tool produces typed facts. Those facts were previously rendered into prose
-for the model and then parsed back out of that prose to rebuild the composer's
-evidence -- the runtime reading its own output to learn what it already knew.
-
-Here the payload is built once and the model-visible text is rendered *from*
-it. That ordering matters: the text is a projection of the payload, not a
+A catalog tool produces typed facts. The payload is built once and the
+model-visible text is rendered *from* it; nothing parses that text back into
+evidence. That ordering matters: the text is a projection of the payload, not a
 parallel copy, so a consumer still reading the text cannot disagree with one
-reading the payload. Emitting both independently would recreate the drift that
-duplicated control prefixes had.
+reading the payload. Emitting both independently would let them drift apart.
 
 Rendering deliberately stays with the existing ``_format_search_*`` functions
 rather than being reimplemented here. They do not share one JSON convention --

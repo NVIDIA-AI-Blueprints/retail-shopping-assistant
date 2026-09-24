@@ -1,7 +1,7 @@
-"""What the turn may claim, and the evidence behind it.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
-Lifted out of `turn_support.py` unchanged.
-"""
+"""What the turn may claim, and the evidence behind it."""
 
 
 from __future__ import annotations
@@ -14,24 +14,24 @@ if TYPE_CHECKING:
 import json
 from typing import Any
 
-from .message_shape import (
-    _content_to_text,
-    _current_turn_messages,
-    _result_messages,
-    _value,
+from ..tools.evidence import (
+    detail_evidence_of,
+    evidence_of,
 )
-from .skill_activation import (
+from ..tools.loop_control import (
+    SEARCH_VALIDATION_ERROR_PREFIX,
+)
+from ..tools.skill_gate import (
     SKILL_ACTIVATION_COMPLETE,
     SKILL_ACTIVATION_REQUIRED,
     SKILL_ACTIVATION_TOOL_NAME,
     SKILL_TOOL_NOT_GRANTED,
 )
-from .tool_evidence import (
-    detail_evidence_of,
-    evidence_of,
-)
-from .tool_loop_control import (
-    SEARCH_VALIDATION_ERROR_PREFIX,
+from .message_shape import (
+    _content_to_text,
+    _current_turn_messages,
+    _result_messages,
+    _value,
 )
 
 _PRODUCT_DETAIL_EVIDENCE_NOTE = (

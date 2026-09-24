@@ -5,7 +5,7 @@
 
 
 def test_model_catalog_search_has_no_semantic_relation_label() -> None:
-    from chain_server.src.tool_schemas import SearchCatalogToolArguments
+    from chain_server.src.tools.schemas import SearchCatalogToolArguments
 
     assert "taxonomy_status" not in SearchCatalogToolArguments.model_fields
 
@@ -59,13 +59,13 @@ class TestDetailReadRedundancy:
         return SimpleNamespace(category=category, attributes=attributes)
 
     def test_full_evidence_makes_the_read_redundant(self) -> None:
-        from chain_server.src.turn_support import _detail_fields_already_held
+        from chain_server.src.product_records import _detail_fields_already_held
 
         product = self._product("bags", {"bag_closure": "zip", "structure": "soft"})
         assert _detail_fields_already_held(product, self._capabilities())
 
     def test_a_subcategory_is_matched_to_its_category(self) -> None:
-        from chain_server.src.turn_support import _detail_fields_already_held
+        from chain_server.src.product_records import _detail_fields_already_held
 
         product = self._product(
             "tote_bags", {"bag_closure": "zip", "structure": "soft"}
@@ -75,7 +75,7 @@ class TestDetailReadRedundancy:
     def test_one_missing_field_still_reads(self) -> None:
         """Any gap must fetch. This is the property that keeps it safe."""
 
-        from chain_server.src.turn_support import _detail_fields_already_held
+        from chain_server.src.product_records import _detail_fields_already_held
 
         product = self._product("bags", {"bag_closure": "zip"})
         assert not _detail_fields_already_held(product, self._capabilities())
@@ -83,7 +83,7 @@ class TestDetailReadRedundancy:
     def test_a_product_recovered_from_history_still_reads(self) -> None:
         """The historical index stores identity only, so it has no attributes."""
 
-        from chain_server.src.turn_support import _detail_fields_already_held
+        from chain_server.src.product_records import _detail_fields_already_held
 
         assert not _detail_fields_already_held(
             self._product("bags", {}), self._capabilities()
@@ -92,7 +92,7 @@ class TestDetailReadRedundancy:
     def test_an_unknown_category_still_reads(self) -> None:
         """Never skip a read for a product whose category cannot be checked."""
 
-        from chain_server.src.turn_support import _detail_fields_already_held
+        from chain_server.src.product_records import _detail_fields_already_held
 
         product = self._product("cookware", {"bag_closure": "zip"})
         assert not _detail_fields_already_held(product, self._capabilities())
@@ -252,7 +252,7 @@ class TestEveryDescriptionReachesTheModel:
         )
 
     def test_an_overridden_field_carries_no_dead_description(self) -> None:
-        from chain_server.src.tool_schemas import SearchCatalogToolArguments
+        from chain_server.src.tools.schemas import SearchCatalogToolArguments
 
         for name in self._OVERRIDDEN:
             field = SearchCatalogToolArguments.model_fields[name]
@@ -265,7 +265,7 @@ class TestEveryDescriptionReachesTheModel:
     def test_every_rendered_description_is_non_empty(self) -> None:
         """The other half: the override must actually supply one."""
 
-        from chain_server.src.tool_schemas import (
+        from chain_server.src.tools.schemas import (
     _search_catalog_scopes_input_model,
 )
 
@@ -285,7 +285,7 @@ class TestEveryDescriptionReachesTheModel:
         months the text was unreachable.
         """
 
-        from chain_server.src.tool_schemas import (
+        from chain_server.src.tools.schemas import (
     _search_catalog_scopes_input_model,
 )
 
@@ -307,7 +307,7 @@ class TestEveryDescriptionReachesTheModel:
         field's own opening line.
         """
 
-        from chain_server.src.tool_schemas import (
+        from chain_server.src.tools.schemas import (
     _search_catalog_scopes_input_model,
 )
 

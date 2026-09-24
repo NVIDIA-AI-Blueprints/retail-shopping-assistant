@@ -11,8 +11,6 @@ never reads the shopper's sentence; it is handed one value and one catalog and
 answers whether the value is in it. Guessing what a shopper meant is the
 resolver's job, and the one place that still guesses with string operations is
 `lexical_provenance.py`, which is on its way out.
-
-Lifted out of `turn_support.py` unchanged.
 """
 
 

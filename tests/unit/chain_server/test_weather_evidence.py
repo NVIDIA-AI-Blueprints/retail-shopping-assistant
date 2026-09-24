@@ -19,7 +19,7 @@ import contextlib
 import pathlib
 from datetime import UTC, date, datetime
 
-from chain_server.src.response_format import (
+from chain_server.src.tools.weather import (
     WEATHER_BUDGET_EXHAUSTED,
     WEATHER_CALLS_PER_TURN,
     _format_weather_result,
@@ -164,8 +164,8 @@ def test_the_budget_is_actually_enforced() -> None:
     passing, because the constant was asserted and the enforcement was buried
     in a closure nothing could reach."""
 
-    from chain_server.src.response_format import claim_weather_call
-    from chain_server.src.turn_scope import TurnScope
+    from chain_server.src.runtime.turn_scope import TurnScope
+    from chain_server.src.tools.weather import claim_weather_call
 
     scope = TurnScope()
     granted = [claim_weather_call(scope) for _ in range(WEATHER_CALLS_PER_TURN + 3)]
@@ -181,7 +181,7 @@ def test_the_rewriter_may_not_strip_the_attribution() -> None:
     anything derived from it is shown, so the stage that can delete it is told
     it may not."""
 
-    from chain_server.src import deepagents_runtime as runtime_mod
+    from chain_server.src.runtime import runtime as runtime_mod
 
     prompt = runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
 
@@ -203,7 +203,7 @@ def test_a_disabled_forecast_is_not_registered_at_all() -> None:
     conditional -- which is what keeps policy and skill frontmatter honest.
     """
 
-    from chain_server.src.tool_policy import (
+    from chain_server.src.tools.policy import (
         SHOPPING_TOOL_POLICIES,
         validate_registered_tool_names,
     )
@@ -221,7 +221,7 @@ def test_switching_one_tool_off_does_not_switch_the_guard_off() -> None:
     be activated together. Making one tool optional must not weaken it."""
 
     import pytest
-    from chain_server.src.tool_policy import (
+    from chain_server.src.tools.policy import (
         SHOPPING_TOOL_POLICIES,
         validate_registered_tool_names,
     )
@@ -325,7 +325,7 @@ def test_no_date_asks_rather_than_forecasting_today() -> None:
     has other callers and its today-mode is a documented contract.
     """
 
-    from chain_server.src.response_format import WEATHER_NO_DATE
+    from chain_server.src.tools.weather import WEATHER_NO_DATE
 
     assert "no date was given" in WEATHER_NO_DATE
     assert "today is not what the shopper is dressing for" in WEATHER_NO_DATE
@@ -342,9 +342,9 @@ def test_the_tool_says_when_not_to_call_it() -> None:
     This lives on the tool because the decision point is the call itself.
     """
 
-    from chain_server.src import deepagents_runtime as runtime_mod
+    from chain_server.src.tools import weather as weather_tools
 
-    source = pathlib.Path(runtime_mod.__file__).read_text()
+    source = pathlib.Path(weather_tools.__file__).read_text()
 
     assert "Do not call it otherwise" in source
     # The four refusals, each measured or reasoned in the contract.
@@ -370,7 +370,7 @@ def test_the_no_date_guard_is_actually_enforced() -> None:
     passing, because the message was asserted and the check sat in a closure
     nothing could reach."""
 
-    from chain_server.src.response_format import weather_call_needs_a_date
+    from chain_server.src.tools.weather import weather_call_needs_a_date
 
     assert weather_call_needs_a_date(None, None, None)
     assert not weather_call_needs_a_date(date(2026, 8, 15), None, None)
@@ -388,7 +388,7 @@ def test_the_argument_is_a_city_not_a_location() -> None:
     and `location` invites any place while `city` does not.
     """
 
-    from chain_server.src.response_format import WeatherForecastInput
+    from chain_server.src.tools.weather import WeatherForecastInput
 
     assert "city" in WeatherForecastInput.model_fields
     assert "location" not in WeatherForecastInput.model_fields

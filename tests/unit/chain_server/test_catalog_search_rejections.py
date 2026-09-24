@@ -29,16 +29,16 @@ from chain_server.src.catalog_search import (
     SearchContext,
     search_catalog,
 )
-from chain_server.src.control_signals import (
+from chain_server.src.runtime.control_signals import (
     NOT_CARRIED_KEY,
     REJECTIONS_KEY,
     SearchRejection,
 )
-from chain_server.src.tool_schemas import (
+from chain_server.src.runtime.turn_scope import TurnScope
+from chain_server.src.tools.schemas import (
     _search_catalog_scopes_input_model,
     _search_catalog_tool_input_model,
 )
-from chain_server.src.turn_scope import TurnScope
 from chain_server.src.vocabulary_judge import VocabularyVerdict
 from shared.commerce_contracts import (
     CatalogCapabilities,
@@ -597,7 +597,7 @@ def test_a_shopper_who_shows_you_a_garment_has_stated_its_colour() -> None:
     was refused -- returning nothing for a request the catalog could answer.
     """
 
-    from chain_server.src.turn_support import stated_media_terms
+    from chain_server.src.search_input import stated_media_terms
 
     analysis = json.dumps(
         {
@@ -623,7 +623,7 @@ def test_a_shopper_who_shows_you_a_garment_has_stated_its_colour() -> None:
 def test_stated_media_terms_survives_the_vlm_changing_shape() -> None:
     """The same key comes back as a string one turn and a list the next."""
 
-    from chain_server.src.turn_support import stated_media_terms
+    from chain_server.src.search_input import stated_media_terms
 
     assert "cream" in stated_media_terms(json.dumps({"colors": "cream"}))
     assert "cream" in stated_media_terms(json.dumps({"colors": ["cream"]}))

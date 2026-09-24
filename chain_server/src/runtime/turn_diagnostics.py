@@ -1,7 +1,7 @@
-"""What a turn did, recorded for reading afterwards.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
-Lifted out of `turn_support.py` unchanged.
-"""
+"""What a turn did, recorded for reading afterwards."""
 
 
 from __future__ import annotations
@@ -14,6 +14,25 @@ from pydantic import (
     BaseModel,
 )
 
+from ..search_input import _UNSUPPORTED_SEARCH_MODE_MESSAGE
+from ..tools.evidence import (
+    detail_evidence_of,
+    evidence_of,
+)
+from ..tools.loop_control import (
+    _SERVER_REJECTED_TOOL_CALLS,
+    SEARCH_VALIDATION_ERROR_PREFIX,
+    SERVER_CATALOG_CLARIFICATION,
+    SERVER_RESTORED_TOOL_CALL_FIELDS,
+    STOP_TOOL_USE_PREFIX,
+    UNSUPPORTED_CONSTRAINT_PREFIX,
+    UNSUPPORTED_TAXONOMY_PREFIX,
+)
+from ..tools.skill_gate import (
+    SKILL_ACTIVATION_REQUIRED,
+    SKILL_ACTIVATION_TOOL_NAME,
+    SKILL_TOOL_NOT_GRANTED,
+)
 from .control_signals import (
     not_carried_of,
     rejections_of,
@@ -26,25 +45,6 @@ from .message_shape import (
     _tool_results_by_call_id,
     _value,
 )
-from .skill_activation import (
-    SKILL_ACTIVATION_REQUIRED,
-    SKILL_ACTIVATION_TOOL_NAME,
-    SKILL_TOOL_NOT_GRANTED,
-)
-from .tool_evidence import (
-    detail_evidence_of,
-    evidence_of,
-)
-from .tool_loop_control import (
-    _SERVER_REJECTED_TOOL_CALLS,
-    SEARCH_VALIDATION_ERROR_PREFIX,
-    SERVER_CATALOG_CLARIFICATION,
-    SERVER_RESTORED_TOOL_CALL_FIELDS,
-    STOP_TOOL_USE_PREFIX,
-    UNSUPPORTED_CONSTRAINT_PREFIX,
-    UNSUPPORTED_TAXONOMY_PREFIX,
-)
-from .turn_support import _UNSUPPORTED_SEARCH_MODE_MESSAGE
 
 logger = logging.getLogger(__name__)
 

@@ -147,7 +147,8 @@ def test_a_fence_only_strips_its_own_label() -> None:
 
 
 def _runtime_source() -> str:
-    return (REPO_ROOT / "chain_server" / "src" / "deepagents_runtime.py").read_text()
+    runtime = REPO_ROOT / "chain_server" / "src" / "runtime"
+    return (runtime / "runtime.py").read_text() + (runtime / "prompts.py").read_text()
 
 
 def test_every_place_the_media_lane_reaches_a_model_is_fenced() -> None:

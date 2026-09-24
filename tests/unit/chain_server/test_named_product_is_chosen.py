@@ -10,7 +10,7 @@ has no size to ask about. Four of the ten worst journeys fail on this shape.
 import re
 from pathlib import Path
 
-from chain_server.src.turn_support import _ONE_SIZE, _advertised_sizes
+from chain_server.src.sizes import _ONE_SIZE, _advertised_sizes
 
 # Resolved from this file, not the working directory: CI runs pytest with
 # `working-directory: tests`, where a path relative to the repo root does not

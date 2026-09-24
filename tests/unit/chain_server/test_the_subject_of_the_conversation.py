@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from chain_server.src.turn_support import format_most_recent_subject
+from chain_server.src.prompts import format_most_recent_subject
 
 
 def _state(sets):

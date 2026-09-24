@@ -38,6 +38,11 @@ from shared.commerce_contracts import (
 from .agenttypes import State
 from .catalog_execution import execute_catalog_search
 from .catalog_format import (
+    _SEARCH_BUDGET_EXHAUSTED_NOTE,
+    _SEARCH_NO_MATCH_GROUNDING_NOTE,
+    _SEARCH_NO_MATCH_NEXT_STEP,
+    _SEARCH_RESULT_GROUNDING_NOTE,
+    _SEARCH_SCOPE_COMPLETE_NOTE,
     SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE,
     _format_catalog_scope_outcome,
     _format_colour_words_read_as_advertised_ones,
@@ -83,6 +88,22 @@ from .lexical_provenance import (
 from .model_usage import (
     _record_catalog_model_usage,
 )
+from .product_records import _append_product_results, _search_product_record
+from .search_input import (
+    _UNSUPPORTED_SEARCH_MODE_MESSAGE,
+    _advertised_subcategories_for_selection,
+    _catalog_search_scope,
+    _generic_shopper_guidance,
+    _multi_subcategory_candidate_limit,
+    _normalized_scope_value,
+    _safe_shopper_guidance,
+    _selected_advertised_subcategories,
+    _taxonomy_hard_constraints,
+    _tool_search_mode,
+    _unsupported_requirement_message,
+    stated_media_terms,
+)
+from .sizes import _ONE_SIZE
 from .tools.evidence import (
     EVIDENCE_KEY,
     SearchEvidence,
@@ -94,28 +115,6 @@ from .tools.schemas import (
     SearchCatalogToolArguments,
 )
 from .turn_scope import CatalogRepairState, TurnScope
-from .turn_support import (
-    _ONE_SIZE,
-    _SEARCH_BUDGET_EXHAUSTED_NOTE,
-    _SEARCH_NO_MATCH_GROUNDING_NOTE,
-    _SEARCH_NO_MATCH_NEXT_STEP,
-    _SEARCH_RESULT_GROUNDING_NOTE,
-    _SEARCH_SCOPE_COMPLETE_NOTE,
-    _UNSUPPORTED_SEARCH_MODE_MESSAGE,
-    _advertised_subcategories_for_selection,
-    _append_product_results,
-    _catalog_search_scope,
-    _generic_shopper_guidance,
-    _multi_subcategory_candidate_limit,
-    _normalized_scope_value,
-    _safe_shopper_guidance,
-    _search_product_record,
-    _selected_advertised_subcategories,
-    _taxonomy_hard_constraints,
-    _tool_search_mode,
-    _unsupported_requirement_message,
-    stated_media_terms,
-)
 from .vocabulary_judge import ScopeQuestion
 
 #: What a search step hands back: nothing, meaning the search continues, or the

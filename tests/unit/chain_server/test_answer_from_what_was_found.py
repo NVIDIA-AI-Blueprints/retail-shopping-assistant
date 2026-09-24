@@ -8,7 +8,7 @@ away, and the shopper was asked to pay for it twice.
 
 from types import SimpleNamespace
 
-from chain_server.src.turn_support import _products_found_receipt
+from chain_server.src.replies import _products_found_receipt
 
 
 def _state(*products):

@@ -597,7 +597,7 @@ def test_a_shopper_who_shows_you_a_garment_has_stated_its_colour() -> None:
     was refused -- returning nothing for a request the catalog could answer.
     """
 
-    from chain_server.src.turn_support import stated_media_terms
+    from chain_server.src.search_input import stated_media_terms
 
     analysis = json.dumps(
         {
@@ -623,7 +623,7 @@ def test_a_shopper_who_shows_you_a_garment_has_stated_its_colour() -> None:
 def test_stated_media_terms_survives_the_vlm_changing_shape() -> None:
     """The same key comes back as a string one turn and a list the next."""
 
-    from chain_server.src.turn_support import stated_media_terms
+    from chain_server.src.search_input import stated_media_terms
 
     assert "cream" in stated_media_terms(json.dumps({"colors": "cream"}))
     assert "cream" in stated_media_terms(json.dumps({"colors": ["cream"]}))

@@ -36,7 +36,7 @@ from chain_server.src.conversation_products import (
     ResolveConversationProductsRequest,
 )
 from chain_server.src.tools.cart import AddCartItemsToolInput
-from chain_server.src.turn_support import _skill_activation_input_model
+from chain_server.src.tools.skill_input import _skill_activation_input_model
 from pydantic import ValidationError
 
 # The builder reads `role` and `exclusive_group` off each registered skill, so

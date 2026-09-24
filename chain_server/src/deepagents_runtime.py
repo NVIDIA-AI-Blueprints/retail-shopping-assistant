@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphRecursionError
 from pydantic import (
     ValidationError,
@@ -31,6 +32,7 @@ from shared.commerce_contracts import (
 )
 
 from .agenttypes import Cart, ShopperContext, State
+from .audience_events import _system_identification_events, _turn_audience_events
 from .cart_format import _format_cart, format_cart_change
 from .catalog_capabilities import (
     CatalogCapabilitiesClient,
@@ -58,6 +60,7 @@ from .fencing import MEDIA_FENCE
 from .grounding_evidence import (
     _collect_tool_grounding_evidence,
 )
+from .identity import RequestIdentity
 from .media_perception import MediaPerceptionClient
 from .media_summary import summarize_media_analysis
 from .message_shape import (
@@ -82,6 +85,16 @@ from .prompts import (
     _format_shopper_context,
     _format_store_date,
     _format_wearer_audience,
+    format_most_recent_subject,
+)
+from .replies import (
+    _committed_effect_receipt,
+    _has_grounding_authority,
+    _has_search_only_tool_evidence,
+    _images_in_product_order,
+    _in_presentation_order,
+    _media_failure_response,
+    _products_found_receipt,
 )
 from .search_replies import (
     _format_search_only_response,
@@ -115,22 +128,6 @@ from .turn_diagnostics import (
     _safe_collect_agent_diagnostics,
 )
 from .turn_scope import TurnScope
-from .turn_support import (
-    RequestIdentity,
-    _build_checkpointer,
-    _committed_effect_receipt,
-    _conversation_turn_status,
-    _has_grounding_authority,
-    _has_search_only_tool_evidence,
-    _images_in_product_order,
-    _in_presentation_order,
-    _media_failure_response,
-    _partial_graph_messages,
-    _products_found_receipt,
-    _system_identification_events,
-    _turn_audience_events,
-    format_most_recent_subject,
-)
 from .vocabulary_judge import CatalogVocabularyJudge
 from .weather import WeatherConfig, build_weather_client
 
@@ -2705,63 +2702,57 @@ def _as_evaluated(description: str) -> str:
     )
 
 
+def _build_checkpointer():
+    """Return the process-local LangGraph checkpointer."""
+
+    store = os.environ.get("CHECKPOINT_STORE", "memory").strip().lower()
+    if store != "memory":
+        raise ValueError(
+            "CHECKPOINT_STORE currently supports only 'memory'. "
+            f"Received: {store!r}."
+        )
+    return MemorySaver()
 
 
+_PARTIAL_GRAPH_SNAPSHOT_TIMEOUT_SECONDS = 1.0
 
 
+def _conversation_turn_status(termination_reason: str) -> FinalTurnStatus:
+    if termination_reason in {
+        "input_guardrail_blocked",
+        "output_guardrail_blocked",
+    }:
+        return "blocked"
+    if termination_reason == "completed":
+        return "completed"
+    return "failed"
 
 
+async def _partial_graph_messages(
+    agent: Any,
+    invoke_config: dict[str, Any],
+) -> tuple[list[Any], str | None]:
+    """Read the last graph state before its failed checkpoint is deleted."""
 
+    get_state = getattr(agent, "aget_state", None)
+    if get_state is None:
+        return [], "state_snapshot_unavailable"
+    try:
+        snapshot = await asyncio.wait_for(
+            get_state(invoke_config),
+            timeout=_PARTIAL_GRAPH_SNAPSHOT_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("Timed out snapshotting Deep Agents state before cleanup")
+        return [], "state_snapshot_timeout"
+    except Exception as exc:  # noqa: BLE001 - diagnostics cannot block cleanup.
+        error_type = type(exc).__name__
+        logger.warning(
+            "Could not snapshot Deep Agents state before cleanup: %s",
+            error_type,
+        )
+        return [], error_type
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    values = _value(snapshot, "values")
+    messages = _value(values, "messages")
+    return (messages if isinstance(messages, list) else []), None

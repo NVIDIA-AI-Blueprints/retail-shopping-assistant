@@ -16,13 +16,11 @@ from ..cart_operations import (
     remove_a_cart_line,
     update_a_cart_line,
 )
+from ..cart_references import AddCartItemsToolItemInput
 from ..control_signals import normalize_tool_result
+from ..identity import RequestIdentity
 from ..turn_scope import TurnScope
-from ..turn_support import (
-    AddCartItemsToolItemInput,
-    RequestIdentity,
-    _a_list_written_as_json_text,
-)
+from .schemas import _a_list_written_as_json_text
 
 if TYPE_CHECKING:
     from ..deepagents_runtime import DeepAgentsRuntime

@@ -22,7 +22,13 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
-from chain_server.src import catalog_search, turn_support
+from chain_server.src import cart_references as cart_references_mod
+from chain_server.src import catalog_search
+from chain_server.src import deepagents_runtime as runtime_mod
+from chain_server.src import identity as identity_mod
+from chain_server.src import product_records as product_records_mod
+from chain_server.src import replies as replies_mod
+from chain_server.src import search_input as search_input_mod
 from chain_server.src.agenttypes import Cart, ShopperContext, State
 from chain_server.src.conversation_memory import (
     ConversationMemoryError,
@@ -638,7 +644,7 @@ class TestStreamEndpoint:
 
 class TestRequestIdentity:
     def test_missing_explicit_ids_keep_legacy_user_scope(self) -> None:
-        from chain_server.src.turn_support import create_request_identity
+        from chain_server.src.identity import create_request_identity
 
         identity = create_request_identity(legacy_user_id=42)
 
@@ -651,7 +657,7 @@ class TestRequestIdentity:
         assert identity.shopper_profile_id is None
 
     def test_explicit_request_id_is_preserved(self) -> None:
-        from chain_server.src.turn_support import create_request_identity
+        from chain_server.src.identity import create_request_identity
 
         identity = create_request_identity(
             legacy_user_id=42,
@@ -661,7 +667,7 @@ class TestRequestIdentity:
         assert identity.request_id == "request-a"
 
     def test_selected_shopper_is_part_of_request_identity(self) -> None:
-        from chain_server.src.turn_support import create_request_identity
+        from chain_server.src.identity import create_request_identity
 
         identity = create_request_identity(
             legacy_user_id=42,
@@ -672,7 +678,7 @@ class TestRequestIdentity:
         assert identity.shopper_profile_id == "shopper_morgan"
 
     def test_missing_request_id_generates_a_new_value(self) -> None:
-        from chain_server.src.turn_support import create_request_identity
+        from chain_server.src.identity import create_request_identity
 
         first = create_request_identity(legacy_user_id=42)
         second = create_request_identity(legacy_user_id=42)
@@ -680,7 +686,7 @@ class TestRequestIdentity:
         assert first.request_id != second.request_id
 
     def test_checkpoint_thread_is_request_scoped(self) -> None:
-        from chain_server.src.turn_support import create_request_identity
+        from chain_server.src.identity import create_request_identity
 
         first = create_request_identity(
             legacy_user_id=42,
@@ -711,7 +717,7 @@ class TestRequestIdentity:
         )
 
     def test_cart_scope_can_survive_across_conversations(self) -> None:
-        from chain_server.src.turn_support import create_request_identity
+        from chain_server.src.identity import create_request_identity
 
         first = create_request_identity(
             legacy_user_id=1,
@@ -734,7 +740,7 @@ class TestRequestIdentity:
         assert first.cart_user_id != different_cart.cart_user_id
 
     def test_missing_cart_id_keeps_cart_on_legacy_user_scope(self) -> None:
-        from chain_server.src.turn_support import create_request_identity
+        from chain_server.src.identity import create_request_identity
 
         identity = create_request_identity(
             legacy_user_id=42,
@@ -752,7 +758,6 @@ class TestCheckpointerConfiguration:
         monkeypatch: pytest.MonkeyPatch,
         store: str | None,
     ) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
         from langgraph.checkpoint.memory import MemorySaver
 
         if store is None:
@@ -760,7 +765,7 @@ class TestCheckpointerConfiguration:
         else:
             monkeypatch.setenv("CHECKPOINT_STORE", store)
 
-        assert isinstance(runtime_mod_support._build_checkpointer(), MemorySaver)
+        assert isinstance(runtime_mod._build_checkpointer(), MemorySaver)
 
     @pytest.mark.parametrize("store", ["", "redsi", "redis", "valkey"])
     def test_invalid_store_fails_fast(
@@ -768,21 +773,17 @@ class TestCheckpointerConfiguration:
         monkeypatch: pytest.MonkeyPatch,
         store: str,
     ) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
-
         monkeypatch.setenv("CHECKPOINT_STORE", store)
 
         with pytest.raises(
             ValueError,
             match="CHECKPOINT_STORE currently supports only 'memory'",
         ):
-            runtime_mod_support._build_checkpointer()
+            runtime_mod._build_checkpointer()
 
     @pytest.mark.asyncio
     async def test_async_checkpointer_deletes_turn_checkpoint(self, base_config) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         deleted_threads = []
 
         class FakeAsyncCheckpointer:
@@ -791,7 +792,7 @@ class TestCheckpointerConfiguration:
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
         runtime._checkpointer = FakeAsyncCheckpointer()
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -869,10 +870,8 @@ class TestSystemPrompt:
         base_config,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -928,13 +927,11 @@ class TestSystemPrompt:
             )
 
     def test_search_guidance_drops_unsupported_performance_language(self) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
-
-        assert runtime_mod_support._safe_shopper_guidance(
+        assert search_input_mod._safe_shopper_guidance(
             "Boots that can handle wet surfaces.",
             "boots",
         ) == "Finding boots for the shopper's request."
-        assert runtime_mod_support._safe_shopper_guidance(
+        assert search_input_mod._safe_shopper_guidance(
             "Bottoms that balance a beige top.",
             "bottoms",
         ) == "Bottoms that balance a beige top."
@@ -944,7 +941,7 @@ class TestSystemPrompt:
             "These boots can handle rain.",
             "These boots work well in wet conditions.",
         ):
-            assert runtime_mod_support._safe_shopper_guidance(
+            assert search_input_mod._safe_shopper_guidance(
                 unsafe_guidance,
                 "boots",
             ) == "Finding boots for the shopper's request."
@@ -1034,10 +1031,8 @@ class TestDeepAgentsRuntimeScopes:
         base_config,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -1122,10 +1117,8 @@ class TestDeepAgentsRuntimeScopes:
         base_config,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -1149,10 +1142,8 @@ class TestDeepAgentsRuntimeScopes:
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_diagnostics as turn_diagnostics_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -1236,10 +1227,8 @@ class TestDeepAgentsRuntimeScopes:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -1294,11 +1283,9 @@ class TestDeepAgentsRuntimeScopes:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
         memory = _install_conversation_memory_stub(runtime)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -1327,10 +1314,8 @@ class TestDeepAgentsRuntimeScopes:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -1374,12 +1359,10 @@ class TestDeepAgentsRuntimeScopes:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
         memory = _ConversationMemoryStub()
         runtime._conversation_memory = memory
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -1448,10 +1431,8 @@ class TestDeepAgentsRuntimeScopes:
         expected_response: str,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -1498,11 +1479,9 @@ class TestDeepAgentsRuntimeScopes:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
         memory = _install_conversation_memory_stub(runtime)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -1544,12 +1523,11 @@ class TestDeepAgentsRuntimeScopes:
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_diagnostics as turn_diagnostics_mod
-        from chain_server.src import turn_support as runtime_mod_support
         from langchain_core.messages import AIMessage, HumanMessage
 
         base_config.deepagents_execution_timeout_seconds = 0.01
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -1675,7 +1653,7 @@ class TestDeepAgentsRuntimeScopes:
         monkeypatch.setattr(runtime, "_execute_turn", complete_turn)
         second_output = await runtime._run_turn(
             State(user_id=111, query="next", guardrails=False),
-            runtime_mod_support.RequestIdentity(
+            identity_mod.RequestIdentity(
                 session_id="session-a",
                 conversation_id="conversation-a",
                 cart_id="cart-a",
@@ -1695,8 +1673,6 @@ class TestDeepAgentsRuntimeScopes:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
-
         cancelled = False
 
         class HangingSnapshotAgent:
@@ -1709,12 +1685,12 @@ class TestDeepAgentsRuntimeScopes:
                     raise
 
         monkeypatch.setattr(
-            runtime_mod_support,
+            runtime_mod,
             "_PARTIAL_GRAPH_SNAPSHOT_TIMEOUT_SECONDS",
             0.01,
         )
 
-        messages, error = await runtime_mod_support._partial_graph_messages(
+        messages, error = await runtime_mod._partial_graph_messages(
             HangingSnapshotAgent(),
             {"configurable": {"thread_id": "request-a"}},
         )
@@ -1731,8 +1707,6 @@ class TestDeepAgentsRuntimeScopes:
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_diagnostics as turn_diagnostics_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
 
         class FailingFinalizeMemory(_ConversationMemoryStub):
@@ -1757,7 +1731,7 @@ class TestDeepAgentsRuntimeScopes:
         runtime._checkpointer = SimpleNamespace(
             delete_thread=deleted_threads.append,
         )
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -1804,8 +1778,6 @@ class TestDeepAgentsRuntimeScopes:
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_diagnostics as turn_diagnostics_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
 
         class SupersededMemory(_ConversationMemoryStub):
@@ -1817,7 +1789,7 @@ class TestDeepAgentsRuntimeScopes:
                 )
 
         runtime._conversation_memory = SupersededMemory()
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -2160,8 +2132,6 @@ class TestDeepAgentsRuntimeRefs:
         self,
     ) -> None:
         from chain_server.src import catalog_vocabulary as catalog_vocabulary_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         capabilities = CatalogCapabilities(
             catalog_id="alternatives-test",
             retrieval_modes=["text"],
@@ -2181,7 +2151,7 @@ class TestDeepAgentsRuntimeRefs:
             ),
         )
 
-        alternatives = runtime_mod_support._selected_advertised_subcategories(
+        alternatives = search_input_mod._selected_advertised_subcategories(
             {
                 "category": ["footwear"],
                 "subcategory": ["heels", "flats", "sandals"],
@@ -2189,14 +2159,14 @@ class TestDeepAgentsRuntimeRefs:
             capabilities,
         )
         assert alternatives == ("footwear", ["heels", "flats", "sandals"])
-        assert runtime_mod_support._selected_advertised_subcategories(
+        assert search_input_mod._selected_advertised_subcategories(
             {
                 "category": ["footwear"],
                 "subcategory": ["heels"],
             },
             capabilities,
         ) is None
-        assert runtime_mod_support._selected_advertised_subcategories(
+        assert search_input_mod._selected_advertised_subcategories(
             {
                 "category": ["bags"],
                 "subcategory": ["heels", "flats"],
@@ -2232,7 +2202,7 @@ class TestDeepAgentsRuntimeRefs:
             4,
         )
 
-        assert runtime_mod_support._multi_subcategory_candidate_limit(
+        assert search_input_mod._multi_subcategory_candidate_limit(
             alternatives,
             capabilities,
             4,
@@ -2792,8 +2762,6 @@ class TestDeepAgentsRuntimeRefs:
 
     def test_taxonomy_mapping_uses_catalog_fields_and_validates_scope(self) -> None:
         from chain_server.src import catalog_vocabulary as catalog_vocabulary_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         capabilities = CatalogCapabilities(
             catalog_id="custom",
             taxonomy=CatalogTaxonomyCapabilities(
@@ -2823,20 +2791,20 @@ class TestDeepAgentsRuntimeRefs:
             ),
         )
 
-        mapped, issues = runtime_mod_support._taxonomy_hard_constraints(
+        mapped, issues = search_input_mod._taxonomy_hard_constraints(
             {"category": ["bags"], "subcategory": ["clutches"]},
             capabilities,
         )
-        inferred, inferred_issues = runtime_mod_support._taxonomy_hard_constraints(
+        inferred, inferred_issues = search_input_mod._taxonomy_hard_constraints(
             {"category": [], "subcategory": ["clutches"]},
             capabilities,
         )
-        mismatched, mismatch_issues = runtime_mod_support._taxonomy_hard_constraints(
+        mismatched, mismatch_issues = search_input_mod._taxonomy_hard_constraints(
             {"category": ["apparel"], "subcategory": ["clutches"]},
             capabilities,
         )
         partially_mismatched, partial_mismatch_issues = (
-            runtime_mod_support._taxonomy_hard_constraints(
+            search_input_mod._taxonomy_hard_constraints(
                 {
                     "category": ["bags", "apparel"],
                     "subcategory": ["clutches"],
@@ -2844,7 +2812,7 @@ class TestDeepAgentsRuntimeRefs:
                 capabilities,
             )
         )
-        normalized, normalized_issues = runtime_mod_support._taxonomy_hard_constraints(
+        normalized, normalized_issues = search_input_mod._taxonomy_hard_constraints(
             {
                 "category": ["bags", "bags"],
                 "subcategory": ["clutches", "clutches"],
@@ -2944,7 +2912,6 @@ class TestDeepAgentsRuntimeRefs:
     ) -> None:
         from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
         from chain_server.src.tools import schemas as tool_schemas_mod
 
         captured: dict[str, Any] = {}
@@ -3016,7 +2983,7 @@ class TestDeepAgentsRuntimeRefs:
                 ),
             )
         )
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -3612,8 +3579,6 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
@@ -3726,7 +3691,7 @@ class TestDeepAgentsRuntimeRefs:
         runtime._catalog_capabilities = SimpleNamespace(
             get=capabilities_for_turn
         )
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -3884,10 +3849,8 @@ class TestDeepAgentsRuntimeRefs:
     ) -> None:
         from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -3980,12 +3943,11 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
         from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
         from langgraph.errors import GraphRecursionError
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -4117,11 +4079,10 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
         from langchain_core.messages import AIMessage
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -4418,12 +4379,11 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
         from langchain_core.messages import AIMessage, ToolMessage
 
         base_config.deepagents_execution_timeout_seconds = 0.05
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -5144,11 +5104,10 @@ class TestDeepAgentsRuntimeRefs:
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
         from chain_server.src import turn_diagnostics as turn_diagnostics_mod
-        from chain_server.src import turn_support as runtime_mod_support
         from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -5324,10 +5283,8 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -5713,8 +5670,6 @@ class TestDeepAgentsRuntimeRefs:
 
     def test_scoped_no_match_is_customer_safe_and_not_search_only(self) -> None:
         from chain_server.src import grounding_evidence as grounding_evidence_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         result = {
             "messages": [
                 {"role": "user", "content": "REQUEST ID: current-request"},
@@ -5748,7 +5703,7 @@ class TestDeepAgentsRuntimeRefs:
         assert '"primary_color": ["black"]' in evidence
         assert "does not establish" in evidence
         assert "black tailored trousers" not in evidence
-        assert runtime_mod_support._has_search_only_tool_evidence(
+        assert replies_mod._has_search_only_tool_evidence(
             result,
             request_id="current-request",
         ) is False
@@ -5846,11 +5801,9 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         base_config.grounding_rewrite_enabled = False
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -6236,8 +6189,6 @@ class TestDeepAgentsRuntimeRefs:
         assert "primary color is black; primary color is red" not in response
 
     def test_explicit_product_matching_allows_specific_abbreviated_names(self) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
-
         sandals = ProductSummary(
             product_id="prod_sandals",
             display_name="Flat Strappy Black Sandals with Buckle Embellishment",
@@ -6251,7 +6202,7 @@ class TestDeepAgentsRuntimeRefs:
             display_name="Green Meadow Sweater Top",
         )
 
-        matches = runtime_mod_support._explicitly_named_products(
+        matches = cart_references_mod._explicitly_named_products(
             (
                 "Please add the Flat Strappy Sandals and Gentle Meadow Blouse "
                 "Sweater to my cart."
@@ -6293,8 +6244,6 @@ class TestDeepAgentsRuntimeRefs:
         """
 
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
@@ -6334,7 +6283,7 @@ class TestDeepAgentsRuntimeRefs:
                 catalog_id="fashion", retrieval_modes=["text"], filters={}
             )
         )
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -6419,8 +6368,6 @@ class TestDeepAgentsRuntimeRefs:
         """
 
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
@@ -6460,7 +6407,7 @@ class TestDeepAgentsRuntimeRefs:
                 catalog_id="fashion", retrieval_modes=["text"], filters={}
             )
         )
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -6527,8 +6474,6 @@ class TestDeepAgentsRuntimeRefs:
         """
 
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
@@ -6580,7 +6525,7 @@ class TestDeepAgentsRuntimeRefs:
                 catalog_id="fashion", retrieval_modes=["text"], filters={}
             )
         )
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -6669,8 +6614,6 @@ class TestDeepAgentsRuntimeRefs:
 
         from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
@@ -6758,7 +6701,7 @@ class TestDeepAgentsRuntimeRefs:
                 catalog_id="fashion", retrieval_modes=["text"], filters={}
             )
         )
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -6823,8 +6766,6 @@ class TestDeepAgentsRuntimeRefs:
 
         from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
@@ -6915,7 +6856,7 @@ class TestDeepAgentsRuntimeRefs:
                 catalog_id="fashion", retrieval_modes=["text"], filters={}
             )
         )
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -7048,8 +6989,6 @@ class TestDeepAgentsRuntimeRefs:
         """A lookup that finds nothing must not become a different product."""
 
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
@@ -7098,7 +7037,7 @@ class TestDeepAgentsRuntimeRefs:
                 catalog_id="fashion", retrieval_modes=["text"], filters={}
             )
         )
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -7148,8 +7087,6 @@ class TestDeepAgentsRuntimeRefs:
         """Relaxing the budget for a miss must not relax it for a hit."""
 
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
@@ -7189,7 +7126,7 @@ class TestDeepAgentsRuntimeRefs:
                 catalog_id="fashion", retrieval_modes=["text"], filters={}
             )
         )
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -7233,8 +7170,6 @@ class TestDeepAgentsRuntimeRefs:
     ) -> None:
         from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
@@ -7286,7 +7221,7 @@ class TestDeepAgentsRuntimeRefs:
                 filters={},
             )
         )
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -7686,8 +7621,6 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         base_config.max_product_detail_reads_per_turn = 4
         captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
@@ -7733,7 +7666,7 @@ class TestDeepAgentsRuntimeRefs:
                 filters={},
             )
         )
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -7820,8 +7753,6 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         base_config.max_product_detail_reads_per_turn = 1
         captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
@@ -7883,7 +7814,7 @@ class TestDeepAgentsRuntimeRefs:
                 filters={},
             )
         )
-        identity = runtime_mod_support.RequestIdentity(
+        identity = identity_mod.RequestIdentity(
             session_id="session-a",
             conversation_id="conversation-a",
             cart_id="cart-a",
@@ -7916,8 +7847,6 @@ class TestDeepAgentsRuntimeRefs:
         assert "STOP_TOOL_USE: Product-detail read limit reached" in second
 
     def test_format_product_exposes_product_ref(self) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
-
         product = ProductSummary(
             product_id="prod_456",
             display_name="Leather Bag",
@@ -7928,7 +7857,7 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import catalog_format
 
         formatted = catalog_format._format_product_record(
-            runtime_mod_support._search_product_record(product)
+            product_records_mod._search_product_record(product)
         )
 
         assert "PRODUCT_REF: prod_456" in formatted
@@ -7941,8 +7870,6 @@ class TestDeepAgentsRuntimeRefs:
         assert "IMAGE_URL" not in formatted
 
     def test_format_product_details_warns_against_performance_overclaims(self) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
-
         product = ProductDetail(
             product_id="prod_789",
             display_name="Outdoor Sandal",
@@ -7954,7 +7881,7 @@ class TestDeepAgentsRuntimeRefs:
         from chain_server.src import catalog_format
 
         formatted = catalog_format._format_product_detail_record(
-            runtime_mod_support._product_detail_record(product)
+            product_records_mod._product_detail_record(product)
         )
 
         assert "PRODUCT_DETAIL_GROUNDING_NOTE" in formatted
@@ -8022,8 +7949,6 @@ class TestDeepAgentsRuntimeRefs:
         ]
 
     def test_cart_line_lookup_uses_exact_cart_line_id(self) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
-
         cart = Cart(
             contents=[
                 {"cart_line_id": "line_1", "item": "Silk Dress", "amount": 1},
@@ -8031,8 +7956,8 @@ class TestDeepAgentsRuntimeRefs:
             ]
         )
 
-        assert runtime_mod_support._cart_line_by_id("line_2", cart) == cart.contents[1]
-        assert runtime_mod_support._cart_line_by_id("Silk Dress", cart) is None
+        assert cart_references_mod._cart_line_by_id("line_2", cart) == cart.contents[1]
+        assert cart_references_mod._cart_line_by_id("Silk Dress", cart) is None
 
 
 class TestValidation:
@@ -8058,7 +7983,7 @@ class TestCommittedMutationReceipt:
         from chain_server.src import deepagents_runtime as runtime_mod
 
         cart = runtime_mod.Cart(contents=[{"item": "Work Bag", "amount": 1}])
-        receipt = turn_support._committed_effect_receipt(
+        receipt = replies_mod._committed_effect_receipt(
             [
                 {
                     "operation": "added to cart",
@@ -8077,7 +8002,7 @@ class TestCommittedMutationReceipt:
 
     def test_receipt_survives_an_unreadable_cart(self) -> None:
 
-        receipt = turn_support._committed_effect_receipt(
+        receipt = replies_mod._committed_effect_receipt(
             [{"operation": "removed from cart", "idempotency_key": "k", "cart_line_id": "line-9"}],
             None,
         )
@@ -8160,7 +8085,7 @@ class TestCommittedMutationSurvivesTurnFailure:
         runtime_mod = self._runtime()
         cart = runtime_mod.Cart(contents=[{"item": "Work Bag", "amount": 1}])
 
-        receipt = turn_support._committed_effect_receipt(
+        receipt = replies_mod._committed_effect_receipt(
             [
                 {
                     "operation": "removed from cart",
@@ -8195,8 +8120,6 @@ class TestEvidenceFreeTurnsStillGetEdited:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import turn_support as runtime_mod_support
-
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
         seen: dict[str, object] = {}
 
@@ -8207,7 +8130,7 @@ class TestEvidenceFreeTurnsStillGetEdited:
 
         monkeypatch.setattr(runtime, "_create_chat_model", lambda **_: RecordingEditor())
         state = State(user_id=111, query="what can you do?")
-        assert runtime_mod_support._has_grounding_authority(state, "") is False
+        assert replies_mod._has_grounding_authority(state, "") is False
 
         response = await runtime._rewrite_response_for_grounding(
             state,
@@ -8262,8 +8185,7 @@ class TestGroundingGateCountsHydratedLanes:
     """Every turn hydrates memory lanes; the gate must not discard them."""
 
     def _gate(self):
-        from chain_server.src import turn_support as runtime_mod_support
-        return runtime_mod_support._has_grounding_authority
+        return replies_mod._has_grounding_authority
 
     def _state(self, **kw):
         from chain_server.src.agenttypes import State
@@ -8332,9 +8254,7 @@ class TestUnenforceableRequirementIsModelOwned:
         assert not hasattr(runtime_mod, "_unsupported_requirement_response")
 
     def test_tool_outcome_states_the_fact_and_forbids_refusing(self) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
-
-        message = runtime_mod_support._unsupported_requirement_message(["matte"])
+        message = search_input_mod._unsupported_requirement_message(["matte"])
 
         assert "not an advertised hard filter" in message
         assert "Do not refuse the request." in message
@@ -8342,9 +8262,7 @@ class TestUnenforceableRequirementIsModelOwned:
         assert "Ask the shopper whether to treat it as a preference." not in message
 
     def test_outcome_defers_to_what_the_shopper_already_said(self) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
-
-        message = runtime_mod_support._unsupported_requirement_message(["matte"])
+        message = search_input_mod._unsupported_requirement_message(["matte"])
 
         assert "already told you" in message
 

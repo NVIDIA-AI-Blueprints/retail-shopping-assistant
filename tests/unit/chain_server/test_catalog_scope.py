@@ -59,13 +59,13 @@ class TestDetailReadRedundancy:
         return SimpleNamespace(category=category, attributes=attributes)
 
     def test_full_evidence_makes_the_read_redundant(self) -> None:
-        from chain_server.src.turn_support import _detail_fields_already_held
+        from chain_server.src.product_records import _detail_fields_already_held
 
         product = self._product("bags", {"bag_closure": "zip", "structure": "soft"})
         assert _detail_fields_already_held(product, self._capabilities())
 
     def test_a_subcategory_is_matched_to_its_category(self) -> None:
-        from chain_server.src.turn_support import _detail_fields_already_held
+        from chain_server.src.product_records import _detail_fields_already_held
 
         product = self._product(
             "tote_bags", {"bag_closure": "zip", "structure": "soft"}
@@ -75,7 +75,7 @@ class TestDetailReadRedundancy:
     def test_one_missing_field_still_reads(self) -> None:
         """Any gap must fetch. This is the property that keeps it safe."""
 
-        from chain_server.src.turn_support import _detail_fields_already_held
+        from chain_server.src.product_records import _detail_fields_already_held
 
         product = self._product("bags", {"bag_closure": "zip"})
         assert not _detail_fields_already_held(product, self._capabilities())
@@ -83,7 +83,7 @@ class TestDetailReadRedundancy:
     def test_a_product_recovered_from_history_still_reads(self) -> None:
         """The historical index stores identity only, so it has no attributes."""
 
-        from chain_server.src.turn_support import _detail_fields_already_held
+        from chain_server.src.product_records import _detail_fields_already_held
 
         assert not _detail_fields_already_held(
             self._product("bags", {}), self._capabilities()
@@ -92,7 +92,7 @@ class TestDetailReadRedundancy:
     def test_an_unknown_category_still_reads(self) -> None:
         """Never skip a read for a product whose category cannot be checked."""
 
-        from chain_server.src.turn_support import _detail_fields_already_held
+        from chain_server.src.product_records import _detail_fields_already_held
 
         product = self._product("cookware", {"bag_closure": "zip"})
         assert not _detail_fields_already_held(product, self._capabilities())

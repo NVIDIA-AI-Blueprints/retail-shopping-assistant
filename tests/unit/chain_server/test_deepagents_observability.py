@@ -16,6 +16,7 @@ from chain_server.src.agenttypes import State
 from chain_server.src.deepagents_runtime import (
     DeepAgentsRuntime,
 )
+from chain_server.src.identity import RequestIdentity
 from chain_server.src.tools.evidence import SearchEvidence
 from chain_server.src.tools.loop_control import (
     SEARCH_VALIDATION_ERROR_PREFIX,
@@ -30,9 +31,6 @@ from chain_server.src.turn_diagnostics import (
     _REJECTED_CATALOG_SEARCH_RESPONSE,
     _collect_agent_diagnostics,
     _rejected_catalog_search_response,
-)
-from chain_server.src.turn_support import (
-    RequestIdentity,
 )
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 

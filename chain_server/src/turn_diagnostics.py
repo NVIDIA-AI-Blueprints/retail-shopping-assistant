@@ -26,6 +26,7 @@ from .message_shape import (
     _tool_results_by_call_id,
     _value,
 )
+from .search_input import _UNSUPPORTED_SEARCH_MODE_MESSAGE
 from .tools.evidence import (
     detail_evidence_of,
     evidence_of,
@@ -44,7 +45,6 @@ from .tools.skill_gate import (
     SKILL_ACTIVATION_TOOL_NAME,
     SKILL_TOOL_NOT_GRANTED,
 )
-from .turn_support import _UNSUPPORTED_SEARCH_MODE_MESSAGE
 
 logger = logging.getLogger(__name__)
 

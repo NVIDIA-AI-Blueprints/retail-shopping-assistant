@@ -29,18 +29,8 @@ from .cart_format import (
     _format_size_change_result,
     _format_update_cart_result,
 )
-from .commerce_tools import (
-    add_cart_item,
-    get_product_details,
-    remove_cart_item,
-    update_cart_item,
-)
-from .control_signals import EFFECTS_KEY, committed_effect
-from .conversation_products import ConversationProductsError, ProductReferenceDescriptor
-from .turn_scope import TurnScope
-from .turn_support import (
+from .cart_references import (
     AddCartItemsToolItemInput,
-    RequestIdentity,
     _cart_add_scope_failures,
     _cart_line_by_id,
     _cart_product_choice_note,
@@ -50,10 +40,19 @@ from .turn_support import (
     _most_recently_shown,
     _normalize_cart_add_tool_items,
     _one_size_note,
-    _product_detail_failure_message,
-    _same_product_display_name,
     _shopper_words_this_conversation,
 )
+from .commerce_tools import (
+    add_cart_item,
+    get_product_details,
+    remove_cart_item,
+    update_cart_item,
+)
+from .control_signals import EFFECTS_KEY, committed_effect
+from .conversation_products import ConversationProductsError, ProductReferenceDescriptor
+from .identity import RequestIdentity
+from .product_records import _product_detail_failure_message, _same_product_display_name
+from .turn_scope import TurnScope
 
 if TYPE_CHECKING:
     from .deepagents_runtime import DeepAgentsRuntime

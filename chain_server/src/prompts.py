@@ -100,3 +100,53 @@ def _format_media_summary(media: list[dict[str, Any]]) -> str:
         media_type = str(item.get("type") or "unknown")
         counts[media_type] = counts.get(media_type, 0) + 1
     return ", ".join(f"{count} {media_type}(s)" for media_type, count in sorted(counts.items()))
+
+
+def format_most_recent_subject(state: Any) -> str:
+    """Name what the conversation is about now, so a pronoun has an anchor.
+
+    "Add the Jade Suede Heels in a 6", then "actually make those a 7", resolved
+    to a dress from eight turns earlier. Nothing was missing: the heels were
+    the line directly above the pronoun in the conversation lane, the newest
+    showing in the index, and a line in the cart. The model had to derive the
+    referent from three places and derived it wrongly.
+
+    So the runtime derives it and states what it got. This is not a fourth copy
+    of the conversation -- it is the resolution of it, which is the part that
+    was going wrong. What just happened is state, not interpretation.
+
+    Most recent first: what the last turn did to the cart, then what it showed.
+    Silent when there is neither, so an opening turn gains nothing to ignore.
+    """
+
+    # Only the newest showing for now. What the previous turn did to the cart
+    # is computed at the end of a turn for the grounding editor and never
+    # carried into the next one, so there is no field to read here yet -- and a
+    # line that is always empty is dead code pretending to be a feature.
+    lines: list[str] = []
+    sets = [
+        entry
+        for entry in (getattr(state, "historical_product_sets", None) or [])
+        if isinstance(entry, dict) and isinstance(entry.get("products"), list)
+    ]
+    if sets:
+        newest = max(sets, key=lambda entry: entry.get("turn_seq") or 0)
+        shown = [
+            str(item.get("name"))
+            for item in newest["products"][:4]
+            if isinstance(item, dict) and item.get("name")
+        ]
+        if shown:
+            lines.append(
+                f"last shown (turn {newest.get('turn_seq')}): " + "; ".join(shown)
+            )
+    if not lines:
+        return ""
+    body = "\n".join(f"- {line}" for line in lines)
+    return (
+        "MOST RECENT SUBJECT (what the conversation is about right now):\n"
+        f"{body}\n"
+        'A bare pronoun -- "those", "it", "them", "that one" -- means something '
+        "here unless the shopper names another product. Resolve it here first, "
+        "and look further back only if nothing here fits."
+    )

@@ -17,7 +17,7 @@ from __future__ import annotations
 import pathlib
 from types import SimpleNamespace
 
-from chain_server.src.turn_support import (
+from chain_server.src.cart_references import (
     _cart_size_issue,
     _normalize_cart_add_tool_items,
     _one_size_note,
@@ -129,7 +129,7 @@ def test_a_zero_result_search_is_told_to_relax_and_show() -> None:
     got a form to fill in.
     """
 
-    from chain_server.src.turn_support import _SEARCH_NO_MATCH_GROUNDING_NOTE
+    from chain_server.src.catalog_format import _SEARCH_NO_MATCH_GROUNDING_NOTE
 
     note = _SEARCH_NO_MATCH_GROUNDING_NOTE
 
@@ -328,9 +328,7 @@ class TestProductProvenance:
         return _Evidence()
 
     def _issue(self, **kw):
-        from chain_server.src.turn_support import (
-            _cart_product_choice_note,
-        )
+        from chain_server.src.cart_references import _cart_product_choice_note
 
         return _cart_product_choice_note(
             kw.get("product") or self._product(),
@@ -553,7 +551,7 @@ class TestAtomicRefusalSaysWhatWasReady:
 
         from types import SimpleNamespace
 
-        from chain_server.src.turn_support import _cart_add_scope_failures
+        from chain_server.src.cart_references import _cart_add_scope_failures
 
         dress = SimpleNamespace(
             product_id="ref_dress", display_name="Office A-line Dress"
@@ -610,9 +608,7 @@ class TestTheSizeNarrowsWhatWasOnScreen:
         ]
 
     def _only_one(self, product, size, shown):
-        from chain_server.src.turn_support import (
-            _the_only_one_on_screen_in_that_size,
-        )
+        from chain_server.src.cart_references import _the_only_one_on_screen_in_that_size
 
         return _the_only_one_on_screen_in_that_size(product, size, shown)
 
@@ -678,7 +674,7 @@ class TestTheSizeNarrowsWhatWasOnScreen:
 
         from types import SimpleNamespace
 
-        from chain_server.src.turn_support import _cart_product_choice_note
+        from chain_server.src.cart_references import _cart_product_choice_note
 
         class _Evidence:
             def values(self_inner):

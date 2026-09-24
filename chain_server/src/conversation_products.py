@@ -20,7 +20,7 @@ from pydantic import (
 )
 from shared.commerce_contracts import ProductSummary
 
-from .turn_support import _a_list_written_as_json_text
+from .tools.schemas import _a_list_written_as_json_text
 
 _DEFAULT_TIMEOUT_SECONDS = 10.0
 _DEFAULT_INDEX_MAX_CHARS = 12_000

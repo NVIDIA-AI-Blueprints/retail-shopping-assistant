@@ -23,6 +23,10 @@ from typing import Any
 import pytest
 from chain_server.src import catalog_search as catalog_search_mod
 from chain_server.src.agenttypes import State
+from chain_server.src.audience_events import (
+    _audience_assumption_events,
+    _turn_audience_events,
+)
 from chain_server.src.catalog_search import (
     SearchContext,
     _assumed_audience,
@@ -38,10 +42,6 @@ from chain_server.src.tools.schemas import (
     _search_catalog_tool_input_model,
 )
 from chain_server.src.turn_scope import TurnScope
-from chain_server.src.turn_support import (
-    _audience_assumption_events,
-    _turn_audience_events,
-)
 from shared.commerce_contracts import (
     CatalogCapabilities,
     CatalogFilterCapability,

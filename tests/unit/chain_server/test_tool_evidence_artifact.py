@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 from chain_server.src import catalog_format
 from chain_server.src import grounding_evidence as grounding_evidence_mod
-from chain_server.src import turn_support as runtime_mod_support
+from chain_server.src import product_records as product_records_mod
 from chain_server.src.tools.evidence import (
     DETAIL_EVIDENCE_KEY,
     EVIDENCE_KEY,
@@ -39,13 +39,13 @@ from shared.commerce_contracts import Money, ProductDetail, ProductSummary
 # used to also carry a wrapper for each, which only these tests called.
 def _rendered_product(product):
     return catalog_format._format_product_record(
-        runtime_mod_support._search_product_record(product)
+        product_records_mod._search_product_record(product)
     )
 
 
 def _rendered_product_details(detail):
     return catalog_format._format_product_detail_record(
-        runtime_mod_support._product_detail_record(detail)
+        product_records_mod._product_detail_record(detail)
     )
 
 
@@ -300,7 +300,7 @@ def test_search_results_carry_the_attributes_the_catalog_confirmed() -> None:
         },
     )
 
-    record = runtime_mod_support._search_product_record(product)
+    record = product_records_mod._search_product_record(product)
 
     assert record["attributes"] == {
         "composition": "100% satin",

@@ -26,11 +26,8 @@ from ..conversation_products import (
     format_historical_product_index,
     format_product_resolution,
 )
-from ..turn_scope import TurnScope
-from ..turn_support import (
-    _ONE_SIZE,
-    RequestIdentity,
-    _advertised_sizes,
+from ..identity import RequestIdentity
+from ..product_records import (
     _append_product_results,
     _detail_fields_already_held,
     _product_detail_failure_message,
@@ -38,6 +35,8 @@ from ..turn_support import (
     _same_product_display_name,
     _where_a_product_was_already_shown,
 )
+from ..sizes import _ONE_SIZE, _advertised_sizes
+from ..turn_scope import TurnScope
 from .evidence import ProductDetailEvidence
 from .schemas import (
     _search_catalog_scopes_input_model,

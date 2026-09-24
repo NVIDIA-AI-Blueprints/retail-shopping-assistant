@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 from chain_server.src import catalog_search
+from chain_server.src import identity as identity_mod
 from chain_server.src.agenttypes import State
 from chain_server.src.tools import loop_control as tool_loop_control
 from shared.commerce_contracts import (
@@ -158,8 +159,6 @@ def a_turn(base_config, monkeypatch: pytest.MonkeyPatch):
     """Build the search tool for a turn, against the stub catalog above."""
 
     from chain_server.src import deepagents_runtime as runtime_mod
-    from chain_server.src import turn_support as runtime_mod_support
-
     base_config.max_catalog_searches_per_turn = 4
     captured: dict[str, Any] = {}
     executed: dict[str, Any] = {}
@@ -219,7 +218,7 @@ def a_turn(base_config, monkeypatch: pytest.MonkeyPatch):
 
     runtime = runtime_mod.DeepAgentsRuntime(base_config)
     runtime._catalog_capabilities = SimpleNamespace(get=lambda **_: _capabilities())
-    identity = runtime_mod_support.RequestIdentity(
+    identity = identity_mod.RequestIdentity(
         session_id="session-a",
         conversation_id="conversation-a",
         cart_id="cart-a",

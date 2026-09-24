@@ -18,6 +18,7 @@ from chain_server.src.deepagents_runtime import (
     DeepAgentsRuntime,
 )
 from chain_server.src.fencing import MEDIA_FENCE
+from chain_server.src.identity import RequestIdentity
 from chain_server.src.tools.loop_control import SERVER_CATALOG_CLARIFICATION
 from chain_server.src.tools.skill_gate import (
     SKILL_ACTIVATION_COMPLETE,
@@ -28,10 +29,7 @@ from chain_server.src.tools.skill_gate import (
     ShopperSkillActivationMiddleware,
     selected_skill_names_for_turn,
 )
-from chain_server.src.turn_support import (
-    RequestIdentity,
-    _skill_activation_input_model,
-)
+from chain_server.src.tools.skill_input import _skill_activation_input_model
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
@@ -356,7 +354,7 @@ def test_enforcement_matches_the_shipped_frontmatter() -> None:
     """
 
     from chain_server.src.tools.policy import load_shopper_skill_registry
-    from chain_server.src.turn_support import primary_skills_by_group
+    from chain_server.src.tools.skill_input import primary_skills_by_group
 
     registry = load_shopper_skill_registry(
         Path(__file__).resolve().parents[3] / "chain_server" / "skills"

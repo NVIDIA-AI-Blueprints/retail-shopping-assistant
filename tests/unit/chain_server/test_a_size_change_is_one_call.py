@@ -25,6 +25,7 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
+from chain_server.src import identity as identity_mod
 from chain_server.src.agenttypes import Cart, State
 from shared.commerce_contracts import (
     CartLine,
@@ -109,8 +110,6 @@ def cart_tools(base_config, monkeypatch: pytest.MonkeyPatch):
 
     from chain_server.src import cart_operations as cart_ops_mod
     from chain_server.src import deepagents_runtime as runtime_mod
-    from chain_server.src import turn_support as runtime_mod_support
-
     captured: dict[str, Any] = {}
     deepagents_mod = ModuleType("deepagents")
     tools_mod = ModuleType("langchain_core.tools")
@@ -142,7 +141,7 @@ def cart_tools(base_config, monkeypatch: pytest.MonkeyPatch):
 
     runtime = runtime_mod.DeepAgentsRuntime(base_config)
     runtime._conversation_products = SimpleNamespace(resolve=lambda *_: None)
-    identity = runtime_mod_support.RequestIdentity(
+    identity = identity_mod.RequestIdentity(
         session_id="session-a",
         conversation_id="conversation-a",
         cart_id="cart-a",

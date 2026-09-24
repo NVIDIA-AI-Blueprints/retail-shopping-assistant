@@ -16,6 +16,8 @@ from typing import Any
 
 from shared.commerce_contracts import ProductSummary
 
+from .tools.loop_control import SEARCH_BUDGET_EXHAUSTED_PREFIX
+
 _SEARCH_FILTER_EVIDENCE_PREFIX = "SEARCH_FILTER_EVIDENCE:"
 
 
@@ -455,3 +457,52 @@ def format_catalog_shape(capabilities: Any) -> str:
             "show the shopper the thing."
         )
     return "\n".join(header + lines)
+
+
+_SEARCH_RESULT_GROUNDING_NOTE = (
+    "SEARCH_RESULT_GROUNDING_NOTE: Use search results for candidate names, prices, "
+    "categories, image availability, confirmed filters listed in "
+    "SEARCH_FILTER_EVIDENCE, advertised taxonomy listed in "
+    "SEARCH_TAXONOMY_EVIDENCE, and modest styling fit only. Treat product names as "
+    "display names, not attribute evidence. Do not infer or group-claim "
+    "length, color, print, material, care, construction, fit, comfort, weather, "
+    "grass, gravel, or best-in-category performance from names or search snippets. "
+    "Do not override a confirmed filter based on words in a display name."
+)
+
+
+_SEARCH_NO_MATCH_GROUNDING_NOTE = (
+    "SEARCH_NO_MATCH_GROUNDING_NOTE: No product matched all of these filters "
+    "together. That says nothing about products outside this search.\n"
+    "- Drop one filter, search again, and tell the shopper which one you "
+    "dropped. Do not answer with a list of things you could search for.\n"
+    "- Never drop a size: a garment in the wrong size is not an alternative. "
+    "If nothing comes in that size, say so and name the nearest one.\n"
+    "- If the shopper asked for only this, drop nothing: say there is none."
+)
+
+
+#: The last line of a zero-result reply. It names this search's own filters:
+#: the general rule above sat before four blocks of evidence echoing the call,
+#: and replayed, the model sent the same search back 3 of 3 times; with this
+#: line after the evidence it dropped a filter 3 of 3.
+_SEARCH_NO_MATCH_NEXT_STEP = (
+    "NEXT STEP: search again without one of these filters: {droppable}. "
+    "Do not send the same search again."
+)
+
+
+_SEARCH_SCOPE_COMPLETE_NOTE = (
+    "SEARCH_SCOPE_COMPLETE: The shopper's current request can now be answered "
+    "from this search and existing turn evidence. Answer now. Do not search an "
+    "adjacent category or substitute merely because search budget remains. Use "
+    "the direct antecedent from recent discussion as the styling anchor; an item "
+    "does not need to be in the cart to receive styling advice."
+)
+
+
+_SEARCH_BUDGET_EXHAUSTED_NOTE = (
+    f"{SEARCH_BUDGET_EXHAUSTED_PREFIX} No additional catalog searches are "
+    "available this turn. Continue with any requested non-search action, or "
+    "answer honestly from the grounded products already returned."
+)

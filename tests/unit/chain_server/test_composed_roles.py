@@ -19,10 +19,10 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from chain_server.src import audience_events as audience_events_mod
 from chain_server.src import catalog_search as catalog_search_mod
 from chain_server.src import grounding_evidence as grounding_evidence_mod
 from chain_server.src import search_replies as search_replies_mod
-from chain_server.src import turn_support
 from chain_server.src.agenttypes import State
 from chain_server.src.catalog_search import SearchContext, search_catalog
 from chain_server.src.control_signals import REJECTIONS_KEY
@@ -573,7 +573,7 @@ def test_a_declared_audience_becomes_an_event_the_next_turn_inherits() -> None:
     )
     identity = SimpleNamespace(request_id="req-1")
 
-    events = turn_support._wearer_audience_events(
+    events = audience_events_mod._wearer_audience_events(
         state, identity, field_name="target_audience"
     )
 
@@ -598,7 +598,7 @@ def test_a_turn_that_declared_nothing_leaves_the_wearer_alone() -> None:
         }
     )
 
-    events = turn_support._wearer_audience_events(
+    events = audience_events_mod._wearer_audience_events(
         state, SimpleNamespace(request_id="req-2"), field_name="target_audience"
     )
 

@@ -18,7 +18,7 @@ from chain_server.src.deepagents_runtime import (
     _turn_span,
     _turn_trace_session,
 )
-from chain_server.src.turn_support import RequestIdentity
+from chain_server.src.identity import RequestIdentity
 
 
 def _identity() -> RequestIdentity:

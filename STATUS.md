@@ -9,8 +9,13 @@ The current working tree extends the shopper-serving Deep Agent architecture:
 - the chain server is grouped by role: the runtime and its per-turn modules
   under `chain_server/src/runtime/`, and each agent tool beside its input
   model and prompt section under `chain_server/src/tools/`. The tools were
-  lifted out of `_create_agent` unchanged; the only model-facing difference is
-  that tool descriptions no longer carry their source indentation;
+  lifted out of `_create_agent` unchanged, and descriptions are rebuilt in the
+  form they are evaluated with, so what the model reads is byte-identical to
+  before. `test_what_the_model_reads.py` checks it against a checked-in
+  snapshot, whitespace included;
+- a cart change (add, remove, update) runs only on a turn whose first skill
+  selection, made from the shopper's words, granted it. Widening and
+  re-activation still grant reads mid-turn, but no longer a cart write;
 - per-turn mutable state is owned by one typed `TurnScope`
   (`chain_server/src/runtime/turn_scope.py`) rather than by `nonlocal` variables shared
   across tool closures, so a tool can now be read, tested, and relocated on its

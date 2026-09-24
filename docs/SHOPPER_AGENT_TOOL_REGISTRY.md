@@ -228,7 +228,10 @@ requests rather than executed searches. A completed activation records each inje
 `/shopper/<name>/SKILL.md` path in `skill_files_read`; a later successful
 `read_file` of a skill file is recorded there as well. Pre-activation commerce
 rejections use `skill_activation_required`; post-activation ungranted calls use
-`skill_tool_not_granted`. On graph failure, bounded
+`skill_tool_not_granted`. A mutating cart call runs only when the turn's first
+activation granted it: that selection is made from the shopper's words before
+any tool result, so a skill gained mid-turn grants reads but not a cart write,
+and the refusal tells the model the cart is unchanged. On graph failure, bounded
 current-turn assistant/tool messages are read from the checkpoint before
 cleanup. Diagnostics also include at most 24 records and 32,000 serialized
 characters of structured current-turn product evidence from successful catalog

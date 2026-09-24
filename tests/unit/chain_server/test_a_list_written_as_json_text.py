@@ -35,7 +35,7 @@ import pytest
 from chain_server.src.conversation_products import (
     ResolveConversationProductsRequest,
 )
-from chain_server.src.deepagents_runtime import AddCartItemsToolInput
+from chain_server.src.tools.cart import AddCartItemsToolInput
 from chain_server.src.turn_support import _skill_activation_input_model
 from pydantic import ValidationError
 

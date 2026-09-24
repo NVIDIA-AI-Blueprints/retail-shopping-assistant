@@ -23,9 +23,7 @@ import requests
 from langgraph.errors import GraphRecursionError
 from pydantic import (
     BaseModel,
-    Field,
     ValidationError,
-    field_validator,
 )
 from shared.commerce_contracts import (
     CatalogCapabilities,
@@ -35,11 +33,6 @@ from shared.commerce_contracts import (
 )
 
 from .agenttypes import Cart, ShopperContext, State
-from .cart_operations import (
-    add_items_to_the_cart,
-    remove_a_cart_line,
-    update_a_cart_line,
-)
 from .catalog_capabilities import (
     CatalogCapabilitiesClient,
     format_catalog_capabilities_for_prompt,
@@ -98,7 +91,6 @@ from .model_usage import (
 )
 from .response_format import (
     _format_cart,
-    _format_cart_total,
     _format_media_summary,
     _format_product_detail_record,
     _format_retrieved_images,
@@ -137,6 +129,7 @@ from .tool_schemas import (
     _search_catalog_scopes_input_model,
     _search_catalog_tool_input_model,
 )
+from .tools.cart import build_cart_tools
 from .tools.store import build_store_tools
 from .tools.weather import build_weather_tool, forecast_prompt_section
 from .turn_diagnostics import (
@@ -149,9 +142,7 @@ from .turn_diagnostics import (
 from .turn_scope import TurnScope
 from .turn_support import (
     _ONE_SIZE,
-    AddCartItemsToolItemInput,
     RequestIdentity,
-    _a_list_written_as_json_text,
     _advertised_sizes,
     _append_product_results,
     _build_checkpointer,
@@ -710,143 +701,6 @@ _REFERENCE_WRAPPERS = "<>[]{}\"'`"
 #: thought: the median turn costs ten seconds end to end.
 _MODEL_REQUEST_TIMEOUT_CEILING_SECONDS = 40.0
 _MAX_NAME_LOOKUPS = 2
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-class AddCartItemsToolInput(BaseModel):
-    _accept_items_as_text = field_validator("items", mode="before")(
-        _a_list_written_as_json_text
-    )
-
-    items: list[AddCartItemsToolItemInput] = Field(
-        ...,
-        min_length=1,
-        description=(
-            "One or more products to add. Each must use a PRODUCT_REF "
-            "established by current-turn search or historical-product resolution."
-        ),
-    )
-
-
-class _UpdateCartItemsInput(BaseModel):
-    cart_line_id: str = Field(
-        description="CART_LINE_ID from get_cart_tool. Not the product name."
-    )
-    quantity: int = Field(
-        ge=0,
-        description=(
-            "Total quantity to end up with; with `size`, in the new size. "
-            "Removing a line is remove_cart_item_tool, not quantity 0."
-        ),
-    )
-    size: str | None = Field(
-        default=None,
-        description=(
-            "The size the shopper now wants for this line. Omit for a "
-            "quantity change. A size this product is not sold in is refused, "
-            "naming the ones it is."
-        ),
-    )
-
-    @field_validator("size", mode="before")
-    @classmethod
-    def _a_number_is_a_size_too(cls, value: Any) -> Any:
-        """Take a size written as a number, so the change can be reached.
-
-        This field is how "change it to a 7" is asked for, and a model that
-        sent `size: 7` rather than `size: "7"` never got that far -- pydantic
-        refused the call for the type, three times running, with a validation
-        error that says nothing about carts. It then gave up, sent the quantity
-        alone, and told the shopper it had updated a dress it had never been
-        asked about.
-
-        Sizes are "2" and "onesize" in this catalog, so a bare number is the
-        obvious slip. Coercing it costs nothing and delivers the guidance the
-        field was declared for.
-        """
-
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return str(int(value) if float(value).is_integer() else value)
-        return value
 
 
 class _DescribeCatalogInput(BaseModel):
@@ -1711,22 +1565,13 @@ class DeepAgentsRuntime:
                 _search_catalog_impl(scopes, not_covered)
             )
 
-        @tool(return_direct=False)
-        def get_cart_tool() -> str:
-            """Read the current cart. Use before cart mutations to get
-            CART_LINE_ID values, or when the shopper asks what is in their cart.
-            Do NOT call again if the cart was already read this turn and no
-            mutation has occurred since.
-            """
-
-            cart = self._read_cart(identity.cart_user_id)
-            state.cart = cart
-            self._append_product_images(
-                scope.retrieved,
-                cart,
-                scope.product_evidence.values(),
-            )
-            return _format_cart(cart)
+        (
+            get_cart_tool,
+            add_cart_items_tool,
+            remove_cart_item_tool,
+            update_cart_items_tool,
+            view_cart_total_tool,
+        ) = build_cart_tools(self, state, identity, scope)
 
         def _get_product_details_impl(product_ref: str):
             """Get detailed facts (material, care, dimensions, closures) for a
@@ -2161,62 +2006,6 @@ class DeepAgentsRuntime:
                 _resolve_conversation_products_impl(references)
             )
 
-
-        @tool(
-            args_schema=AddCartItemsToolInput,
-            return_direct=False,
-            response_format="content_and_artifact",
-        )
-        def add_cart_items_tool(items: list[AddCartItemsToolItemInput]):
-            """Add products to the cart. Use ONLY on explicit shopper intent to
-            add, buy, or put items in the cart. Requires PRODUCT_REF values from
-            current-turn search or historical-product resolution — not names.
-            Call once with every item the shopper asked to add, not once
-            per item. "All items" means the ones they asked for, not
-            everything in play this turn: "add the black one in a 2 and
-            show me a clutch to go with it" adds the dress and shows the
-            clutch. A product the shopper asked to see is not an item.
-            """
-
-            return normalize_tool_result(add_items_to_the_cart(self, state, identity, scope, items))
-
-
-        @tool(return_direct=False, response_format="content_and_artifact")
-        def remove_cart_item_tool(cart_line_id: str, quantity: int = 1):
-            """Remove a cart line. Use ONLY on explicit shopper intent to remove
-            an item. Requires CART_LINE_ID from get_cart_tool — do not guess.
-            Use update_cart_items_tool to change quantity instead of removing
-            and re-adding.
-            """
-
-            return normalize_tool_result(
-                remove_a_cart_line(self, state, identity, scope, cart_line_id, quantity)
-            )
-
-
-
-        @tool(
-            args_schema=_UpdateCartItemsInput,
-            return_direct=False,
-            response_format="content_and_artifact",
-        )
-        def update_cart_items_tool(
-            cart_line_id: str,
-            quantity: int,
-            size: str | None = None,
-        ):
-            """Change one cart line: its quantity, its size, or both. One call
-            moves the line, so never add a size and remove a line to change
-            one. Moving replaces: the line stops holding the size it held. A
-            size the shopper wants as well as that one is a second line, so
-            that is add_cart_items_tool and not this.
-            Requires CART_LINE_ID from get_cart_tool.
-            """
-
-            return normalize_tool_result(
-                update_a_cart_line(self, state, identity, scope, cart_line_id, quantity, size)
-            )
-
         @tool(args_schema=_DescribeCatalogInput, return_direct=False)
         def describe_catalog_tool() -> str:
             """What this shop holds: how many products, which categories, the
@@ -2240,22 +2029,6 @@ class DeepAgentsRuntime:
         ) = build_store_tools(scope)
 
         get_weather_forecast_tool = build_weather_tool(self, state, scope)
-
-        @tool(return_direct=False)
-        def view_cart_total_tool() -> str:
-            """Compute the cart subtotal. Use for budget checks or when the
-            shopper asks for the total. Does not include tax or shipping. Use
-            get_cart_tool for line contents.
-            """
-
-            cart = self._read_cart(identity.cart_user_id)
-            state.cart = cart
-            self._append_product_images(
-                scope.retrieved,
-                cart,
-                scope.product_evidence.values(),
-            )
-            return _format_cart_total(cart)
 
         shopping_tools = [
             search_catalog_tool,

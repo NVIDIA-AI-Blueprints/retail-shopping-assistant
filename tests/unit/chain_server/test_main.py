@@ -39,6 +39,7 @@ from chain_server.src.shopper_profiles import (
     ShopperProfile,
     ShopperProfilesError,
 )
+from chain_server.src.tools import cart as cart_tools
 from chain_server.src.tools import store as store_tools
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -3128,11 +3129,11 @@ class TestDeepAgentsRuntimeRefs:
         ]["search_mode"]["anyOf"]
         assert (
             tools_by_name["add_cart_items_tool"].args_schema
-            is runtime_mod.AddCartItemsToolInput
+            is cart_tools.AddCartItemsToolInput
         )
         assert (
             tools_by_name["update_cart_items_tool"].args_schema
-            is runtime_mod._UpdateCartItemsInput
+            is cart_tools._UpdateCartItemsInput
         )
         assert (
             tools_by_name["get_store_policy_tool"].args_schema

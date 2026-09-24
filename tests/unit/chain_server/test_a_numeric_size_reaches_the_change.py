@@ -19,7 +19,7 @@ slip, and coercing it costs nothing.
 from __future__ import annotations
 
 import pytest
-from chain_server.src.deepagents_runtime import _UpdateCartItemsInput
+from chain_server.src.tools.cart import _UpdateCartItemsInput
 from pydantic import ValidationError
 
 

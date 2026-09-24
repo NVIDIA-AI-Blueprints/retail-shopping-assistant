@@ -16,6 +16,10 @@ The current working tree extends the shopper-serving Deep Agent architecture:
 - a cart change (add, remove, update) runs only on a turn whose first skill
   selection, made from the shopper's words, granted it. Widening and
   re-activation still grant reads mid-turn, but no longer a cart write;
+- a cart add is checked against the cart: a product and size already held is
+  not written again (more of it is a quantity, set by the update tool), and a
+  second size beside one already held is added with the old line named, so a
+  size change sent as an add can be finished before the reply;
 - per-turn mutable state is owned by one typed `TurnScope`
   (`chain_server/src/runtime/turn_scope.py`) rather than by `nonlocal` variables shared
   across tool closures, so a tool can now be read, tested, and relocated on its

@@ -7286,21 +7286,16 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_read_cart",
+            # Nothing the test adds: an add of a line the cart already holds
+            # is answered without writing, which is not what this covers.
             lambda user_id: Cart(
                 contents=[
                     {
-                        "cart_line_id": "line_flats",
-                        "product_id": "prod_flats",
-                        "item": "Felicity Flats",
-                        "amount": 3,
-                        "price": 49.9,
-                    },
-                    {
-                        "cart_line_id": "line_bag",
-                        "product_id": "prod_bag",
-                        "item": "Work Bag",
+                        "cart_line_id": "line_scarf",
+                        "product_id": "prod_scarf",
+                        "item": "Silk Scarf",
                         "amount": 1,
-                        "price": 59.0,
+                        "price": 29.0,
                     },
                 ]
             ),

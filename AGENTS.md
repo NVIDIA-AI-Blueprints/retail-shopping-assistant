@@ -36,13 +36,17 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 
 ## 3) Source Map (Where to Change What)
 
-- Serving agent orchestration and registered tools:
-  `chain_server/src/deepagents_runtime.py`
-- Capability-derived model-visible tool schemas, and the stateless helpers the
-  runtime calls: `chain_server/src/turn_support.py`
+- Serving agent orchestration, turn lifecycle, and agent assembly:
+  `chain_server/src/runtime/runtime.py`
+- System-prompt and grounding-editor prompt text: `chain_server/src/runtime/prompts.py`
+- Agent tools, one module per area (`catalog.py`, `cart.py`, `store.py`,
+  `weather.py`, `skills.py`): `chain_server/src/tools/`
+- Capability-derived model-visible tool schemas: `chain_server/src/tools/schemas.py`
+- Model-visible tool result text: `chain_server/src/catalog_format.py`,
+  `chain_server/src/cart_format.py`
 - Reusable model-visible catalog search rules: `chain_server/src/catalog_scope.py`
-- Shopper-skill registry, frontmatter validation, and immutable tool policy: `chain_server/src/tool_policy.py`
-- Per-turn skill activation, model-visible tool binding, and dispatch grant gate: `chain_server/src/skill_activation.py`
+- Shopper-skill registry, frontmatter validation, and immutable tool policy: `chain_server/src/tools/policy.py`
+- Per-turn skill activation, model-visible tool binding, and dispatch grant gate: `chain_server/src/tools/skill_gate.py`
 - Durable conversation-turn client and wire contracts: `chain_server/src/conversation_memory.py`
 - Representative-shopper read client: `chain_server/src/shopper_profiles.py`
 - API contract and SSE endpoint: `chain_server/src/main.py`
@@ -55,15 +59,15 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 - Weather request/result contract and Visual Crossing adapter:
   `chain_server/src/weather.py`
 - The agent's forecast tool: `get_weather_forecast_tool` in
-  `chain_server/src/deepagents_runtime.py`, granted by
+  `chain_server/src/tools/weather.py`, granted by
   `chain_server/skills/shopper/destination-weather/SKILL.md`
 - Shared request/state models: `chain_server/src/agenttypes.py`
 - The composer receives separated authority lanes. Never merge lanes with different authority into one block: dialogue carries intent, the product index carries identity, the cart is authoritative, tool evidence establishes current facts.
 - Deterministic code may establish that a catalog filter is unadvertised; it must not decide the conversational move. Never substitute a fixed refusal for the model's composed answer.
 - The grounding editor must run whenever any hydrated authority lane exists — tool evidence, historical product identity, or cart. Dialogue is intent only and never grounds a product claim.
 - Committed commerce effects ride on the tool artifact and must be consulted before any read-only failure fallback. If the graph snapshot cannot be read, warn about the cart: absence of evidence is not evidence of absence.
-- Tool-loop control outcomes are typed: tools return `(text, artifact)` via `chain_server/src/control_signals.py`, and the middleware reads the artifact. Never recover control state by parsing tool text.
-- Tool-loop control prefixes are defined once in `chain_server/src/tool_loop_control.py`. Never re-declare one as a literal elsewhere; producers render from the constant and matchers key off it.
+- Tool-loop control outcomes are typed: tools return `(text, artifact)` via `chain_server/src/runtime/control_signals.py`, and the middleware reads the artifact. Never recover control state by parsing tool text.
+- Tool-loop control prefixes are defined once in `chain_server/src/tools/loop_control.py`. Never re-declare one as a literal elsewhere; producers render from the constant and matchers key off it.
 - A catalog-search gate that turns a scope back records which gate it was, as a
   `SearchRejection` on the tool artifact, one entry per searched scope in scope
   order. Many gates share one model-visible prefix, so the text can never name
@@ -71,10 +75,10 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
   Do not add a code to a path that hands the model an instruction to continue
   the conversation: a call whose every scope carries a code is treated as a
   refused call and receives the fixed refusal response.
-- Message-shape helpers: `chain_server/src/message_shape.py`. Pure readers over LangChain messages; no runtime state.
-- Request-local turn state: `chain_server/src/turn_scope.py`. Search budgets, catalog-repair bookkeeping, product evidence, and retrieved images live on one `TurnScope` per turn, not as closure variables. New per-turn mutable state belongs there.
+- Message-shape helpers: `chain_server/src/runtime/message_shape.py`. Pure readers over LangChain messages; no runtime state.
+- Request-local turn state: `chain_server/src/runtime/turn_scope.py`. Search budgets, catalog-repair bookkeeping, product evidence, and retrieved images live on one `TurnScope` per turn, not as closure variables. New per-turn mutable state belongs there.
 - Prior turns are carried typed on `State.dialogue`. `State.context` is rendered prompt text only and must never be parsed back into state or authority. Dialogue establishes shopper intent, never product, policy, inventory, or cart facts.
-- The pre-Deep-Agents pipeline (`graph.py`, `planner.py`, `retriever.py`, `cart.py`, `chatter.py`, `summarizer.py`, `functions.py`) has been deleted. `deepagents_runtime.py` is the only chain-server serving path.
+- The pre-Deep-Agents pipeline (`graph.py`, `planner.py`, `retriever.py`, `cart.py`, `chatter.py`, `summarizer.py`, `functions.py`) has been deleted. `runtime/runtime.py` is the only chain-server serving path.
 
 - Catalog API entrypoints and request validation: `catalog_retriever/src/main.py`
 - JSONL loading/search-document construction: `catalog_retriever/src/catalog.py`

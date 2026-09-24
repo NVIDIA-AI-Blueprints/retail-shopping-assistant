@@ -115,7 +115,7 @@ The detailed contracts and implementation live in:
 - [Capability publisher](../catalog_retriever/src/capabilities.py)
 - [Catalog retriever](../catalog_retriever/src/retriever.py)
 - [Chain capability cache](../chain_server/src/catalog_capabilities.py)
-- [Model-visible catalog search schema](../chain_server/src/turn_support.py)
+- [Model-visible catalog search schema](../chain_server/src/tools/schemas.py)
 - [One catalog search, admission to rendered evidence](../chain_server/src/catalog_search.py)
 - [Reusable model-visible catalog search rules](../chain_server/src/catalog_scope.py)
 
@@ -397,13 +397,13 @@ mutation commits with its owner-scoped idempotency record, so an identical retry
 replays and conflicting key reuse cannot change the cart.
 
 The serving implementation is split across the
-[Deep Agents runtime](../chain_server/src/deepagents_runtime.py),
+[Deep Agents runtime](../chain_server/src/runtime/runtime.py),
 [conversation-memory client](../chain_server/src/conversation_memory.py),
 [conversation-product boundary](../chain_server/src/conversation_products.py),
 [shopper-profile read boundary](../chain_server/src/shopper_profiles.py),
-[shopper tool policy](../chain_server/src/tool_policy.py),
-[skill activation boundary](../chain_server/src/skill_activation.py), and
-[tool-loop controller](../chain_server/src/tool_loop_control.py). The durable
+[shopper tool policy](../chain_server/src/tools/policy.py),
+[skill activation boundary](../chain_server/src/tools/skill_gate.py), and
+[tool-loop controller](../chain_server/src/tools/loop_control.py). The durable
 SQLite boundary is implemented by the memory service's
 [conversation API](../memory_retriever/src/conversations.py),
 [shopper-profile registry](../memory_retriever/src/shopper_profiles.py),

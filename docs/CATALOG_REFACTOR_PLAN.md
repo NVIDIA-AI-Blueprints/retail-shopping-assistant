@@ -143,7 +143,7 @@ Implementation map:
 - lifecycle caching and compact prompt rendering: `chain_server/src/catalog_capabilities.py`;
 - intent validation: `chain_server/src/catalog_request.py`;
 - plan-to-request mapping: `chain_server/src/catalog_execution.py`; and
-- agent tool wiring: `chain_server/src/deepagents_runtime.py`.
+- agent tool wiring: `chain_server/src/tools/catalog.py`.
 
 ## What Changed From the Old Catalog
 

@@ -10,10 +10,10 @@ shopper-facing UI copy.
 ## Current Runtime Boundary
 
 The runtime sources of truth are
-`chain_server/src/tool_policy.py` for registry and immutable execution policy,
-`chain_server/src/skill_activation.py::ShopperSkillActivationMiddleware` for
+`chain_server/src/tools/policy.py` for registry and immutable execution policy,
+`chain_server/src/tools/skill_gate.py::ShopperSkillActivationMiddleware` for
 per-turn binding, and
-`chain_server/src/deepagents_runtime.py::DeepAgentsRuntime._create_agent` for
+`chain_server/src/runtime/runtime.py::DeepAgentsRuntime._create_agent` for
 registered wrapper wiring. The
 assistant uses a `FilesystemBackend` rooted at `chain_server/skills` in virtual
 mode. In the container image, `chain_server/Dockerfile` copies that directory
@@ -386,7 +386,7 @@ When changing the skill:
 1. Keep the frontmatter `name` stable unless changing runtime behavior on
    purpose.
 2. Keep `role`, optional `exclusive_group`, and `tools_granted` aligned with
-   `tool_policy.py`; any grant change must update both sources in one change.
+   `tools/policy.py`; any grant change must update both sources in one change.
 3. Prefer catalog-agnostic behavior rules over hard-coded product names.
 4. Validate the skill file and exact policy/grant pairs.
 5. Run unit tests that assert the skill is registered, applicable turns select

@@ -83,14 +83,14 @@ from .response_format import (
     _format_search_unadvertised_type_evidence,
     _format_words_this_catalog_cannot_filter_on,
 )
-from .tool_evidence import (
+from .tools.evidence import (
     EVIDENCE_KEY,
     SearchEvidence,
 )
-from .tool_loop_control import (
+from .tools.loop_control import (
     SEARCH_VALIDATION_ERROR_PREFIX,
 )
-from .tool_schemas import (
+from .tools.schemas import (
     SearchCatalogToolArguments,
 )
 from .turn_scope import CatalogRepairState, TurnScope

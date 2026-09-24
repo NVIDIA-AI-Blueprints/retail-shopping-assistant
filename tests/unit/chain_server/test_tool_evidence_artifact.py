@@ -24,7 +24,7 @@ import pytest
 from chain_server.src import grounding_evidence as grounding_evidence_mod
 from chain_server.src import response_format
 from chain_server.src import turn_support as runtime_mod_support
-from chain_server.src.tool_evidence import (
+from chain_server.src.tools.evidence import (
     DETAIL_EVIDENCE_KEY,
     EVIDENCE_KEY,
     ProductDetailEvidence,

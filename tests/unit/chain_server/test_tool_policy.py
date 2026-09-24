@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import pytest
-from chain_server.src.tool_policy import (
+from chain_server.src.tools.policy import (
     SHOPPING_TOOL_POLICIES,
     granted_tools_for_skills,
     tool_is_granted,

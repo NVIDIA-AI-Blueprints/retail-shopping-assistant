@@ -32,8 +32,8 @@ from chain_server.src.grounding_evidence import (
     _assumed_audience_line,
     _customer_safe_search_evidence,
 )
-from chain_server.src.tool_evidence import EVIDENCE_KEY
-from chain_server.src.tool_schemas import (
+from chain_server.src.tools.evidence import EVIDENCE_KEY
+from chain_server.src.tools.schemas import (
     _required_constraints_input_model,
     _search_catalog_tool_input_model,
 )

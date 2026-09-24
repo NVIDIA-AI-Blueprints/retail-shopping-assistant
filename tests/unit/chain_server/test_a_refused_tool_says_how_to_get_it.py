@@ -21,7 +21,7 @@ said. And a refused call is not a thing that happened, which is said too.
 
 from __future__ import annotations
 
-from chain_server.src.skill_activation import (
+from chain_server.src.tools.skill_gate import (
     SKILL_TOOL_NOT_GRANTED,
     _tool_not_granted,
 )

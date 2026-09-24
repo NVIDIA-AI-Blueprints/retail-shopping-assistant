@@ -21,8 +21,9 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
-from chain_server.src import catalog_search, tool_loop_control
+from chain_server.src import catalog_search
 from chain_server.src.agenttypes import State
+from chain_server.src.tools import loop_control as tool_loop_control
 from shared.commerce_contracts import (
     CatalogCapabilities,
     CatalogFilterCapability,

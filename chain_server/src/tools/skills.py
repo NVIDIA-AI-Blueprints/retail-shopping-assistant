@@ -13,14 +13,14 @@ from shared.commerce_contracts import CatalogCapabilities
 
 from ..agenttypes import State
 from ..fencing import MEDIA_FENCE
-from ..skill_activation import (
+from ..turn_support import RequestIdentity, _skill_activation_input_model
+from .catalog import catalog_prompt_section
+from .loop_control import ToolLoopControlMiddleware
+from .policy import SHOPPING_TOOL_POLICIES, load_shopper_skill_registry
+from .skill_gate import (
     SKILL_ACTIVATION_COMPLETE,
     ShopperSkillActivationMiddleware,
 )
-from ..tool_loop_control import ToolLoopControlMiddleware
-from ..tool_policy import SHOPPING_TOOL_POLICIES, load_shopper_skill_registry
-from ..turn_support import RequestIdentity, _skill_activation_input_model
-from .catalog import catalog_prompt_section
 from .weather import forecast_prompt_section
 
 

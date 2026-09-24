@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from catalog_retriever.src.catalog import load_catalog
 from chain_server.src.catalog_capabilities import CatalogCapabilities
-from chain_server.src.tool_schemas import _search_catalog_tool_input_model
+from chain_server.src.tools.schemas import _search_catalog_tool_input_model
 
 #: The catalog the repository ships, read from disk. This fixture used to
 #: fetch http://localhost:8010/capabilities, which passes on a machine running

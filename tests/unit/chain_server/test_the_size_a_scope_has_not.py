@@ -13,7 +13,7 @@ from chain_server.src.grounding_evidence import (
     _customer_safe_search_evidence,
     _size_the_scope_has_not_line,
 )
-from chain_server.src.tool_evidence import SearchEvidence
+from chain_server.src.tools.evidence import SearchEvidence
 
 
 def test_the_note_names_one_size_rather_than_a_number() -> None:

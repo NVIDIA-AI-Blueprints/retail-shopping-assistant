@@ -9,8 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from chain_server.src.skill_activation import ShopperSkillActivationMiddleware
-from chain_server.src.tool_loop_control import (
+from chain_server.src.tools.loop_control import (
     SEARCH_BUDGET_EXHAUSTED_PREFIX,
     SEARCH_TOOL_NAME,
     SEARCH_VALIDATION_ERROR_PREFIX,
@@ -23,7 +22,8 @@ from chain_server.src.tool_loop_control import (
     _shopper_stated_scope,
     _tool_name,
 )
-from chain_server.src.tool_policy import SHOPPING_TOOL_POLICIES
+from chain_server.src.tools.policy import SHOPPING_TOOL_POLICIES
+from chain_server.src.tools.skill_gate import ShopperSkillActivationMiddleware
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool

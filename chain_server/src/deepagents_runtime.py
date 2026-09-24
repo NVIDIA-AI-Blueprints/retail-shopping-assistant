@@ -90,21 +90,21 @@ from .search_replies import (
     _scrub_internal_shopper_language,
     _search_guidance_evidence,
 )
-from .skill_activation import (
+from .tools.cart import build_cart_tools
+from .tools.catalog import build_catalog_tools
+from .tools.loop_control import (
+    ToolLoopControlMiddleware,
+)
+from .tools.policy import (
+    load_shopper_skill_registry as _shopper_skill_registry,
+)
+from .tools.policy import (
+    validate_registered_tool_names,
+)
+from .tools.skill_gate import (
     ShopperSkillActivationError,
     selected_skill_names_for_turn,
 )
-from .tool_loop_control import (
-    ToolLoopControlMiddleware,
-)
-from .tool_policy import (
-    load_shopper_skill_registry as _shopper_skill_registry,
-)
-from .tool_policy import (
-    validate_registered_tool_names,
-)
-from .tools.cart import build_cart_tools
-from .tools.catalog import build_catalog_tools
 from .tools.skills import build_skill_activation
 from .tools.store import build_store_tools
 from .tools.weather import build_weather_tool

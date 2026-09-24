@@ -34,7 +34,7 @@ from chain_server.src.control_signals import (
     REJECTIONS_KEY,
     SearchRejection,
 )
-from chain_server.src.tool_schemas import (
+from chain_server.src.tools.schemas import (
     _search_catalog_scopes_input_model,
     _search_catalog_tool_input_model,
 )

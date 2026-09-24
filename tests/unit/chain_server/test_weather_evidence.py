@@ -203,7 +203,7 @@ def test_a_disabled_forecast_is_not_registered_at_all() -> None:
     conditional -- which is what keeps policy and skill frontmatter honest.
     """
 
-    from chain_server.src.tool_policy import (
+    from chain_server.src.tools.policy import (
         SHOPPING_TOOL_POLICIES,
         validate_registered_tool_names,
     )
@@ -221,7 +221,7 @@ def test_switching_one_tool_off_does_not_switch_the_guard_off() -> None:
     be activated together. Making one tool optional must not weaken it."""
 
     import pytest
-    from chain_server.src.tool_policy import (
+    from chain_server.src.tools.policy import (
         SHOPPING_TOOL_POLICIES,
         validate_registered_tool_names,
     )

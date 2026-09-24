@@ -22,7 +22,7 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
-from chain_server.src import catalog_search, tool_loop_control, turn_support
+from chain_server.src import catalog_search, turn_support
 from chain_server.src.agenttypes import Cart, ShopperContext, State
 from chain_server.src.conversation_memory import (
     ConversationMemoryError,
@@ -41,6 +41,7 @@ from chain_server.src.shopper_profiles import (
 )
 from chain_server.src.tools import cart as cart_tools
 from chain_server.src.tools import catalog as catalog_tools
+from chain_server.src.tools import loop_control as tool_loop_control
 from chain_server.src.tools import skills as skill_tools
 from chain_server.src.tools import store as store_tools
 from fastapi.testclient import TestClient
@@ -2247,7 +2248,7 @@ class TestDeepAgentsRuntimeRefs:
         self,
     ) -> None:
         from chain_server.src import catalog_vocabulary as catalog_vocabulary_mod
-        from chain_server.src import tool_schemas as tool_schemas_mod
+        from chain_server.src.tools import schemas as tool_schemas_mod
 
         capabilities = CatalogCapabilities(
             catalog_id="custom",
@@ -2759,7 +2760,7 @@ class TestDeepAgentsRuntimeRefs:
     def test_search_catalog_tool_input_rejects_legacy_constraint_fields(
         self, legacy_field: str
     ) -> None:
-        from chain_server.src import tool_schemas as tool_schemas_mod
+        from chain_server.src.tools import schemas as tool_schemas_mod
 
         capabilities = CatalogCapabilities(
             catalog_id="custom",
@@ -2943,8 +2944,8 @@ class TestDeepAgentsRuntimeRefs:
     ) -> None:
         from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src import deepagents_runtime as runtime_mod
-        from chain_server.src import tool_schemas as tool_schemas_mod
         from chain_server.src import turn_support as runtime_mod_support
+        from chain_server.src.tools import schemas as tool_schemas_mod
 
         captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")

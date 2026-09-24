@@ -20,18 +20,18 @@ from .message_shape import (
     _result_messages,
     _value,
 )
-from .skill_activation import (
+from .tools.evidence import (
+    detail_evidence_of,
+    evidence_of,
+)
+from .tools.loop_control import (
+    SEARCH_VALIDATION_ERROR_PREFIX,
+)
+from .tools.skill_gate import (
     SKILL_ACTIVATION_COMPLETE,
     SKILL_ACTIVATION_REQUIRED,
     SKILL_ACTIVATION_TOOL_NAME,
     SKILL_TOOL_NOT_GRANTED,
-)
-from .tool_evidence import (
-    detail_evidence_of,
-    evidence_of,
-)
-from .tool_loop_control import (
-    SEARCH_VALIDATION_ERROR_PREFIX,
 )
 
 _PRODUCT_DETAIL_EVIDENCE_NOTE = (

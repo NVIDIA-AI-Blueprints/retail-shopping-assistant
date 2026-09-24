@@ -16,15 +16,15 @@ from chain_server.src.agenttypes import State
 from chain_server.src.deepagents_runtime import (
     DeepAgentsRuntime,
 )
-from chain_server.src.skill_activation import (
+from chain_server.src.tools.evidence import SearchEvidence
+from chain_server.src.tools.loop_control import (
+    SEARCH_VALIDATION_ERROR_PREFIX,
+    SERVER_RESTORED_TOOL_CALL_FIELDS,
+)
+from chain_server.src.tools.skill_gate import (
     SKILL_ACTIVATION_COMPLETE,
     SKILL_ACTIVATION_REQUIRED,
     SKILL_ACTIVATION_TOOL_NAME,
-)
-from chain_server.src.tool_evidence import SearchEvidence
-from chain_server.src.tool_loop_control import (
-    SEARCH_VALIDATION_ERROR_PREFIX,
-    SERVER_RESTORED_TOOL_CALL_FIELDS,
 )
 from chain_server.src.turn_diagnostics import (
     _REJECTED_CATALOG_SEARCH_RESPONSE,

@@ -18,7 +18,8 @@ from chain_server.src.deepagents_runtime import (
     DeepAgentsRuntime,
 )
 from chain_server.src.fencing import MEDIA_FENCE
-from chain_server.src.skill_activation import (
+from chain_server.src.tools.loop_control import SERVER_CATALOG_CLARIFICATION
+from chain_server.src.tools.skill_gate import (
     SKILL_ACTIVATION_COMPLETE,
     SKILL_ACTIVATION_REQUIRED,
     SKILL_ACTIVATION_TOOL_NAME,
@@ -27,7 +28,6 @@ from chain_server.src.skill_activation import (
     ShopperSkillActivationMiddleware,
     selected_skill_names_for_turn,
 )
-from chain_server.src.tool_loop_control import SERVER_CATALOG_CLARIFICATION
 from chain_server.src.turn_support import (
     RequestIdentity,
     _skill_activation_input_model,
@@ -355,7 +355,7 @@ def test_enforcement_matches_the_shipped_frontmatter() -> None:
     product_procedure` and went unseen for a day.
     """
 
-    from chain_server.src.tool_policy import load_shopper_skill_registry
+    from chain_server.src.tools.policy import load_shopper_skill_registry
     from chain_server.src.turn_support import primary_skills_by_group
 
     registry = load_shopper_skill_registry(
@@ -1963,7 +1963,7 @@ def test_skills_named_in_the_activation_tool_are_registered() -> None:
 
     import re
 
-    from chain_server.src.tool_policy import load_shopper_skill_registry
+    from chain_server.src.tools.policy import load_shopper_skill_registry
 
     runtime_source = (
         Path(__file__).resolve().parents[3]

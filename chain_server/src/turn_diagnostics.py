@@ -26,16 +26,11 @@ from .message_shape import (
     _tool_results_by_call_id,
     _value,
 )
-from .skill_activation import (
-    SKILL_ACTIVATION_REQUIRED,
-    SKILL_ACTIVATION_TOOL_NAME,
-    SKILL_TOOL_NOT_GRANTED,
-)
-from .tool_evidence import (
+from .tools.evidence import (
     detail_evidence_of,
     evidence_of,
 )
-from .tool_loop_control import (
+from .tools.loop_control import (
     _SERVER_REJECTED_TOOL_CALLS,
     SEARCH_VALIDATION_ERROR_PREFIX,
     SERVER_CATALOG_CLARIFICATION,
@@ -43,6 +38,11 @@ from .tool_loop_control import (
     STOP_TOOL_USE_PREFIX,
     UNSUPPORTED_CONSTRAINT_PREFIX,
     UNSUPPORTED_TAXONOMY_PREFIX,
+)
+from .tools.skill_gate import (
+    SKILL_ACTIVATION_REQUIRED,
+    SKILL_ACTIVATION_TOOL_NAME,
+    SKILL_TOOL_NOT_GRANTED,
 )
 from .turn_support import _UNSUPPORTED_SEARCH_MODE_MESSAGE
 

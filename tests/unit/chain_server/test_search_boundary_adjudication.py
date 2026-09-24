@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from chain_server.src.tool_schemas import _search_catalog_scopes_input_model
+from chain_server.src.tools.schemas import _search_catalog_scopes_input_model
 from pydantic import ValidationError
 from shared.commerce_contracts import (
     CatalogCapabilities,
@@ -179,7 +179,7 @@ def test_a_verdict_that_follows_another_notice_is_still_found() -> None:
     the bounded-repair accounting never ran.
     """
 
-    from chain_server.src.tool_loop_control import (
+    from chain_server.src.tools.loop_control import (
         SEARCH_VALIDATION_ERROR_PREFIX,
         _validation_error_body,
     )
@@ -202,7 +202,7 @@ def test_the_repair_feedback_carries_the_verdict_rather_than_its_existence() -> 
     "Tool arguments failed schema validation." and repeated the mistake.
     """
 
-    from chain_server.src.tool_loop_control import (
+    from chain_server.src.tools.loop_control import (
         SEARCH_VALIDATION_ERROR_PREFIX,
         _sanitize_repair_feedback,
     )
@@ -230,7 +230,7 @@ def test_a_scoped_error_location_names_the_field_inside_the_scope() -> None:
     set on every scoped failure and the caller read that as "nothing to say".
     """
 
-    from chain_server.src.tool_loop_control import (
+    from chain_server.src.tools.loop_control import (
         SEARCH_VALIDATION_ERROR_PREFIX,
         _native_validation_fields,
     )

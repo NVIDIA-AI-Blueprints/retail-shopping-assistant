@@ -28,7 +28,7 @@ from shared.commerce_contracts import (
     CatalogCapabilities,
 )
 
-from .catalog_capabilities import (
+from ..catalog_capabilities import (
     effective_filter_capabilities,
 )
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .skill_activation import (
+from .tools.skill_gate import (
     SKILL_ACTIVATION_COMPLETE,
     SKILL_ACTIVATION_REQUIRED,
     SKILL_TOOL_NOT_GRANTED,

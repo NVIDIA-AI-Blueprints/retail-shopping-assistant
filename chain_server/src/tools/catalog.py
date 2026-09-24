@@ -26,11 +26,6 @@ from ..conversation_products import (
     format_product_resolution,
 )
 from ..response_format import _format_product_detail_record, format_catalog_shape
-from ..tool_evidence import ProductDetailEvidence
-from ..tool_schemas import (
-    _search_catalog_scopes_input_model,
-    _search_catalog_tool_input_model,
-)
 from ..turn_scope import TurnScope
 from ..turn_support import (
     _ONE_SIZE,
@@ -42,6 +37,11 @@ from ..turn_support import (
     _product_detail_record,
     _same_product_display_name,
     _where_a_product_was_already_shown,
+)
+from .evidence import ProductDetailEvidence
+from .schemas import (
+    _search_catalog_scopes_input_model,
+    _search_catalog_tool_input_model,
 )
 
 if TYPE_CHECKING:

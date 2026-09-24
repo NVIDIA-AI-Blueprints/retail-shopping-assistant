@@ -22,7 +22,7 @@ from langchain_core.messages import (
 )
 from langgraph.prebuilt.tool_node import ToolCallRequest
 
-from .tool_policy import (
+from .policy import (
     SHOPPING_TOOL_POLICIES,
     granted_tools_for_skills,
     tool_is_granted,

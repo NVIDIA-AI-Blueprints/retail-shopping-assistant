@@ -5,9 +5,9 @@
 
 Their enums come from the catalog, and the catalog does not change under a
 running process: CatalogCapabilitiesClient caches its first successful contract
-and never refetches. So the built schema was identical on every turn -- verified
-byte-for-byte before this change -- and rebuilding it cost 14ms per turn on the
-same event loop that has to serve the turn.
+and never refetches. So the built schema is identical on every turn, and
+rebuilding it costs 14ms per turn on the same event loop that has to serve the
+turn.
 
 The risk a cache introduces is serving one catalog's schema for another's, so
 that is what most of these tests are about.

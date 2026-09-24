@@ -35,8 +35,7 @@ from chain_server.src.tools.evidence import (
 from shared.commerce_contracts import Money, ProductDetail, ProductSummary
 
 
-# The shipped module composes these two calls where it needs the text. It
-# used to also carry a wrapper for each, which only these tests called.
+# The shipped module composes these two calls where it needs the text.
 def _rendered_product(product):
     return catalog_format._format_product_record(
         product_records_mod._search_product_record(product)

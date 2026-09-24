@@ -1,7 +1,7 @@
-"""What the turn may claim, and the evidence behind it.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
-Lifted out of `turn_support.py` unchanged.
-"""
+"""What the turn may claim, and the evidence behind it."""
 
 
 from __future__ import annotations

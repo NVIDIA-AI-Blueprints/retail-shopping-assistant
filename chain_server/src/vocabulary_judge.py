@@ -7,8 +7,7 @@ Two questions are asked here and they are the same kind of question: does a word
 the shopper used correspond to something this catalogue sells, and if so which
 advertised values.
 
-Both were previously answered inside the main agent call, and both were answered
-wrong in the same way. Asked to scope a search for "jeans" in a shop with no
+Asked inside the main agent call, both are answered wrong in the same way. Asked to scope a search for "jeans" in a shop with no
 jeans, the model filed the role under skirts 106 times across the run archive --
 and said so out loud: "Since we don't carry jeans, I searched for skirts in
 similar dark blue tones." Asked which advertised colour "cream" could be, it

@@ -66,9 +66,8 @@ def _search_product_record(product: Any) -> dict[str, Any]:
     """Project one search hit into the record both the model text and the
     composer summary are rendered from.
 
-    Previously the model-visible text was the only rendering and the composer
-    parsed it back into this same shape. Building the record once removes the
-    round trip, and keeps the two renderings unable to disagree.
+    Both renderings come from this one record, so they cannot disagree, and
+    nothing parses the model-visible text back into a record.
     """
 
     return {

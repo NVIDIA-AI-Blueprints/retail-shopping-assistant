@@ -1,7 +1,7 @@
-"""What a turn did, recorded for reading afterwards.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
-Lifted out of `turn_support.py` unchanged.
-"""
+"""What a turn did, recorded for reading afterwards."""
 
 
 from __future__ import annotations

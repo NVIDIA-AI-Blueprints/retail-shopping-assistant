@@ -1,7 +1,4 @@
-"""Turning what a search found into what the shopper is told.
-
-Lifted out of `turn_support.py` unchanged.
-"""
+"""Turning what a search found into what the shopper is told."""
 
 
 from __future__ import annotations

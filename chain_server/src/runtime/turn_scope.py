@@ -38,10 +38,9 @@ class CatalogRepairState:
 class TurnScope:
     """Everything one shopper turn's tools mutate while they run.
 
-    Each field here was previously a ``nonlocal`` inside ``_create_agent``, so
-    every tool was welded to one lexical scope and none could be read, tested,
-    or relocated independently. Owning this state explicitly is what makes the
-    tools separable; it deliberately changes no behavior.
+    Holding this state on one object, rather than in variables shared by the
+    tools' enclosing scope, is what lets each tool be read, tested, and moved
+    on its own.
     """
 
     # Evidence and rendering. ``retrieved`` is deliberately the same dict object

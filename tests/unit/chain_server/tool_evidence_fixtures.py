@@ -3,10 +3,10 @@
 
 """Build search tool messages the way the tool actually builds them.
 
-Tests used to hand-write the marker strings a search emits and assert against
-whatever the parsers pulled back out. That made the tests agree with the
-implementation by construction: a test could only fail if parsing changed, not
-if the *evidence* changed.
+A test that hand-writes the marker strings a search emits, and asserts against
+whatever the parsers pull back out, agrees with the implementation by
+construction: it can only fail if parsing changes, not if the *evidence*
+changes.
 
 These helpers build one ``SearchEvidence`` and derive both the text and the
 artifact from it, mirroring the tool. A test that wants a search result now

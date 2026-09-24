@@ -1,7 +1,7 @@
-"""What each model call cost, and what it was for.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
-Lifted out of `turn_support.py` unchanged.
-"""
+"""What each model call cost, and what it was for."""
 
 
 from __future__ import annotations

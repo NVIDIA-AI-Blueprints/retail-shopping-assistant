@@ -3,10 +3,8 @@
 
 """One catalog search, from tool arguments to the evidence the model reads.
 
-This was a 943-line closure inside `DeepAgentsRuntime._create_agent`, which made
-it unreachable from a test and impossible to read without also reading the agent
-that built it. It captured six things from that scope; `SearchContext` names them
-explicitly so the search can be called, and read, on its own.
+`SearchContext` names everything the search reads from the turn, so the search
+can be called, and read, without the agent that built it.
 
 The order of what follows is the order a search actually goes through: admit the
 call, validate its arguments against current catalog capabilities, establish that
@@ -2365,8 +2363,7 @@ def _judge_this_call(ctx: SearchContext, attempts: list[_Attempt]) -> None:
     a 47,753-token median turn.
 
     Nothing is raised out of here. A judge that cannot be reached leaves every
-    scope unruled, and an unruled scope is decided by the gates that decided it
-    before this existed.
+    scope unruled, and an unruled scope is decided by the remaining gates alone.
     """
 
     judge = getattr(ctx, "vocabulary_judge", None)
@@ -2654,10 +2651,9 @@ def _merged_artifacts(artifacts: list[dict[str, Any]]) -> dict[str, Any] | None:
 
     Every consumer -- turn diagnostics, the grounding editor, and the durable
     presented-product record a later turn resolves against -- reads one evidence
-    dict and checks `outcome`. An earlier version merged by key and produced a
-    list of dicts, so those readers silently skipped it: a four-scope search
-    completed, returned products, and recorded none of them. The shape is the
-    contract, so merging must preserve it.
+    dict and checks `outcome`. A list of dicts is skipped silently by all of
+    them, so a multi-scope search would return products and record none. The
+    shape is the contract, so merging must preserve it.
     """
 
     payloads = [a[EVIDENCE_KEY] for a in artifacts if a and EVIDENCE_KEY in a]

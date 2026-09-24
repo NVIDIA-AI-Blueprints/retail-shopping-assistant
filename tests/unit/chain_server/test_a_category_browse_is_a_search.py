@@ -23,10 +23,9 @@ from catalog_retriever.src.catalog import load_catalog
 from chain_server.src.catalog_capabilities import CatalogCapabilities
 from chain_server.src.tools.schemas import _search_catalog_tool_input_model
 
-#: The catalog the repository ships, read from disk. This fixture used to
-#: fetch http://localhost:8010/capabilities, which passes on a machine running
-#: the services and fails in CI, where the unit suite runs offline and nothing
-#: is listening. Same catalog either way -- the service builds its capabilities
+#: The catalog the repository ships, read from disk rather than fetched from
+#: the running service: the unit suite runs offline in CI, where nothing is
+#: listening. Same catalog either way -- the service builds its capabilities
 #: from these two files.
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

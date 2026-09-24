@@ -25,7 +25,7 @@ from types import SimpleNamespace
 
 from chain_server.src.catalog_format import _format_excluded_near_miss
 from chain_server.src.catalog_search import _a_category_the_shopper_did_not_name
-from chain_server.src.grounding_evidence import _customer_safe_search_evidence
+from chain_server.src.runtime.grounding_evidence import _customer_safe_search_evidence
 from shared.commerce_contracts import (
     CatalogTaxonomyCapabilities,
     Money,

@@ -179,7 +179,7 @@ def test_product_discovery_separates_request_lanes(base_config) -> None:
     you want rules to move.
     """
 
-    from chain_server.src import deepagents_runtime as runtime_mod
+    from chain_server.src.runtime import runtime as runtime_mod
 
     from .model_visible import reachable_on_a_turn_using
 

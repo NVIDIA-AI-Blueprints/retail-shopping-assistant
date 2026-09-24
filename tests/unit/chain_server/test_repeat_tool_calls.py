@@ -14,8 +14,8 @@ because the product-detail cap fired, not because the model was done.
 
 from __future__ import annotations
 
-from chain_server.src.control_signals import SIGNALS_KEY, ControlSignal
-from chain_server.src.turn_scope import TurnScope
+from chain_server.src.runtime.control_signals import SIGNALS_KEY, ControlSignal
+from chain_server.src.runtime.turn_scope import TurnScope
 
 
 def test_the_first_ask_is_not_a_repeat() -> None:

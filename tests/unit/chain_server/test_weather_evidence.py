@@ -164,8 +164,8 @@ def test_the_budget_is_actually_enforced() -> None:
     passing, because the constant was asserted and the enforcement was buried
     in a closure nothing could reach."""
 
+    from chain_server.src.runtime.turn_scope import TurnScope
     from chain_server.src.tools.weather import claim_weather_call
-    from chain_server.src.turn_scope import TurnScope
 
     scope = TurnScope()
     granted = [claim_weather_call(scope) for _ in range(WEATHER_CALLS_PER_TURN + 3)]
@@ -181,7 +181,7 @@ def test_the_rewriter_may_not_strip_the_attribution() -> None:
     anything derived from it is shown, so the stage that can delete it is told
     it may not."""
 
-    from chain_server.src import deepagents_runtime as runtime_mod
+    from chain_server.src.runtime import runtime as runtime_mod
 
     prompt = runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
 

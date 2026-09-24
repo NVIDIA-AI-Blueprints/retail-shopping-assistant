@@ -12,11 +12,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..agenttypes import State
 from ..lexical_provenance import a_place_the_shopper_named
-from ..turn_scope import TurnScope
+from ..runtime.turn_scope import TurnScope
 from ..weather import WeatherRequest
 
 if TYPE_CHECKING:
-    from ..deepagents_runtime import DeepAgentsRuntime
+    from ..runtime.runtime import DeepAgentsRuntime
 
 
 WEATHER_PLACE_NOT_STATED = (

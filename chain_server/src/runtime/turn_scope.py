@@ -10,8 +10,8 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any
 
+from ..conversation_products import ProductEvidence
 from .control_signals import ControlSignal, control
-from .conversation_products import ProductEvidence
 
 
 @dataclass

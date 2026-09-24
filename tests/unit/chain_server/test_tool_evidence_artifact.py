@@ -22,8 +22,8 @@ from typing import Any
 
 import pytest
 from chain_server.src import catalog_format
-from chain_server.src import grounding_evidence as grounding_evidence_mod
 from chain_server.src import product_records as product_records_mod
+from chain_server.src.runtime import grounding_evidence as grounding_evidence_mod
 from chain_server.src.tools.evidence import (
     DETAIL_EVIDENCE_KEY,
     EVIDENCE_KEY,
@@ -514,7 +514,7 @@ def test_a_zero_result_tells_the_model_to_relax_its_own_search() -> None:
     to be told to, and told which filter may give.
     """
 
-    from chain_server.src.grounding_evidence import _customer_safe_search_evidence
+    from chain_server.src.runtime.grounding_evidence import _customer_safe_search_evidence
 
     summary = _customer_safe_search_evidence(
         {
@@ -536,7 +536,7 @@ def test_a_zero_result_does_not_hand_over_products_of_its_own() -> None:
     """No second search runs here, so nothing can arrive that the reply
     disowns. The heading its results used to land under is gone with it."""
 
-    from chain_server.src.grounding_evidence import _customer_safe_search_evidence
+    from chain_server.src.runtime.grounding_evidence import _customer_safe_search_evidence
 
     summary = _customer_safe_search_evidence(
         {

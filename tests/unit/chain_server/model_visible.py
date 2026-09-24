@@ -109,7 +109,10 @@ def shopping_tool_descriptions() -> str:
     needs a live runtime, and the text is what is under test.
     """
 
-    return (REPO_ROOT / "chain_server" / "src" / "deepagents_runtime.py").read_text()
+    src = REPO_ROOT / "chain_server" / "src"
+    paths = [src / "runtime" / "runtime.py", src / "runtime" / "prompts.py"]
+    paths += sorted((src / "tools").glob("*.py"))
+    return "\n".join(path.read_text() for path in paths)
 
 
 def skill_body(name: str) -> str:

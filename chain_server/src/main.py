@@ -27,9 +27,9 @@ from shared.model_config import resolve_model_config
 from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, Cart, State
 from .commerce_tools import get_cart, update_cart_item
 from .config import load_config
-from .deepagents_runtime import DeepAgentsRuntime
-from .identity import create_request_identity
 from .media_perception import MEDIA_ONLY_QUERY
+from .runtime.identity import create_request_identity
+from .runtime.runtime import DeepAgentsRuntime
 from .shopper_profiles import (
     ShopperProfile,
     ShopperProfilesClient,

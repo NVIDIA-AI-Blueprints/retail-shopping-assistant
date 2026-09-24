@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .conversation_memory import ConversationEvent
+from ..conversation_memory import ConversationEvent
 
 
 def _wearer_audience_events(

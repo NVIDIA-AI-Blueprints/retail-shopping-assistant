@@ -25,8 +25,8 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
-from chain_server.src import identity as identity_mod
 from chain_server.src.agenttypes import Cart, State
+from chain_server.src.runtime import identity as identity_mod
 from shared.commerce_contracts import (
     CartLine,
     CartMutationResult,
@@ -109,7 +109,7 @@ def cart_tools(base_config, monkeypatch: pytest.MonkeyPatch):
     """The registered cart tools, with the cart and the catalog stubbed."""
 
     from chain_server.src import cart_operations as cart_ops_mod
-    from chain_server.src import deepagents_runtime as runtime_mod
+    from chain_server.src.runtime import runtime as runtime_mod
     captured: dict[str, Any] = {}
     deepagents_mod = ModuleType("deepagents")
     tools_mod = ModuleType("langchain_core.tools")

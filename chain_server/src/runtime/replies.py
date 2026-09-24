@@ -8,16 +8,16 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .agenttypes import Cart, State
-from .cart_format import _format_cart
+from ..agenttypes import Cart, State
+from ..cart_format import _format_cart
+from ..tools.evidence import evidence_of
+from ..tools.skill_gate import SKILL_ACTIVATION_TOOL_NAME
 from .message_shape import (
     _current_turn_messages,
     _message_type,
     _result_messages,
     _value,
 )
-from .tools.evidence import evidence_of
-from .tools.skill_gate import SKILL_ACTIVATION_TOOL_NAME
 
 
 def _products_found_receipt(state: Any) -> str:
@@ -274,3 +274,23 @@ def _images_in_product_order(
         **{name: images[name] for name in named},
         **{name: url for name, url in images.items() if name not in seen},
     }
+
+
+# Must not invite a retry. This path is reached after the turn's tools have
+# already run, so a cart change may have completed; retrying duplicates it.
+_GROUNDING_FAILURE_RESPONSE = (
+    "I ran into a problem writing that reply. Ask me what's in your cart to see "
+    "where things stand -- any change I made will show there."
+)
+
+
+_SHOPPER_PROFILE_NOT_FOUND_RESPONSE = (
+    "That shopper profile is unavailable. Please choose another shopper and "
+    "try again."
+)
+
+
+_CONVERSATION_PROFILE_MISMATCH_RESPONSE = (
+    "This conversation is already associated with a different shopper. "
+    "Please start a new chat before switching shoppers."
+)

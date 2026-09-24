@@ -71,7 +71,7 @@ class ChainServerConfig(BaseModel):
     """Configuration class for the chain server application.
 
     Fields tagged (prompt) feed the static system prompt or tool schema
-    built in `deepagents_runtime._system_prompt` / `tool_policy`, so a
+    built in `runtime.runtime._system_prompt` / `tool_policy`, so a
     deployment change to them changes prompt bytes on every turn and can
     invalidate prompt caching. Untagged fields are runtime-only knobs
     (timeouts, budgets, call caps) that never reach the prompt text.

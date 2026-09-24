@@ -2312,7 +2312,7 @@ def test_control_prefixes_have_a_single_definition() -> None:
     """
 
     repo_root = Path(__file__).resolve().parents[3]
-    runtime_source = (repo_root / "chain_server/src/deepagents_runtime.py").read_text()
+    runtime_source = (repo_root / "chain_server/src/runtime/runtime.py").read_text()
 
     for prefix in (
         UNSUPPORTED_TAXONOMY_PREFIX,
@@ -2327,7 +2327,7 @@ def test_every_stop_signal_renders_the_shared_prefix() -> None:
     """Any STOP_TOOL_USE text the runtime emits must start with the constant."""
 
     repo_root = Path(__file__).resolve().parents[3]
-    runtime_source = (repo_root / "chain_server/src/deepagents_runtime.py").read_text()
+    runtime_source = (repo_root / "chain_server/src/runtime/runtime.py").read_text()
 
     for line in runtime_source.splitlines():
         stripped = line.strip()

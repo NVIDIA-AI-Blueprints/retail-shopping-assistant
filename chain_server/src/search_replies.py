@@ -16,7 +16,7 @@ from typing import Any
 
 from .agenttypes import State
 from .catalog_format import _format_filter_statement, _format_search_group
-from .message_shape import (
+from .runtime.message_shape import (
     _content_to_text,
     _current_turn_messages,
     _message_type,

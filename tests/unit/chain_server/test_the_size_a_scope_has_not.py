@@ -9,7 +9,7 @@ Dropping the size is what lets the scope answer at all. Saying so is what stops
 the run being invented, so the two are tested together.
 """
 
-from chain_server.src.grounding_evidence import (
+from chain_server.src.runtime.grounding_evidence import (
     _customer_safe_search_evidence,
     _size_the_scope_has_not_line,
 )

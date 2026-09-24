@@ -18,7 +18,6 @@ from ..catalog_request import CatalogSearchPlan
 from ..catalog_scope import CATALOG_SEARCH_RULES
 from ..catalog_search import SearchContext, search_catalog
 from ..commerce_tools import get_product_details
-from ..control_signals import ControlSignal, control, normalize_tool_result
 from ..conversation_products import (
     ConversationProductsError,
     ProductReferenceDescriptor,
@@ -26,7 +25,6 @@ from ..conversation_products import (
     format_historical_product_index,
     format_product_resolution,
 )
-from ..identity import RequestIdentity
 from ..product_records import (
     _append_product_results,
     _detail_fields_already_held,
@@ -35,8 +33,10 @@ from ..product_records import (
     _same_product_display_name,
     _where_a_product_was_already_shown,
 )
+from ..runtime.control_signals import ControlSignal, control, normalize_tool_result
+from ..runtime.identity import RequestIdentity
+from ..runtime.turn_scope import TurnScope
 from ..sizes import _ONE_SIZE, _advertised_sizes
-from ..turn_scope import TurnScope
 from .evidence import ProductDetailEvidence
 from .schemas import (
     _search_catalog_scopes_input_model,
@@ -44,7 +44,7 @@ from .schemas import (
 )
 
 if TYPE_CHECKING:
-    from ..deepagents_runtime import DeepAgentsRuntime
+    from ..runtime.runtime import DeepAgentsRuntime
 
 
 #: Historical-product resolutions allowed per turn while none has resolved. A

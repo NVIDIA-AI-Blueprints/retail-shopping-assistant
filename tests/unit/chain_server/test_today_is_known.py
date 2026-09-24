@@ -11,7 +11,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from chain_server.src.deepagents_runtime import _today_for_the_shopper
+from chain_server.src.runtime.prompts import _today_for_the_shopper
 
 # Resolved from this file, not the working directory: CI runs pytest with
 # `working-directory: tests`, where a path relative to the repo root does not
@@ -36,7 +36,7 @@ def test_it_reads_like_a_person_wrote_it() -> None:
 
 
 def test_the_prompt_states_the_date_and_what_it_is_for() -> None:
-    source = (_REPO_ROOT / "chain_server/src/deepagents_runtime.py").read_text()
+    source = (_REPO_ROOT / "chain_server/src/runtime/runtime.py").read_text()
     assert "TODAY IS {_today_for_the_shopper()}" in source
     block = source[source.index("TODAY IS") :][:600]
     assert "only date you know" in block
@@ -58,7 +58,7 @@ def _prompts_either_way(base_config) -> tuple[str, str]:
 
     from types import SimpleNamespace
 
-    from chain_server.src import deepagents_runtime as runtime_mod
+    from chain_server.src.runtime import runtime as runtime_mod
 
     runtime = runtime_mod.DeepAgentsRuntime(base_config)
     original = getattr(runtime.config, "weather", None)

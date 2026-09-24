@@ -19,16 +19,17 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from chain_server.src import audience_events as audience_events_mod
 from chain_server.src import catalog_search as catalog_search_mod
-from chain_server.src import grounding_evidence as grounding_evidence_mod
 from chain_server.src import search_replies as search_replies_mod
 from chain_server.src.agenttypes import State
 from chain_server.src.catalog_search import SearchContext, search_catalog
-from chain_server.src.control_signals import REJECTIONS_KEY
-from chain_server.src.grounding_evidence import (
+from chain_server.src.runtime import audience_events as audience_events_mod
+from chain_server.src.runtime import grounding_evidence as grounding_evidence_mod
+from chain_server.src.runtime.control_signals import REJECTIONS_KEY
+from chain_server.src.runtime.grounding_evidence import (
     _scope_relation_line,
 )
+from chain_server.src.runtime.turn_scope import TurnScope
 from chain_server.src.search_replies import (
     _scope_relation_payload,
 )
@@ -36,7 +37,6 @@ from chain_server.src.tools.evidence import EVIDENCE_KEY
 from chain_server.src.tools.schemas import (
     _search_catalog_tool_input_model,
 )
-from chain_server.src.turn_scope import TurnScope
 from shared.commerce_contracts import (
     CatalogCapabilities,
     CatalogFilterCapability,
@@ -619,7 +619,7 @@ def test_the_carried_wearer_is_reported_but_never_scopes_a_search() -> None:
     turns the filter on.
     """
 
-    from chain_server.src.prompts import _format_wearer_audience
+    from chain_server.src.runtime.prompts import _format_wearer_audience
 
     block = _format_wearer_audience(["adult_all_genders"])
 

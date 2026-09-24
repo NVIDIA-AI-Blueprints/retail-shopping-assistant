@@ -74,21 +74,22 @@ from .catalog_vocabulary import (
     _products_with_subcategory_coverage,
     _same_product_scope,
 )
-from .control_signals import (
+from .lexical_provenance import (
+    _resolved_agent_selected_product_type,
+    _shopper_stated_product_scope,
+)
+from .product_records import _append_product_results, _search_product_record
+from .runtime.control_signals import (
     NOT_CARRIED_KEY,
     REJECTIONS_KEY,
     ControlSignal,
     SearchRejection,
     control,
 )
-from .lexical_provenance import (
-    _resolved_agent_selected_product_type,
-    _shopper_stated_product_scope,
-)
-from .model_usage import (
+from .runtime.model_usage import (
     _record_catalog_model_usage,
 )
-from .product_records import _append_product_results, _search_product_record
+from .runtime.turn_scope import CatalogRepairState, TurnScope
 from .search_input import (
     _UNSUPPORTED_SEARCH_MODE_MESSAGE,
     _advertised_subcategories_for_selection,
@@ -114,7 +115,6 @@ from .tools.loop_control import (
 from .tools.schemas import (
     SearchCatalogToolArguments,
 )
-from .turn_scope import CatalogRepairState, TurnScope
 from .vocabulary_judge import ScopeQuestion
 
 #: What a search step hands back: nothing, meaning the search continues, or the

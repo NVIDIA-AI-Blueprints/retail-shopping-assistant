@@ -14,24 +14,24 @@ if TYPE_CHECKING:
 import json
 from typing import Any
 
+from ..tools.evidence import (
+    detail_evidence_of,
+    evidence_of,
+)
+from ..tools.loop_control import (
+    SEARCH_VALIDATION_ERROR_PREFIX,
+)
+from ..tools.skill_gate import (
+    SKILL_ACTIVATION_COMPLETE,
+    SKILL_ACTIVATION_REQUIRED,
+    SKILL_ACTIVATION_TOOL_NAME,
+    SKILL_TOOL_NOT_GRANTED,
+)
 from .message_shape import (
     _content_to_text,
     _current_turn_messages,
     _result_messages,
     _value,
-)
-from .tools.evidence import (
-    detail_evidence_of,
-    evidence_of,
-)
-from .tools.loop_control import (
-    SEARCH_VALIDATION_ERROR_PREFIX,
-)
-from .tools.skill_gate import (
-    SKILL_ACTIVATION_COMPLETE,
-    SKILL_ACTIVATION_REQUIRED,
-    SKILL_ACTIVATION_TOOL_NAME,
-    SKILL_TOOL_NOT_GRANTED,
 )
 
 _PRODUCT_DETAIL_EVIDENCE_NOTE = (

@@ -14,8 +14,8 @@ if TYPE_CHECKING:
 import json
 from typing import Any
 
-from .agenttypes import State
-from .catalog_request import (
+from ..agenttypes import State
+from ..catalog_request import (
     CatalogSearchPlan,
 )
 from .message_shape import (

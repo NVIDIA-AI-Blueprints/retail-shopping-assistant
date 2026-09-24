@@ -24,7 +24,7 @@ def test_weather_tool_is_registered_on_every_serving_surface() -> None:
 
     assert "get_weather_forecast_tool" in SHOPPING_TOOL_POLICIES
 
-    runtime = (REPO_ROOT / "chain_server/src/deepagents_runtime.py").read_text()
+    runtime = (REPO_ROOT / "chain_server/src/runtime/runtime.py").read_text()
     policy = (REPO_ROOT / "chain_server/src/tools/policy.py").read_text()
 
     assert "get_weather_forecast_tool" in runtime

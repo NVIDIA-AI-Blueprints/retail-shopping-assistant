@@ -14,11 +14,11 @@ import pytest
 from chain_server.src import catalog_search
 from chain_server.src.agenttypes import Cart, State
 from chain_server.src.catalog_execution import CatalogSearchExecution
-from chain_server.src.deepagents_runtime import (
+from chain_server.src.fencing import MEDIA_FENCE
+from chain_server.src.runtime.identity import RequestIdentity
+from chain_server.src.runtime.runtime import (
     DeepAgentsRuntime,
 )
-from chain_server.src.fencing import MEDIA_FENCE
-from chain_server.src.identity import RequestIdentity
 from chain_server.src.tools.loop_control import SERVER_CATALOG_CLARIFICATION
 from chain_server.src.tools.skill_gate import (
     SKILL_ACTIVATION_COMPLETE,

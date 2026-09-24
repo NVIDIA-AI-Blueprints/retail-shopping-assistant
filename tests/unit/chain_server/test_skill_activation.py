@@ -468,6 +468,7 @@ def _tool_request(
             "add_cart_items_tool": add_cart_items_tool,
             "remove_cart_item_tool": add_cart_items_tool,
             "update_cart_items_tool": add_cart_items_tool,
+            "get_cart_tool": add_cart_items_tool,
             "get_product_details_tool": get_product_details_tool,
             "search_catalog_tool": search_catalog_tool,
         }[name]
@@ -874,15 +875,13 @@ def test_outfit_styling_rejects_cart_mutation_before_execution(
     assert isinstance(result, ToolMessage)
     content = str(result.content)
     assert content.startswith(SKILL_TOOL_NOT_GRANTED)
-    # Refused, and told how to stop being refused. This message used to end
-    # "continue using only the tools available for this turn", and a turn that
-    # obeyed it said "I've added the Ombre Canvas Tote Bag to your cart" over
-    # an empty cart. Asserted here rather than on the message alone, because
-    # what went wrong was the model reading this exact reply.
-    assert "cart-management" in content
-    assert "activate_shopper_skills_tool" in content
-    assert "call the tool again" in content
-    assert "Nothing has been done yet" in content
+    # A turn told only "continue using only the tools available" once said
+    # "I've added the Ombre Canvas Tote Bag to your cart" over an empty cart.
+    # Asserted here rather than on the message alone, because what went wrong
+    # was the model reading this exact reply.
+    assert "the cart is unchanged" in content
+    assert "do not tell the shopper it was done" in content
+    assert "offer to add" in content
     assert "Continue using only the tools available" not in content
 
 
@@ -946,41 +945,108 @@ def _widening(
 
 
 def test_a_refused_call_gains_the_skill_that_grants_it() -> None:
-    """The cart add runs, in the step that asked for it.
+    """A read runs in the step that asked for it.
 
-    A turn selects its skills at its first token, and the prompt asking for
-    them asks which task the turn continues -- so turn seven of a capsule,
-    "add the Ombre Canvas Tote Bag", keeps `outfit-styling` as instructed and
-    grants no cart tool. The refusal that followed named `cart-management`,
-    which this code looked up to write the message with, and then asked the
-    model to say it back.
+    A turn selects its skills at its first token, so a styling turn that
+    wants to check what is already in the cart holds no cart tool. The
+    refusal would name `cart-management` and ask the model to say it back;
+    for a read, the gate adds the skill itself.
     """
 
     middleware = _middleware(
-        widen_for_tool=_widening({"add_cart_items_tool": "cart-management"}),
+        widen_for_tool=_widening({"get_cart_tool": "cart-management"}),
     )
     middleware.activate(
         {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
         ["outfit-styling"],
     )
-    messages = _activated_messages(query="add the Ombre Canvas Tote Bag")
-    request = _tool_request(
-        "add_cart_items_tool",
-        messages,
-        {"items": [{"product_ref": "tote-a"}]},
-    )
+    messages = _activated_messages(query="what goes with what is in my cart")
+    request = _tool_request("get_cart_tool", messages)
     handled: list[ToolCallRequest] = []
 
     result = middleware.wrap_tool_call(request, handled.append)
 
     assert handled == [request]
     assert result is None
-    # The grant outlives the call that earned it: the rest of the turn can
-    # read back what it just changed, which a cart add is answered with.
+    # The grant outlives the call that earned it, and keeps what the turn
+    # opened with.
+    middleware._widen_for_tool = lambda _tool, _selected: None
+    again = _tool_request("get_cart_tool", messages)
+    assert middleware.wrap_tool_call(again, handled.append) is None
+    assert handled == [request, again]
     prepared = _capture_request(middleware, _model_request(messages))
-    visible = [candidate.name for candidate in prepared.tools]
-    assert "add_cart_items_tool" in visible
-    assert "search_catalog_tool" in visible
+    assert "search_catalog_tool" in [candidate.name for candidate in prepared.tools]
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "add_cart_items_tool",
+        "remove_cart_item_tool",
+        "update_cart_items_tool",
+    ],
+)
+def test_a_cart_change_is_not_widened_into(tool_name: str) -> None:
+    """Only the shopper's words can authorise a cart change.
+
+    Widening answers what a tool call asked for, and a call is chosen after
+    tool results are read. In replay, the only cart writes that came through
+    widening were the two nobody asked for: a styling turn that found an item
+    and added it. So a turn that did not open with cart-management gets no
+    cart change, whether it reaches for one directly or after a read has
+    widened the turn into cart-management.
+    """
+
+    middleware = _middleware(
+        widen_for_tool=_widening(
+            {
+                "get_cart_tool": "cart-management",
+                tool_name: "cart-management",
+            }
+        ),
+    )
+    middleware.activate(
+        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+        ["outfit-styling"],
+    )
+    messages = _activated_messages()
+    handled: list[ToolCallRequest] = []
+
+    refused = middleware.wrap_tool_call(
+        _tool_request(tool_name, messages), handled.append
+    )
+    assert handled == []
+    assert str(refused.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+    read = _tool_request("get_cart_tool", messages)
+    assert middleware.wrap_tool_call(read, handled.append) is None
+    assert handled == [read]
+
+    refused = middleware.wrap_tool_call(
+        _tool_request(tool_name, messages), handled.append
+    )
+    assert handled == [read]
+    assert "the cart is unchanged" in str(refused.content)
+
+
+def test_a_turn_that_opened_for_the_cart_changes_it() -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {
+            "/shopper/cart-management/SKILL.md": "# Cart",
+            "/shopper/outfit-styling/SKILL.md": "# Outfit Styling",
+        },
+        ["cart-management", "outfit-styling"],
+    )
+    request = _tool_request(
+        "add_cart_items_tool",
+        _activated_messages(query="add the Ombre Canvas Tote Bag"),
+        {"items": [{"product_ref": "tote-a"}]},
+    )
+    handled: list[ToolCallRequest] = []
+
+    assert middleware.wrap_tool_call(request, handled.append) is None
+    assert handled == [request]
 
 
 def test_a_selection_the_model_could_not_make_is_not_made_for_it() -> None:
@@ -1882,15 +1948,11 @@ async def test_compiled_agent_executes_capability_valid_repair(
 def test_a_turn_may_correct_the_skills_it_opened_with() -> None:
     """The selection made at the first token is not always the right one.
 
-    Six turns into building a capsule the shopper says "add the Ombre Canvas
-    Tote Bag". The turn opens with outfit-styling and budget-shopping -- right
-    for the six turns before it -- finds the bag, reads its details, and is
-    refused the cart tool for the grant.
-
-    A second activation used to return False, change no grants, and report
-    itself already complete. So the turn could not acquire the tool it needed,
-    and said "I've added the Ombre Canvas Tote Bag to your cart" over an empty
-    cart.
+    A styling turn that wants to read the cart is refused the tool for the
+    grant. A second activation used to return False, change no grants, and
+    report itself already complete, so the turn could not acquire the tool it
+    needed. A corrected selection grants reads; a cart change still needs the
+    opening selection, which came from the shopper's words alone.
     """
 
     middleware = _middleware()
@@ -1902,7 +1964,7 @@ def test_a_turn_may_correct_the_skills_it_opened_with() -> None:
         ["outfit-styling", "budget-shopping"],
     )
     refused = middleware.wrap_tool_call(
-        _tool_request("add_cart_items_tool", _activated_messages()), lambda r: r
+        _tool_request("get_cart_tool", _activated_messages()), lambda r: r
     )
     assert str(refused.content).startswith(SKILL_TOOL_NOT_GRANTED)
 
@@ -1913,13 +1975,19 @@ def test_a_turn_may_correct_the_skills_it_opened_with() -> None:
     assert corrected is True
     handled: list[ToolCallRequest] = []
     result = middleware.wrap_tool_call(
-        _tool_request("add_cart_items_tool", _activated_messages()),
+        _tool_request("get_cart_tool", _activated_messages()),
         handled.append,
     )
     assert handled, "the corrected selection must grant the tool"
     assert not str(getattr(result, "content", "")).startswith(
         SKILL_TOOL_NOT_GRANTED
     )
+    refused = middleware.wrap_tool_call(
+        _tool_request("add_cart_items_tool", _activated_messages()),
+        handled.append,
+    )
+    assert len(handled) == 1
+    assert "the cart is unchanged" in str(refused.content)
 
 
 def test_a_turn_cannot_reselect_for_ever() -> None:

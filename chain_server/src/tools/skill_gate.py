@@ -79,6 +79,26 @@ def _tool_not_granted(tool_name: str, selected_skills: Sequence[str]) -> str:
     )
 
 
+def _cart_change_not_requested(tool_name: str, opening_skills: Sequence[str]) -> str:
+    """Refuse a cart change the turn did not open by asking for.
+
+    Unlike a tool that is merely not granted, re-activating is not the
+    recovery: the turn's first selection is read from the shopper's words
+    before any tool result, and a later one is not. So the message closes that
+    path and names the one that is honest, offering what the turn found.
+    """
+
+    opening = ", ".join(sorted(opening_skills)) or "none"
+    return (
+        f"{SKILL_TOOL_NOT_GRANTED} '{tool_name}' changes the cart, and a cart "
+        "change runs only on a turn that opened with a skill granting it, "
+        f"chosen from what the shopper asked. This turn opened with {opening}, "
+        "so the call was not run and the cart is unchanged. Do not activate "
+        "skills again to retry it, and do not tell the shopper it was done: "
+        "recommend the items and offer to add them."
+    )
+
+
 class ShopperSkillActivationError(RuntimeError):
     """Raised when a turn tries to finish before required skill activation."""
 
@@ -150,6 +170,9 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         self._status = "pending"
         self._skill_files: dict[str, str] = {}
         self._selected_skills: frozenset[str] = frozenset()
+        # The selection made from the shopper's words alone, before any tool
+        # result is in the context. Only it can authorise a cart change.
+        self._opening_skills: frozenset[str] = frozenset()
         self._granted_tools: frozenset[str] = frozenset()
         self._activation_validation_failures = 0
         self._activations = 0
@@ -195,6 +218,8 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
                 return False
             self._skill_files = dict(skill_files)
             self._selected_skills = selected
+            if self._activations == 0:
+                self._opening_skills = selected
             self._granted_tools = granted_tools
             self._status = "active"
             self._activations += 1
@@ -411,7 +436,15 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
         with self._lock:
             status = self._status
             selected_skills = self._selected_skills
+            opening_skills = self._opening_skills
             granted_tools = self._granted_tools
+        policy = SHOPPING_TOOL_POLICIES[tool_name]
+        if (
+            status == "active"
+            and policy.risk == "mutating"
+            and not policy.allows_any(opening_skills)
+        ):
+            return _cart_change_not_requested(tool_name, sorted(opening_skills))
         if status != "active" or not tool_is_granted(
             tool_name,
             selected_skills,

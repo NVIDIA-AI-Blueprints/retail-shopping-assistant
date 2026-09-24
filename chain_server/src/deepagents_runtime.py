@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import contextlib
+import inspect
 import json
 import logging
 import os
@@ -2699,9 +2700,19 @@ class DeepAgentsRuntime:
             skill_gate.handle_activation_validation_error
         )
 
+        agent_tools = [activate_shopper_skills_tool, *shopping_tools]
+        # `@tool` copies the docstring verbatim, source indentation included,
+        # so where a tool is defined would otherwise change what the model
+        # reads. Descriptions take the form they are evaluated with, wherever
+        # their source sits; changing that form changes which tools turns
+        # call, and needs a replay like any prompt change.
+        for agent_tool in agent_tools:
+            if isinstance(getattr(agent_tool, "description", None), str):
+                agent_tool.description = _as_evaluated(agent_tool.description)
+
         agent_kwargs: dict[str, Any] = {
             "model": self._create_chat_model(),
-            "tools": [activate_shopper_skills_tool, *shopping_tools],
+            "tools": agent_tools,
             "system_prompt": self._system_prompt(
                 shopper_context=state.shopper_context,
                 media=bool(state.media),
@@ -3898,6 +3909,16 @@ Rules:
 #: lane. catalog_text is the prose serialisation of the same attributes and is
 #: deliberately not forwarded -- it carries a marketing summary, and separating
 #: the two would mean parsing prose.
+
+
+_EVALUATED_DESCRIPTION_INDENT = " " * 12
+
+
+def _as_evaluated(description: str) -> str:
+    first, *rest = inspect.cleandoc(description).split("\n")
+    return "\n".join(
+        [first, *(_EVALUATED_DESCRIPTION_INDENT + line if line else line for line in rest)]
+    )
 
 
 

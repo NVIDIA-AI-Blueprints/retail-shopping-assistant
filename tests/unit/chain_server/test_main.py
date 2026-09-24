@@ -41,6 +41,7 @@ from chain_server.src.shopper_profiles import (
 )
 from chain_server.src.tools import cart as cart_tools
 from chain_server.src.tools import catalog as catalog_tools
+from chain_server.src.tools import skills as skill_tools
 from chain_server.src.tools import store as store_tools
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -3170,7 +3171,7 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert isinstance(
             skill_gate,
-            runtime_mod.ShopperSkillActivationMiddleware,
+            skill_tools.ShopperSkillActivationMiddleware,
         )
         # The gate writes the prompt; the loop control knows what the turn has
         # finished with. Asserting the wiring rather than the behaviour,

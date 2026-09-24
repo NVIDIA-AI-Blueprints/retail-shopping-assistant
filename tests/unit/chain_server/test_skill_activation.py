@@ -1969,7 +1969,8 @@ def test_skills_named_in_the_activation_tool_are_registered() -> None:
         Path(__file__).resolve().parents[3]
         / "chain_server"
         / "src"
-        / "deepagents_runtime.py"
+        / "tools"
+        / "skills.py"
     ).read_text()
     start = runtime_source.index("def activate_shopper_skills_tool(")
     docstring = runtime_source[start : runtime_source.index('"""', start + 400)]

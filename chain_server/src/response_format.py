@@ -25,9 +25,6 @@ from shared.commerce_contracts import (
 )
 from shared.commerce_contracts import (
     CartMutationResult,
-    CheckActivePromotionsResult,
-    CheckProductAvailabilityResult,
-    GetStorePolicyResult,
     ProductSummary,
 )
 
@@ -535,23 +532,6 @@ def _format_size_change_result(
     if cart is not None:
         lines.append(_format_cart_lines(cart))
     return "\n".join(lines)
-
-
-def _format_policy_result(result: GetStorePolicyResult) -> str:
-    if not result.ok or result.policy is None:
-        message = result.error.message if result.error else "unknown error"
-        return f"POLICY NOT AVAILABLE: {message}"
-    policy = result.policy
-    return f"STORE POLICY — {policy.title}\n{policy.body}"
-
-
-def _format_availability_result(result: CheckProductAvailabilityResult) -> str:
-    return f"AVAILABILITY ({result.product_ref}): {result.message}"
-
-
-def _format_promotions_result(result: CheckActivePromotionsResult) -> str:
-    status = "YES" if result.active else "NO"
-    return f"ACTIVE PROMOTIONS: {status}\n{result.message}"
 
 
 def _format_cart_total(cart: Cart) -> str:

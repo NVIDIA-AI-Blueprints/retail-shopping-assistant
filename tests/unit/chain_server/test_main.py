@@ -39,6 +39,7 @@ from chain_server.src.shopper_profiles import (
     ShopperProfile,
     ShopperProfilesError,
 )
+from chain_server.src.tools import store as store_tools
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from shared.commerce_contracts import Cart as CommerceCart
@@ -963,11 +964,9 @@ class TestStorePolicyPath:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
-
         monkeypatch.setenv("SHARED_CONFIG_ROOT", str(tmp_path))
 
-        assert runtime_mod_support._store_policies_path() == (
+        assert store_tools._store_policies_path() == (
             tmp_path / "chain_server" / "store_policies.yaml"
         )
 
@@ -975,11 +974,9 @@ class TestStorePolicyPath:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from chain_server.src import turn_support as runtime_mod_support
-
         monkeypatch.delenv("SHARED_CONFIG_ROOT", raising=False)
 
-        assert runtime_mod_support._store_policies_path() == (
+        assert store_tools._store_policies_path() == (
             Path(__file__).resolve().parents[3]
             / "shared"
             / "configs"
@@ -3139,11 +3136,11 @@ class TestDeepAgentsRuntimeRefs:
         )
         assert (
             tools_by_name["get_store_policy_tool"].args_schema
-            is runtime_mod._GetStorePolicyInput
+            is store_tools._GetStorePolicyInput
         )
         assert (
             tools_by_name["check_product_availability_tool"].args_schema
-            is runtime_mod._CheckAvailabilityInput
+            is store_tools._CheckAvailabilityInput
         )
         assert (
             tools_by_name["resolve_conversation_products_tool"].args_schema
@@ -3318,11 +3315,9 @@ class TestDeepAgentsRuntimeRefs:
         assert "Never answer any policy from model knowledge" in policy
         # Availability now says so on the tool itself, which is the channel the
         # model reads when it is deciding whether to call it.
-        runtime_source = (
-            pathlib.Path(__file__).resolve().parents[3]
-            / "chain_server/src/deepagents_runtime.py"
-        ).read_text()
-        assert "explicitly asks about availability" in runtime_source
+        assert "explicitly asks about availability" in (
+            tools_by_name["check_product_availability_tool"].__doc__
+        )
         assert "Outdoor-practicality claims require exact support" in (
             captured["system_prompt"]
         )

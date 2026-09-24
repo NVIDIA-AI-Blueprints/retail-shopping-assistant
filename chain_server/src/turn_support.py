@@ -35,7 +35,6 @@ import re
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal
 
@@ -88,12 +87,6 @@ from .tool_loop_control import (
 logger = logging.getLogger(__name__)
 
 
-_SHARED_CONFIG_ROOT_ENV = "SHARED_CONFIG_ROOT"
-
-
-_STORE_POLICIES_RELATIVE_PATH = Path("chain_server/store_policies.yaml")
-
-
 def _build_checkpointer():
     """Return the process-local LangGraph checkpointer."""
 
@@ -104,25 +97,6 @@ def _build_checkpointer():
             f"Received: {store!r}."
         )
     return MemorySaver()
-
-
-def _store_policies_path() -> Path:
-    """Resolve controlled policy content outside the agent-readable skill root."""
-
-    configured_root = os.environ.get(_SHARED_CONFIG_ROOT_ENV, "").strip()
-    if configured_root:
-        return Path(configured_root) / _STORE_POLICIES_RELATIVE_PATH
-
-    deployed_path = Path("/app/shared/configs") / _STORE_POLICIES_RELATIVE_PATH
-    if deployed_path.is_file():
-        return deployed_path
-
-    return (
-        Path(__file__).resolve().parents[2]
-        / "shared"
-        / "configs"
-        / _STORE_POLICIES_RELATIVE_PATH
-    )
 
 
 _PARTIAL_GRAPH_SNAPSHOT_TIMEOUT_SECONDS = 1.0

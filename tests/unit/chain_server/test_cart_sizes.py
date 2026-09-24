@@ -517,7 +517,7 @@ class TestAtomicRefusalSaysWhatWasReady:
     def _result(self, ready=None):
         from types import SimpleNamespace
 
-        from chain_server.src.response_format import _format_cart_add_result
+        from chain_server.src.cart_format import _format_cart_add_result
 
         cart = SimpleNamespace(contents=[], lines=[], total=None)
         failed = [

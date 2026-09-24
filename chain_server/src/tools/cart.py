@@ -10,13 +10,13 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field, field_validator
 
 from ..agenttypes import State
+from ..cart_format import _format_cart, _format_cart_total
 from ..cart_operations import (
     add_items_to_the_cart,
     remove_a_cart_line,
     update_a_cart_line,
 )
 from ..control_signals import normalize_tool_result
-from ..response_format import _format_cart, _format_cart_total
 from ..turn_scope import TurnScope
 from ..turn_support import (
     AddCartItemsToolItemInput,

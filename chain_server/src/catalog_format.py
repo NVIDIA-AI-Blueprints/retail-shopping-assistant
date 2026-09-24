@@ -1,46 +1,38 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Rendering for model-visible and shopper-visible text.
+"""How search results, product records and the catalog's shape are
+written for the model.
 
-These functions turn already-decided data into the exact strings the model and
-the shopper read. They decide nothing: no retrieval, no policy, no control flow,
-no state. That is what makes them safe to hold apart from the runtime, and worth
-holding apart, because their output is a contract -- several are asserted
-byte-for-byte by the evidence tests, so a wording change is a visible diff rather
-than a quietly different string.
-
-Moved verbatim from ``deepagents_runtime.py``. Nothing here was edited during the
-move; the runtime imports these names back, so behaviour is unchanged.
+These turn already-decided data into the exact strings the model reads and
+decide nothing themselves. Several are asserted byte-for-byte by the
+evidence tests, so a wording change is a visible diff.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from typing import Any
 
-from shared.commerce_contracts import (
-    Cart as CommerceCart,
-)
-from shared.commerce_contracts import (
-    CartMutationResult,
-    ProductSummary,
-)
-
-from .agenttypes import Cart, ShopperContext
+from shared.commerce_contracts import ProductSummary
 
 _SEARCH_FILTER_EVIDENCE_PREFIX = "SEARCH_FILTER_EVIDENCE:"
 
+
 _SEARCH_TAXONOMY_EVIDENCE_PREFIX = "SEARCH_TAXONOMY_EVIDENCE:"
+
 
 _SEARCH_DIRECTION_EVIDENCE_PREFIX = "SEARCH_DIRECTION_EVIDENCE:"
 
+
 _SEARCH_GUIDANCE_EVIDENCE_PREFIX = "SEARCH_GUIDANCE_EVIDENCE:"
+
 
 _SEARCH_SCOPE_RELATION_EVIDENCE_PREFIX = "SEARCH_SCOPE_RELATION_EVIDENCE:"
 
+
 _CATALOG_SCOPE_OUTCOME_PREFIX = "CATALOG_SCOPE_OUTCOME:"
+
 
 _PRODUCT_DETAIL_GROUNDING_NOTE = (
     "PRODUCT_DETAIL_GROUNDING_NOTE: This detail result exposes only "
@@ -378,319 +370,6 @@ def _format_product_refs(products: list[ProductSummary]) -> str:
         f"{product.display_name} (PRODUCT_REF: {product.product_id})"
         for product in products
     )
-
-
-def _format_cart_add_result(
-    added: list[str],
-    failed: list[str],
-    cart: Cart,
-    ready: list[str] | None = None,
-) -> str:
-    """Report an add, including what was established but not written.
-
-    The add is all or nothing, so one unanswered item holds back the rest. That
-    is deliberate. What was not deliberate is that the held-back items vanished
-    from the result: a shopper who gave a correct size for the boots and a
-    letter size for the sweater was asked for both again, because nothing told
-    the model the boots were already settled.
-    """
-
-    lines = ["CART_ADD_RESULT"]
-    if added:
-        lines.append("Added:")
-        lines.extend(added)
-    if failed:
-        lines.append("Failed:")
-        lines.extend(failed)
-    if ready:
-        lines.append(
-            "Established, not added -- the add is all or nothing, so these are "
-            "waiting on the item above. Do not ask for these again:"
-        )
-        lines.extend(ready)
-    lines.append("Current cart:")
-    lines.append(_format_cart_lines(cart))
-    lines.append("Cart total:")
-    lines.append(_format_cart_total(cart))
-    return "\n".join(lines)
-
-
-def _format_cart_lines(cart: Cart | CommerceCart) -> str:
-    if isinstance(cart, CommerceCart):
-        if not cart.lines:
-            return "  (cart is empty)"
-        lines = [
-            f"  {line.cart_line_id} | {line.display_name} | qty {line.quantity}"
-            + (f" | size {line.size}" if line.size else "")
-            + (
-                f" | {line.unit_price.currency} {line.unit_price.amount:.2f}"
-                if line.unit_price
-                else ""
-            )
-            for line in cart.lines
-        ]
-        if cart.subtotal:
-            lines.append(
-                f"  SUBTOTAL: {cart.subtotal.currency} {cart.subtotal.amount:.2f}"
-            )
-        return "\n".join(lines)
-
-    if not cart.contents:
-        return "(empty)"
-    lines = []
-    for item in cart.contents:
-        price = item.get("price")
-        suffix = ""
-        if price is not None:
-            try:
-                suffix = f" @ ${float(price):.2f}"
-            except (TypeError, ValueError):
-                suffix = ""
-        cart_line_id = item.get("cart_line_id") or item.get("item", "")
-        # The size is what makes two lines of one dress make sense to a
-        # shopper reading their own cart back.
-        size = item.get("size")
-        size_text = f" (size {size})" if size else ""
-        lines.append(
-            f"- CART_LINE_ID: {cart_line_id} | "
-            f"{item.get('amount', 1)} x {item.get('item', '')}{size_text}{suffix}"
-        )
-    return "\n".join(lines)
-
-
-def _format_cart(cart: Cart) -> str:
-    return _format_cart_lines(cart)
-
-
-def _format_cart_remove_result(
-    result: CartMutationResult,
-    *,
-    fallback: str,
-) -> str:
-    if not result.ok:
-        return result.error.message if result.error else "Cart remove failed."
-    message = result.message or fallback
-    if result.cart is not None:
-        return "\n".join(
-            [message, "Current cart:", _format_cart_lines(result.cart)]
-        )
-    return message
-
-
-def _format_update_cart_result(
-    result: CartMutationResult,
-    cart: Cart | CommerceCart | None = None,
-) -> str:
-    if not result.ok:
-        message = result.error.message if result.error else "unknown error"
-        return f"CART UPDATE FAILED: {message}"
-    lines = ["CART UPDATED"]
-    if result.changed_line:
-        lines.append(
-            f"  {result.changed_line.display_name} → "
-            f"qty {result.changed_line.quantity}"
-        )
-    active_cart = cart if cart is not None else result.cart
-    if active_cart is not None:
-        lines.append(_format_cart_lines(active_cart))
-    return "\n".join(lines)
-
-
-def _format_size_change_result(
-    *,
-    display_name: str,
-    from_size: str,
-    to_size: str,
-    quantity: int,
-    cart: Cart | CommerceCart | None,
-    old_line_removed: bool,
-    old_line_id: str,
-) -> str:
-    """Report a size change as the one change it is, or say what is left over.
-
-    The add runs before the remove, so that a failure between them leaves the
-    shopper an extra line rather than nothing. That is also why there are two
-    reports: on the unhappy path the cart really does hold both sizes, and the
-    turn has to say so and carry the id that finishes the job, rather than
-    announce a replacement that only half happened.
-    """
-
-    held = from_size or "onesize"
-    if old_line_removed:
-        lines = [
-            f"CART SIZE CHANGED: {display_name} is now qty {quantity}, size "
-            f"{to_size}. The size {held} line was removed."
-        ]
-    else:
-        lines = [
-            f"CART SIZE PARTIALLY CHANGED: size {to_size} was added for "
-            f"{display_name}, but the size {held} line could not be removed, "
-            "so the cart holds both. Remove it with remove_cart_item_tool "
-            f"using CART_LINE_ID {old_line_id}. Tell the shopper what the "
-            "cart actually holds, not what was asked for."
-        ]
-    if cart is not None:
-        lines.append(_format_cart_lines(cart))
-    return "\n".join(lines)
-
-
-def _format_cart_total(cart: Cart) -> str:
-    if not cart.contents:
-        return "Your cart is empty, so the total is $0.00."
-    subtotal = 0.0
-    missing = []
-    lines = []
-    for item in cart.contents:
-        name = item.get("item", "")
-        amount = int(item.get("amount") or 0)
-        price = item.get("price")
-        if price is None:
-            missing.append(name)
-            lines.append(f"- {amount} x {name}: price unavailable")
-            continue
-        line_total = float(price) * amount
-        subtotal += line_total
-        lines.append(f"- {amount} x {name} @ ${float(price):.2f} = ${line_total:.2f}")
-    total = f"Cart total: ${subtotal:.2f}"
-    if missing:
-        total += f" excluding items without cached prices: {', '.join(missing)}"
-    return "\n".join(lines + [total])
-
-
-def _format_store_date(now: datetime | None = None) -> str:
-    """Give the turn a date, because the model does not reliably have one.
-
-    Measured three identical asks: one answered "Today is August 6, 2026",
-    two answered "I don't have access to your local date/time". A date that
-    arrives one turn in three is worse than none, because the shopper gets a
-    different assistant each time.
-
-    Deliberately narrow. A date says when the shop is, and nothing else: not
-    where the shopper is, not the weather, not a season -- August is winter in
-    half the world and irrelevant indoors. Without that clause a date becomes
-    the licence to invent exactly the facts the shopper-context rules forbid.
-    """
-
-    stamp = (now or datetime.now(UTC)).astimezone(UTC)
-    return (
-        "TODAY (store's current date, server-resolved):\n"
-        f"{stamp:%Y-%m-%d}, a {stamp:%A}, UTC\n"
-        "Resolve relative dates the shopper mentions against this -- next "
-        "week, this weekend, in two weeks. Say the calendar dates you worked "
-        "out so they can correct you. The shopper's own date may differ if "
-        "they are far from UTC.\n"
-        "This says when the shop is. It does not say where the shopper is, "
-        "and their location, weather and season never follow from it.\n"
-        "END TODAY"
-    )
-
-
-def _format_shopper_context(context: ShopperContext | None) -> str:
-    if context is None:
-        return ""
-    # The saved ZIP is deliberately absent. Every use of it is forbidden --
-    # it is not proof of location, weather, or a product requirement, and the
-    # weather slice that would give it a use is dormant. Showing the model a
-    # fact and then forbidding every use of it is an invitation, not a
-    # safeguard. It stays on the profile record and the picker; it returns
-    # here when weather tooling defines what may be concluded from it.
-    return (
-        "SHOPPER CONTEXT (server-resolved; soft guidance only):\n"
-        f"shopper_type: {context.shopper_type}\n"
-        f"behavior: {context.behavior}\n"
-        "END SHOPPER CONTEXT"
-    )
-
-
-def _format_wearer_audience(audience: list[str] | None) -> str:
-    """Say who the last named item was for, without scoping anything.
-
-    A wearer is a property of the item they were named for, not of the
-    conversation: after "shades for hubby", "show me some heels" must not be
-    scoped to mens.
-
-    The two errors are not the same size. Carrying it wrongly costs the
-    shopper the whole result set, silently, with no way to see why. Forgetting
-    it costs one question. So the value is reported and the turn decides:
-    audience scopes a search only when the turn itself names the person.
-    """
-
-    if not audience:
-        return ""
-    values = ", ".join(sorted(str(value) for value in audience))
-    return (
-        "SHOPPING FOR (context for reading this turn; not a scope by itself):\n"
-        f"audience: {values}\n"
-        "The last item the shopper named a person for was for this audience. "
-        "Decide this turn's audience from this turn's own words. If they "
-        "refer to that person again, including by pronoun -- \"he also needs "
-        "a bag\", \"something for her\" -- filter to the values that suit "
-        "them. If this turn refers to nobody, send no audience filter at all, "
-        "however obviously the person is still around. You may ask whether "
-        "they are still shopping for the same person.\n"
-        "END SHOPPING FOR"
-    )
-
-
-def _format_retrieved_images(retrieved: dict[str, str] | None) -> str:
-    if not retrieved:
-        return "(none)"
-    return "\n".join(f"- {name}: image available" for name in retrieved)
-
-
-def _format_media_summary(media: list[dict[str, Any]]) -> str:
-    if not media:
-        return "(none)"
-    counts: dict[str, int] = {}
-    for item in media:
-        media_type = str(item.get("type") or "unknown")
-        counts[media_type] = counts.get(media_type, 0) + 1
-    return ", ".join(f"{count} {media_type}(s)" for media_type, count in sorted(counts.items()))
-
-def _cart_line_key(line: dict) -> tuple:
-    """Identity of a cart line for comparison: what a shopper would call
-    'the same line' -- the product and the size, not the opaque line id."""
-    return (
-        str(line.get("item") or line.get("display_name") or ""),
-        str(line.get("size") or ""),
-    )
-
-
-def format_cart_change(before: Cart | None, after: Cart | None) -> str:
-    """State what this turn did to the cart, as a fact.
-
-    The editor was already told not to claim a cart action absent from CURRENT
-    CART, and it still passed "I've added the tote bag back" on a turn where the
-    add failed and the cart was unchanged. A prohibition left it comparing two
-    lists and judging; this hands it the answer. Computed from the two
-    snapshots, so it cannot disagree with the cart.
-    """
-
-    if before is None or after is None:
-        return "not known for this turn"
-    b: dict[tuple, int] = {}
-    for line in getattr(before, "contents", []) or []:
-        k = _cart_line_key(line)
-        b[k] = b.get(k, 0) + int(line.get("amount") or 0)
-    a: dict[tuple, int] = {}
-    for line in getattr(after, "contents", []) or []:
-        k = _cart_line_key(line)
-        a[k] = a.get(k, 0) + int(line.get("amount") or 0)
-    changes: list[str] = []
-    for k in sorted(set(a) | set(b), key=lambda x: (x[0], x[1])):
-        name, size = k
-        label = f"{name}" + (f" (size {size})" if size else "")
-        delta = a.get(k, 0) - b.get(k, 0)
-        if delta > 0:
-            changes.append(f"- added {label} x{delta}")
-        elif delta < 0:
-            changes.append(f"- removed {label} x{-delta}")
-    if not changes:
-        return (
-            "NOTHING CHANGED. No item was added, removed, or altered this "
-            "turn. Do not tell the shopper otherwise, whatever the draft says."
-        )
-    return "\n".join(changes)
 
 
 def format_catalog_shape(capabilities: Any) -> str:

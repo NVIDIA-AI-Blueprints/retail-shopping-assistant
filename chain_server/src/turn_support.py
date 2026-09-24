@@ -57,6 +57,8 @@ from shared.commerce_contracts import (
 )
 
 from .agenttypes import Cart, State
+from .cart_format import _format_cart
+from .catalog_format import _format_detail_value, _format_product_refs
 from .conversation_memory import (
     ConversationEvent,
     FinalTurnStatus,
@@ -66,11 +68,6 @@ from .message_shape import (
     _message_type,
     _result_messages,
     _value,
-)
-from .response_format import (
-    _format_cart,
-    _format_detail_value,
-    _format_product_refs,
 )
 from .tools.evidence import (
     evidence_of,

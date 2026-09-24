@@ -37,6 +37,21 @@ from shared.commerce_contracts import (
 
 from .agenttypes import State
 from .catalog_execution import execute_catalog_search
+from .catalog_format import (
+    SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE,
+    _format_catalog_scope_outcome,
+    _format_colour_words_read_as_advertised_ones,
+    _format_excluded_near_miss,
+    _format_product_record,
+    _format_search_composed_role_evidence,
+    _format_search_direction_evidence,
+    _format_search_filter_evidence,
+    _format_search_guidance_evidence,
+    _format_search_scope_relation_evidence,
+    _format_search_taxonomy_evidence,
+    _format_search_unadvertised_type_evidence,
+    _format_words_this_catalog_cannot_filter_on,
+)
 from .catalog_request import (
     CatalogSearchIntent,
     _filter_values,
@@ -67,21 +82,6 @@ from .lexical_provenance import (
 )
 from .model_usage import (
     _record_catalog_model_usage,
-)
-from .response_format import (
-    SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE,
-    _format_catalog_scope_outcome,
-    _format_colour_words_read_as_advertised_ones,
-    _format_excluded_near_miss,
-    _format_product_record,
-    _format_search_composed_role_evidence,
-    _format_search_direction_evidence,
-    _format_search_filter_evidence,
-    _format_search_guidance_evidence,
-    _format_search_scope_relation_evidence,
-    _format_search_taxonomy_evidence,
-    _format_search_unadvertised_type_evidence,
-    _format_words_this_catalog_cannot_filter_on,
 )
 from .tools.evidence import (
     EVIDENCE_KEY,

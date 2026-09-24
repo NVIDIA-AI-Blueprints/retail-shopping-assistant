@@ -991,7 +991,7 @@ class TestStorePolicyPath:
 
 class TestCartFormatting:
     def test_remove_result_preserves_existing_message_shape(self) -> None:
-        from chain_server.src.response_format import _format_cart_remove_result
+        from chain_server.src.cart_format import _format_cart_remove_result
 
         formatted = _format_cart_remove_result(
             CartMutationResult(ok=True, message="Removed from cart."),
@@ -1001,7 +1001,7 @@ class TestCartFormatting:
         assert formatted == "Removed from cart."
 
     def test_update_result_formats_shared_cart_lines(self) -> None:
-        from chain_server.src.response_format import _format_update_cart_result
+        from chain_server.src.cart_format import _format_update_cart_result
 
         line = CartLine(
             cart_line_id="Silk Dress",
@@ -7925,9 +7925,9 @@ class TestDeepAgentsRuntimeRefs:
             price=Money(amount=129.0),
         )
 
-        from chain_server.src import response_format
+        from chain_server.src import catalog_format
 
-        formatted = response_format._format_product_record(
+        formatted = catalog_format._format_product_record(
             runtime_mod_support._search_product_record(product)
         )
 
@@ -7951,9 +7951,9 @@ class TestDeepAgentsRuntimeRefs:
             attributes={"sole": "rubber", "fastening": "ankle strap"},
         )
 
-        from chain_server.src import response_format
+        from chain_server.src import catalog_format
 
-        formatted = response_format._format_product_detail_record(
+        formatted = catalog_format._format_product_detail_record(
             runtime_mod_support._product_detail_record(product)
         )
 

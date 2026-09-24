@@ -13,6 +13,7 @@ from shared.commerce_contracts import CatalogCapabilities, GetProductDetailsInpu
 from ..agenttypes import State
 from ..catalog_capabilities import format_catalog_capabilities_for_prompt
 from ..catalog_execution import execute_catalog_search
+from ..catalog_format import _format_product_detail_record, format_catalog_shape
 from ..catalog_request import CatalogSearchPlan
 from ..catalog_scope import CATALOG_SEARCH_RULES
 from ..catalog_search import SearchContext, search_catalog
@@ -25,7 +26,6 @@ from ..conversation_products import (
     format_historical_product_index,
     format_product_resolution,
 )
-from ..response_format import _format_product_detail_record, format_catalog_shape
 from ..turn_scope import TurnScope
 from ..turn_support import (
     _ONE_SIZE,

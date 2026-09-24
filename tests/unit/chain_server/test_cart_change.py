@@ -8,7 +8,7 @@ that replaces it.
 """
 
 from chain_server.src.agenttypes import Cart
-from chain_server.src.response_format import format_cart_change
+from chain_server.src.cart_format import format_cart_change
 
 
 def _cart(*lines):

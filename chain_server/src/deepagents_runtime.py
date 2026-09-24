@@ -31,6 +31,7 @@ from shared.commerce_contracts import (
 )
 
 from .agenttypes import Cart, ShopperContext, State
+from .cart_format import _format_cart, format_cart_change
 from .catalog_capabilities import (
     CatalogCapabilitiesClient,
     format_catalog_capabilities_for_prompt,
@@ -75,14 +76,12 @@ from .model_usage import (
     _record_safety_model_usage,
     _should_short_circuit_media_failure,
 )
-from .response_format import (
-    _format_cart,
+from .prompts import (
     _format_media_summary,
     _format_retrieved_images,
     _format_shopper_context,
     _format_store_date,
     _format_wearer_audience,
-    format_cart_change,
 )
 from .search_replies import (
     _format_search_only_response,

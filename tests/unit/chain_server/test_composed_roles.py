@@ -619,7 +619,7 @@ def test_the_carried_wearer_is_reported_but_never_scopes_a_search() -> None:
     turns the filter on.
     """
 
-    from chain_server.src.response_format import _format_wearer_audience
+    from chain_server.src.prompts import _format_wearer_audience
 
     block = _format_wearer_audience(["adult_all_genders"])
 

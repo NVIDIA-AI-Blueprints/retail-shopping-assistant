@@ -84,6 +84,16 @@ def wait_until_ready(timeout_s: float = 900, every_s: float = 10) -> bool:
         sleep(every_s)
 
 
+def clear_shopper(user_id: int = NOTEBOOK_USER_ID) -> None:
+    """Empty a shopper's cart and context. A shopper never seen is already clear."""
+
+    try:
+        post(f"{MEMORY}/user/{user_id}/clear", {})
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            raise
+
+
 def new_conversation(prefix: str = "notebook") -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 

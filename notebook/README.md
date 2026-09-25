@@ -20,7 +20,6 @@ you see something else.
 Start Jupyter from a shell that has the key, at the repo root:
 
 ```bash
-docker login nvcr.io                   # username: $oauthtoken   password: your API key
 export NVIDIA_API_KEY="nvapi-..."
 export EXPOSE_AGENT_DIAGNOSTICS=true   # development only: each turn reports its tools
 jupyter lab notebook/

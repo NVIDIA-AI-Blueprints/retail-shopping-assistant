@@ -8,7 +8,7 @@ you see something else.
 |---|---|---|
 | [1 · Getting Started](1_Getting_Started.ipynb) | deploy on hosted endpoints, hold a first conversation, and call each component once | ~20 min |
 | [2 · Observability](2_Observability.ipynb) | read a turn's traces in Phoenix: skills, prompts, tool calls, refusals, time and tokens | ~30 min |
-| [3 · Evaluation](3_Evaluation.ipynb) | replay fixed conversations, read failures, repeat, compare runs, write a scenario | ~30 min |
+| [3 · Evaluation](3_Evaluation.ipynb) | replay fixed conversations, investigate a failure, tell flaky from broken, write a scenario, run the Challenger and Judge | ~30 min |
 
 ## Before you start
 

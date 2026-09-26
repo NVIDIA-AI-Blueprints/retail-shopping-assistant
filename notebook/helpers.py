@@ -213,6 +213,33 @@ def wait_for_turns(session_id: str, count: int, timeout_s: float = 60) -> list[d
         sleep(2)
 
 
+def _project_id(project: str = "default") -> str:
+    return next(p["id"] for p in get(f"{PHOENIX}/v1/projects")["data"] if p["name"] == project)
+
+
+def session_link(session_id: str) -> str:
+    """The Phoenix page for one conversation.
+
+    Phoenix addresses a session by its own node id, not the conversation id,
+    so this looks the one up from the other.
+    """
+
+    found = post(
+        f"{PHOENIX}/graphql",
+        {
+            "query": "query($s: String!) { getProjectSessionById(sessionId: $s) { id } }",
+            "variables": {"s": session_id},
+        },
+    )["data"]["getProjectSessionById"]
+    if not found:
+        return f"session {session_id} is not in Phoenix yet; run the cell again"
+    return f"{PHOENIX}/projects/{_project_id()}/sessions/{found['id']}"
+
+
+def trace_link(trace_id: str) -> str:
+    return f"{PHOENIX}/projects/{_project_id()}/traces/{trace_id}"
+
+
 def by_trace(rows: list[dict]) -> dict[str, list[dict]]:
     traces: dict[str, list[dict]] = defaultdict(list)
     for row in rows:

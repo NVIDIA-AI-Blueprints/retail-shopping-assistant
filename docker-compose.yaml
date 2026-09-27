@@ -38,6 +38,9 @@ services:
       # Set it to http://otel-collector:4318 to trace.
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-chain-server}
+      # Relay sends plain HTTP only to loopback, so it goes to relay-collector,
+      # which shares this container's network. See relay-collector below.
+      - RELAY_OTLP_ENDPOINT=${RELAY_OTLP_ENDPOINT:-http://127.0.0.1:4318}
     volumes:
       - ./shared:/app/shared
     depends_on:
@@ -324,6 +327,22 @@ services:
       - phoenix
     networks:
       - shopping-network
+
+  # NeMo Relay's loopback hop. Relay sends plain HTTP only to localhost or a
+  # loopback address, and otel-collector is neither from inside chain-server.
+  # This shares chain-server's network namespace, listens on 127.0.0.1 there,
+  # and forwards to otel-collector. Recreating chain-server orphans it, so
+  # restart both together: `docker compose up -d chain-server relay-collector`.
+  relay-collector:
+    image: otel/opentelemetry-collector-contrib:0.140.0
+    container_name: relay-collector
+    command: ["--config=/etc/relay-collector-config.yaml"]
+    network_mode: "service:chain-server"
+    volumes:
+      - ./relay-collector-config.yaml:/etc/relay-collector-config.yaml
+    depends_on:
+      - chain-server
+      - otel-collector
 
   # Arize Phoenix - trace viewer.
   phoenix:

@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NeMo Relay's loopback hop to otel-collector.
+#
+# Relay 0.9 sends traces over plain HTTP only to localhost or a loopback
+# address; anything else must be HTTPS. This collector runs in the chain
+# server's network namespace, so Relay reaches it on 127.0.0.1, and it forwards
+# everything unchanged to otel-collector, which still decides where traces
+# land. Listening on 127.0.0.1 keeps it off the compose network.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 127.0.0.1:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  otlphttp/otel-collector:
+    endpoint: http://otel-collector:4318
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/otel-collector]

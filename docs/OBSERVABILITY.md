@@ -66,6 +66,7 @@ NeMo Relay is separate and optional; see [Adding NeMo Relay](#adding-nemo-relay)
 | `OTEL_SERVICE_NAME` | `chain-server` | Service name on every span. |
 | `RELAY_ENABLED` | `true` in `.env.example`, `false` in compose | Also emit NeMo Relay's events. |
 | `INSTALL_RELAY` | `true` in `.env.example`, `false` in compose | **Build arg.** Whether the image contains `nemo-relay`. |
+| `RELAY_OTLP_ENDPOINT` | `http://127.0.0.1:4318` in compose; otherwise `OTEL_EXPORTER_OTLP_ENDPOINT` | Where Relay sends. Plain HTTP must be loopback; see [Why Relay sends to localhost](#why-relay-sends-to-localhost). |
 
 ---
 
@@ -487,12 +488,27 @@ export RELAY_ENABLED=true
 
 ```bash
 source .env
-docker compose build chain-server     # INSTALL_RELAY is read here
-docker compose up -d chain-server     # RELAY_ENABLED is read here
+docker compose build chain-server                     # INSTALL_RELAY is read here
+docker compose up -d chain-server relay-collector     # RELAY_ENABLED is read here
 
 docker logs chain-server | grep -i relay
-# → Relay tracing enabled, exporting to http://otel-collector:4318
+# → Relay tracing enabled, exporting to http://127.0.0.1:4318
 ```
+
+### Why Relay sends to localhost
+
+Since 0.9, Relay sends traces over plain HTTP only to `localhost` or a loopback
+address; a remote collector must be HTTPS, and there is no setting to relax it.
+Inside compose, `otel-collector` is another container, so Relay would refuse it
+and log `Could not configure Relay tracing: RuntimeError`.
+
+`relay-collector` is the loopback collector Relay's migration guide asks for. It
+shares `chain-server`'s network namespace, listens on `127.0.0.1:4318` there,
+and forwards unchanged to `otel-collector`, which still decides where traces
+land. The app's own exporter keeps sending to `otel-collector` directly.
+Because it lives in `chain-server`'s namespace, recreating `chain-server`
+orphans it: bring both up together. For production, point
+`RELAY_OTLP_ENDPOINT` at an HTTPS collector instead.
 
 `RELAY_ENABLED` without the package logs one warning and serves shoppers
 untouched. `RELAY_ENABLED` without an endpoint logs one warning and exports

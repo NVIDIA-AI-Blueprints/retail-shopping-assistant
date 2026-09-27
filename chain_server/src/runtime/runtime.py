@@ -409,6 +409,7 @@ _EXCLUDED_DEEP_AGENT_TOOLS = frozenset(
         "read_file",
         "write_file",
         "edit_file",
+        "delete",
         "glob",
         "grep",
         "execute",

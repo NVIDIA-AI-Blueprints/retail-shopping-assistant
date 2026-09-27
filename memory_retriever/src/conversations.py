@@ -758,6 +758,31 @@ def _finalize_turn(
     return response
 
 
+def _conversation_memory(db, conversation_id: str) -> dict[str, Any]:
+    """What the next turn of this conversation would read, without starting one.
+
+    The cart is absent on purpose: it belongs to the shopper, not to the
+    conversation, and is read from `/user/{user_id}/cart`.
+    """
+
+    projection = (
+        db.query(ConversationProjection).filter_by(conversation_id=conversation_id).first()
+    )
+    has_turns = (
+        db.query(ConversationTurn.turn_id).filter_by(conversation_id=conversation_id).first()
+        is not None
+    )
+    if projection is None and not has_turns:
+        raise HTTPException(status_code=404, detail="conversation_not_found")
+    return {
+        "conversation_id": conversation_id,
+        "recent_turns": _recent_turns(db, conversation_id),
+        "wearer_audience": _latest_wearer_audience(db, conversation_id),
+        "assumed_audience": _latest_assumed_audience(db, conversation_id),
+        "projection": _projection_dict(projection) if projection else None,
+    }
+
+
 def _delete_conversation(db, conversation_id: str) -> dict[str, Any]:
     begin_write_transaction(db, f"conversation:{conversation_id}")
     turn_ids = db.query(ConversationTurn.turn_id).filter_by(
@@ -990,6 +1015,11 @@ def create_conversation_router(get_db) -> APIRouter:
     ):
         _validate_conversation_id(conversation_id)
         return resolve_product_references(db, conversation_id, request)
+
+    @router.get("/conversations/{conversation_id}/memory")
+    def read_conversation_memory(conversation_id: str, db=Depends(get_db)):
+        _validate_conversation_id(conversation_id)
+        return _conversation_memory(db, conversation_id)
 
     @router.delete("/conversations/{conversation_id}")
     def delete_conversation(conversation_id: str, db=Depends(get_db)):

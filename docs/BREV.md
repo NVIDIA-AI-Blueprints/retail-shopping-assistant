@@ -197,12 +197,12 @@ Download the retail shopping assistant source code to your instance.
 Use the included deployment notebook to automate the setup process.
 
 1. **Navigate to Files**: In Jupyter's file browser (left panel), browse to the cloned repository
-2. **Open Deployment Notebook**: Click **`1_Deploy_Retail_Shopping_Assistant.ipynb`** in the `/notebook/` directory
+2. **Open Deployment Notebook**: Click **`1_Getting_Started.ipynb`** in the `/notebook/` directory
 3. **Execute All Cells**: Follow the notebook's step-by-step instructions:
-   - Obtain your NVIDIA API key from NGC
+   - Set your NVIDIA API key
    - Configure environment variables
    - Start Docker services
-   - Verify deployment status
+   - Verify deployment status and tour each component
 
 ![Step 13: Deploy Notebook](images/step12.png)
 

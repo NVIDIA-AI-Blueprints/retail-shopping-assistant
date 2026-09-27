@@ -24,6 +24,9 @@ from chain_server.src.runtime.runtime import DeepAgentsRuntime
 from chain_server.src.weather import WeatherConfig
 
 SNAPSHOT = Path(__file__).with_name("model_facing_snapshot.json")
+#: The prompt states today's date; the snapshot holds the day it was taken.
+#: `test_today_is_known.py` checks the live date.
+SNAPSHOT_DAY = "Thursday 24 September 2026"
 
 
 def _built_agent(base_config: Any) -> dict[str, Any]:
@@ -45,7 +48,13 @@ def _built_agent(base_config: Any) -> dict[str, Any]:
         ],
     )
     captured: dict[str, Any] = {}
-    with patch("deepagents.create_deep_agent", lambda **kw: captured.update(kw)):
+    with (
+        patch("deepagents.create_deep_agent", lambda **kw: captured.update(kw)),
+        patch(
+            "chain_server.src.runtime.runtime._today_for_the_shopper",
+            lambda: SNAPSHOT_DAY,
+        ),
+    ):
         runtime._create_agent(state, identity)
     return captured
 

@@ -64,8 +64,8 @@ NeMo Relay is separate and optional; see [Adding NeMo Relay](#adding-nemo-relay)
 |---|---|---|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | Collector address. Unset means no tracing at all. |
 | `OTEL_SERVICE_NAME` | `chain-server` | Service name on every span. |
-| `RELAY_ENABLED` | `false` | Also emit NeMo Relay's events. |
-| `INSTALL_RELAY` | `false` | **Build arg.** Whether the image contains `nemo-relay`. |
+| `RELAY_ENABLED` | `true` in `.env.example`, `false` in compose | Also emit NeMo Relay's events. |
+| `INSTALL_RELAY` | `true` in `.env.example`, `false` in compose | **Build arg.** Whether the image contains `nemo-relay`. |
 
 ---
 
@@ -338,7 +338,7 @@ and owning that instrumentation. Roughly a day including tests.
   Sessions tab specifically could stay empty.
 
 **Status: not decided.** What ships today is the three-producer arrangement
-above, with Relay off by default.
+above, with Relay on in `.env.example` and off in `docker-compose.yaml`.
 
 ---
 
@@ -468,8 +468,10 @@ Thirteen tests hold this, one for each way a wrapper could change an outcome.
 
 ## Adding NeMo Relay
 
-Optional, off by default, and it needs two things: a flag, and an image built
-with the package.
+Optional, and it needs two things: a flag, and an image built with the package.
+`.env.example` turns both on, so a deployment from that profile has Relay.
+`docker-compose.yaml` alone defaults both to off. Set both to `false` in the
+profile you deploy to production.
 
 Two variables, both in `.env.example`. `INSTALL_RELAY` puts the library in the
 image and takes effect at build; `RELAY_ENABLED` switches it on at run. Both are

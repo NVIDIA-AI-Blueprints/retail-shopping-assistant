@@ -1876,6 +1876,63 @@ def test_stale_retry_reuses_cart_mutation_idempotency_key(
         assert db.query(memory_main.CartMutation).count() == 1
 
 
+def test_memory_reads_what_the_next_turn_would_see_without_starting_it(
+    conversation_db: TestClient,
+) -> None:
+    conversation_db.post(
+        "/user/7/cart/add",
+        json={
+            "product_id": "bag-1",
+            "item": "Structured Tote",
+            "amount": 1,
+            "idempotency_key": "memory-cart",
+        },
+    )
+    _present_products(
+        conversation_db,
+        "conversation-memory",
+        request_id="request-memory",
+        products=[
+            {"product_id": "bag-1", "display_name": "Structured Tote"},
+            {"product_id": "bag-2", "display_name": "Cobalt Crossbody"},
+        ],
+    )
+
+    first = conversation_db.get("/conversations/conversation-memory/memory")
+    second = conversation_db.get("/conversations/conversation-memory/memory")
+
+    assert first.status_code == 200
+    assert second.json() == first.json()
+    body = first.json()
+    assert body["conversation_id"] == "conversation-memory"
+    assert [turn["shopper_text"] for turn in body["recent_turns"]] == [
+        "Show products for request-memory"
+    ]
+    assert body["wearer_audience"] == []
+    assert body["projection"]["version"] == 1
+    (showing,) = body["projection"]["product_reference_index"]
+    assert showing["turn_seq"] == 1
+    assert [(p["position"], p["name"]) for p in showing["products"]] == [
+        (1, "Structured Tote"),
+        (2, "Cobalt Crossbody"),
+    ]
+    # The cart belongs to the shopper, not to the conversation.
+    assert "cart" not in body
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationTurn).count() == 1
+
+
+def test_memory_of_an_unknown_conversation_is_not_found_and_creates_nothing(
+    conversation_db: TestClient,
+) -> None:
+    missing = conversation_db.get("/conversations/conversation-absent/memory")
+
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "conversation_not_found"
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationProjection).count() == 0
+
+
 def test_reset_hands_back_everything_it_deletes(
     conversation_db: TestClient,
 ) -> None:

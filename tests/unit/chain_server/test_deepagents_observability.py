@@ -1556,7 +1556,9 @@ class TestRelayTurnScope:
 class TestRelayExport:
     """Attaching the middleware is half of it; the events have to leave."""
 
-    def _configure(self, monkeypatch, *, enabled=True, endpoint="http://collector:4318"):
+    def _configure(
+        self, monkeypatch, *, enabled=True, endpoint="http://collector:4318", relay_endpoint=None
+    ):
         from types import SimpleNamespace
 
         from chain_server.src.runtime.runtime import configure_relay_tracing
@@ -1565,6 +1567,10 @@ class TestRelayExport:
             monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
         else:
             monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint)
+        if relay_endpoint is None:
+            monkeypatch.delenv("RELAY_OTLP_ENDPOINT", raising=False)
+        else:
+            monkeypatch.setenv("RELAY_OTLP_ENDPOINT", relay_endpoint)
         return configure_relay_tracing(SimpleNamespace(relay_enabled=enabled))
 
     def _stub_relay(self, monkeypatch, registered) -> None:
@@ -1607,8 +1613,8 @@ class TestRelayExport:
     ) -> None:
         """Phoenix reads openinference; gen_ai spans would arrive and show nothing.
 
-        The endpoint is the collector's OTLP address plus the traces path, taken
-        from the same variable the app's own exporter uses -- not a second one.
+        The endpoint is the collector's OTLP address plus the traces path. With
+        no RELAY_OTLP_ENDPOINT it is the one the app's own exporter uses.
         """
 
         registered: list = []
@@ -1622,6 +1628,16 @@ class TestRelayExport:
         assert config.type == "openinference"
         assert config.endpoint == "http://collector:4318/v1/traces"
         assert config.service_name == "chain-server"
+
+    def test_its_own_endpoint_wins_over_the_shared_one(self, monkeypatch) -> None:
+        """Relay only sends plain HTTP to loopback, so under compose it needs the
+        local relay-collector while the app's own exporter keeps otel-collector."""
+
+        registered: list = []
+        self._stub_relay(monkeypatch, registered)
+
+        assert self._configure(monkeypatch, relay_endpoint="http://127.0.0.1:4318") is True
+        assert registered[0][1].endpoint == "http://127.0.0.1:4318/v1/traces"
 
     def test_no_endpoint_exports_nothing_rather_than_failing(self, monkeypatch) -> None:
         """Enabled with nowhere to send is a warning, not a dead service."""

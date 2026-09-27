@@ -467,10 +467,15 @@ def configure_relay_tracing(config: Any) -> bool:
     ``_relay_instrumented`` because neither half is any use without the other.
 
     It speaks ``openinference`` rather than ``gen_ai`` because that is the
-    dialect Phoenix reads, and it reuses ``OTEL_EXPORTER_OTLP_ENDPOINT`` rather
-    than inventing a second endpoint setting: one collector address, whichever
-    producer is speaking. Relay carries its own exporter, so this adds a second
+    dialect Phoenix reads. Relay carries its own exporter, so this adds a second
     OTLP client to the process, not a second backend.
+
+    ``RELAY_OTLP_ENDPOINT`` is where it sends, falling back to
+    ``OTEL_EXPORTER_OTLP_ENDPOINT``. Relay refuses plain HTTP to anything but
+    localhost or a loopback address, so under compose it sends to the
+    ``relay-collector`` that shares this container's network and forwards to
+    ``otel-collector``; run as a local process, the shared endpoint is already
+    loopback.
 
     Returns whether events are being exported, so a caller can say so.
     """
@@ -478,11 +483,15 @@ def configure_relay_tracing(config: Any) -> bool:
     if not getattr(config, "relay_enabled", False):
         return False
 
-    endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
+    endpoint = (
+        os.environ.get("RELAY_OTLP_ENDPOINT", "").strip()
+        or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
+    )
     if not endpoint:
         logger.warning(
-            "RELAY_ENABLED is set but OTEL_EXPORTER_OTLP_ENDPOINT is not; "
-            "Relay events have nowhere to go and will not be exported."
+            "RELAY_ENABLED is set but neither RELAY_OTLP_ENDPOINT nor "
+            "OTEL_EXPORTER_OTLP_ENDPOINT is; Relay events have nowhere to go "
+            "and will not be exported."
         )
         return False
 
@@ -1213,7 +1222,6 @@ class DeepAgentsRuntime:
                 HarnessProfile(
                     base_system_prompt=_DEEP_AGENT_BASE_PROMPT,
                     excluded_tools=_EXCLUDED_DEEP_AGENT_TOOLS,
-                    excluded_middleware=frozenset({"TodoListMiddleware"}),
                     general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
                 ),
             )

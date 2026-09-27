@@ -1241,6 +1241,48 @@ authorize a guessed product. The shopper runtime permits at most one batched
 resolver-tool call per turn; a second call is stopped. The current slice does
 not invalidate stored evidence when `catalog_revision` changes.
 
+### Memory Retriever GET `/conversations/{conversation_id}/memory`
+
+Returns the conversation-owned memory the next turn would read, without
+starting a turn or writing anything: the bounded recent-turn window, the latest
+declared and assumed audiences, and the projection. Only
+`product_reference_index` in the projection is consumed by the runtime; the
+other projection lanes are returned as stored. The cart is deliberately absent
+because it belongs to the shopper; read it from `/user/{user_id}/cart`. An
+unknown conversation returns `404` with `conversation_not_found`.
+
+```json
+{
+  "conversation_id": "conversation_abc",
+  "recent_turns": [
+    {
+      "sequence": 1,
+      "shopper_text": "Show me a bag",
+      "assistant_text": "Here are two bags.",
+      "status": "completed"
+    }
+  ],
+  "wearer_audience": [],
+  "assumed_audience": [],
+  "projection": {
+    "version": 1,
+    "active_anchors": [],
+    "effective_preferences": [],
+    "product_reference_index": [
+      {
+        "candidate_set_id": "candidate-set-event-id",
+        "turn_seq": 1,
+        "products": [
+          {"ref": "bag-1", "name": "Structured Tote", "position": 1},
+          {"ref": "bag-2", "name": "Cobalt Crossbody", "position": 2}
+        ]
+      }
+    ],
+    "last_turn_id": "turn-id"
+  }
+}
+```
+
 ### Memory Retriever DELETE `/conversations/{conversation_id}`
 
 Deletes that conversation's durable turns, cascaded event envelopes, and

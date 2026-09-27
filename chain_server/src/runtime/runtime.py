@@ -1213,7 +1213,6 @@ class DeepAgentsRuntime:
                 HarnessProfile(
                     base_system_prompt=_DEEP_AGENT_BASE_PROMPT,
                     excluded_tools=_EXCLUDED_DEEP_AGENT_TOOLS,
-                    excluded_middleware=frozenset({"TodoListMiddleware"}),
                     general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
                 ),
             )

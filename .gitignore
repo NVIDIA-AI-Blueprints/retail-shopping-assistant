@@ -70,8 +70,8 @@ tests/integration/conversations/**/quality_progress/
 tests/integration/conversations/**/judge/
 tests/evaluation/results/*
 !tests/evaluation/results/.gitkeep
-# Notebook 5's per-run AIPerf output; summary.csv is kept
-notebook/stress_results/*/
+# Notebook 5's measurements; results are not published
+notebook/stress_results/
 
 # Environment variables
 .env

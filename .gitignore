@@ -70,8 +70,6 @@ tests/integration/conversations/**/quality_progress/
 tests/integration/conversations/**/judge/
 tests/evaluation/results/*
 !tests/evaluation/results/.gitkeep
-# Captured model calls, prompts and carts included (Notebook 4)
-traces/
 
 # Environment variables
 .env

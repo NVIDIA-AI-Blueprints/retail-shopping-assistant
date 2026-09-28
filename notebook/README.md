@@ -9,7 +9,7 @@ you see something else.
 | [1 · Getting Started](1_Getting_Started.ipynb) | deploy on hosted endpoints, hold a first conversation, and call each component once | ~20 min |
 | [2 · Observability](2_Observability.ipynb) | read a turn's traces in Phoenix: skills, prompts, tool calls, refusals, time and tokens | ~30 min |
 | [3 · Evaluation](3_Evaluation.ipynb) | replay fixed conversations, investigate a failure, tell flaky from broken, write a scenario, run the Challenger and Judge | ~30 min |
-| [4 · Capture Traces](4_Capture_Traces.ipynb) | record every model call of the 25 journeys as an AIPerf trace, check it is complete, and see what a prefix cache can reuse | ~35 min |
+| [4 · Capture Traces](4_Capture_Traces.ipynb) | record every model call of the 25 journeys as an AIPerf trace in `traces/`, for Notebook 5 to replay on a GPU machine running only the NIM | ~35 min |
 
 ## Before you start
 

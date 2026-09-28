@@ -18,6 +18,7 @@ Standard library only.
 from __future__ import annotations
 
 import json
+import lzma
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -27,7 +28,8 @@ from time import monotonic, sleep
 from helpers import PHOENIX, REPO, get
 
 JOURNEYS = REPO / "tests" / "evaluation" / "datasets" / "val" / "scripts" / "journeys"
-TRACES = REPO / "traces"
+#: Committed, so Notebook 5 finds the trace in a plain checkout on the GPU host.
+TRACES = REPO / "notebook" / "traces"
 
 #: Request settings that stay behind. The model is named by whoever replays the
 #: trace, `stream` by AIPerf's `--streaming`, the length by `output_length`, and
@@ -287,16 +289,27 @@ def kind(line: dict) -> str:
     return "agent"
 
 
+def _open(path: Path, mode: str):
+    # Each call repeats most of the one before, tens of kilobytes back: past
+    # gzip's 32 KB window, well inside xz's. 38 MB of trace commits as 0.2 MB.
+    if path.suffix == ".xz":
+        return lzma.open(path, mode + "t", encoding="utf-8", preset=9 if "w" in mode else None)
+    return path.open(mode, encoding="utf-8")
+
+
 def write_jsonl(path: Path, rows: list[dict]) -> Path:
+    """JSON lines, compressed with xz when the name ends in `.xz`."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as handle:
+    with _open(path, "w") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
     return path
 
 
 def read_jsonl(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    with _open(path, "r") as handle:
+        return [json.loads(line) for line in handle if line.strip()]
 
 
 def prompt_text(line: dict) -> str:

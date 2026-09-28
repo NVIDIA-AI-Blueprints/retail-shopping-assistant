@@ -289,6 +289,27 @@ def kind(line: dict) -> str:
     return "agent"
 
 
+def journey_of(session_id: str) -> str:
+    """`J01` from `trace-02401c23-J01_wedding_abroad-0`."""
+
+    return re.search(r"-(J\d+)_", session_id)[1]
+
+
+def by_journey(lines: list[dict]) -> dict[str, list[dict]]:
+    """Each journey's calls as a trace of its own, starting at time 0."""
+
+    journeys: dict[str, list[dict]] = defaultdict(list)
+    for line in lines:
+        journeys[journey_of(line["session_id"])].append(line)
+    for calls in journeys.values():
+        start = calls[0]["timestamp"]
+        calls[:] = [
+            {**line, "timestamp": line["timestamp"] - start} if "timestamp" in line else line
+            for line in calls
+        ]
+    return dict(sorted(journeys.items()))
+
+
 def _open(path: Path, mode: str):
     # Each call repeats most of the one before, tens of kilobytes back: past
     # gzip's 32 KB window, well inside xz's. 38 MB of trace commits as 0.2 MB.

@@ -1,6 +1,6 @@
 {
-  "label": "trace-02401c23",
-  "since": "2026-09-27T21:09:29.766287+00:00",
+  "label": "trace-bbd2499d",
+  "since": "2026-09-28T14:15:57.690842+00:00",
   "model": "nvidia/nvidia/nemotron-3.5-super-text-preview",
   "journeys": [
     "J01",
@@ -30,7 +30,7 @@
     "J25"
   ],
   "concurrency": 1,
-  "calls": 890,
+  "calls": 897,
   "complete": true,
   "format": "aiperf mooncake_trace"
 }

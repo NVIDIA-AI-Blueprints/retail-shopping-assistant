@@ -14,13 +14,23 @@ notebook/gpu/deploy.sh                    # first run downloads ~240 GB
 notebook/gpu/verify_prefix_cache.sh       # want a speedup above ~2x
 ```
 
-Then [Notebook 5](../5_Prefix_Cache_Stress.ipynb).
+Then AIPerf and Jupyter, once, with [uv](https://docs.astral.sh/uv/) (no
+`sudo`; stock Ubuntu images lack `python3-venv`, so `python3 -m venv` fails):
+
+```bash
+command -v uv || curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+uv venv ~/aiperf --python 3.12
+uv pip install --python ~/aiperf/bin/python aiperf==0.13.0 jupyterlab matplotlib
+```
+
+Then [Notebook 5](../5_Performance_Measurement.ipynb), in `~/aiperf/bin/jupyter lab`.
 
 ## What the machine needs
 
 - NVIDIA driver, Docker, and the NVIDIA Container Toolkit (`docker run --gpus all` works).
 - About 280 GB of GPU memory in total, and about 250 GB free disk for the weights.
-- `curl`, `jq`, `bc`, `openssl`, `python3` (3.10 or later).
+- `curl`, `bc`, `openssl`, `python3` (3.10 or later).
 - This repo. No clone access? Copy `notebook/` alone: Notebook 5 needs only
   `stress_replay.py`, `traces/`, and this folder.
 
@@ -45,9 +55,9 @@ Other settings:
 | Variable | Default | What it does |
 |---|---|---|
 | `PREFIX_CACHE` | `1` | `0` turns caching off: Notebook 5's Step 5. |
-| `MAMBA_PREFIX` | `1` | `0` caches attention only. Use it if vLLM rejects the Mamba flags. |
+| `MAMBA_PREFIX` | `1` | `0` caches attention only. Use it if vLLM rejects `--mamba-cache-mode align`. |
 | `BLOCK_SIZE` | `64` | Match granularity. Try `32` or `16` if prompts part early. |
-| `MAX_MODEL_LEN` | `32768` | The trace's longest call is ~28k tokens. Shorter leaves more room for cache. |
+| `MAX_MODEL_LEN` | `32768` | The trace's longest call is ~28k tokens. Shorter leaves more room for cache. Below ~25k, pass `verify_prefix_cache.sh` a smaller `PREFIX_WORDS`. |
 | `MAX_NUM_SEQS` | `128` | Notebook 5's top concurrency. More than this queues. |
 | `EXPOSE` | `loopback` | `lan` binds `0.0.0.0`: plain HTTP, and the key goes in the clear. Prefer SSH or Tailscale. |
 | `KEYFILE` | `~/.nemotron_api_key` | Generated once. Notebook 5 reads it; `NEMOTRON_API_KEY` overrides. |
@@ -67,14 +77,13 @@ tunnel, not the model, sets the numbers.
 
 ## Worth knowing
 
-- **Hit rate can lie.** Without the Mamba flags, vLLM counts prefix hits but
-  recomputes the Mamba state anyway. `verify_prefix_cache.sh` and Notebook 5's
-  caching-off runs judge by TTFT.
-- **The Mamba flags are unvalidated on BF16.** The reference config for H100
-  BF16 has no prefix caching; the flag group comes from the same doc's
-  quantized config. If startup rejects them, `MAMBA_PREFIX=0` and note it in
-  the results.
-- **Pinned image.** Stock vLLM doesn't load this architecture; don't float the tag.
+- **Hit rate can lie.** Without `--mamba-cache-mode align`, vLLM counts prefix
+  hits but recomputes the Mamba state anyway. `verify_prefix_cache.sh` and
+  Notebook 5's caching-off runs judge by TTFT.
+- **Mamba reuse is unvalidated on this checkpoint.** If startup rejects
+  `--mamba-cache-mode align`, `MAMBA_PREFIX=0` and note it in the results.
+- **Pinned image.** vLLM `v0.30.0`; earlier releases don't load this
+  architecture, and nightly tags are deleted after a few days.
 - **Crashes at high concurrency** (a known MoE kernel issue): lower `MAX_NUM_SEQS`.
 - **Watch it:** `docker logs -f nemotron35`, `nvidia-smi`.
   Stop: `docker rm -f nemotron35`.

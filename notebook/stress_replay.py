@@ -5,7 +5,8 @@
 
 Notebook 5 runs on the GPU machine, which has the model server, AIPerf and a
 checkout of this repository, and nothing of the assistant. So this module
-imports nothing from the rest of the repo, and only the standard library.
+imports nothing from the rest of the repo, and only the standard library, plus
+IPython when present for the live GPU view.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import lzma
 import os
 import re
 import subprocess
+import time
 import urllib.request
 import uuid
 from collections import defaultdict
@@ -138,9 +140,19 @@ def replay(
     metrics_url: str,
     model: str,
     key: str | None = None,
+    refresh: float = 2,
 ) -> subprocess.CompletedProcess:
-    """One AIPerf run: every session once, `concurrency` at a time."""
+    """One AIPerf run: every session once, `concurrency` at a time.
 
+    Records the serving GPUs each second to `gpu.csv`. In a notebook, shows them
+    live, redrawn every `refresh` seconds, and ends with the run's averages.
+    """
+
+    if not AIPERF.is_file():
+        raise FileNotFoundError(
+            f"AIPerf not found at {AIPERF}. Install it as in the notebook's "
+            "'Before you start', step 3."
+        )
     command = [
         str(AIPERF),
         "profile",
@@ -180,8 +192,250 @@ def replay(
         *(["--api-key", key] if key else []),
     ]
     out.mkdir(parents=True, exist_ok=True)
-    with (out / "aiperf.out").open("w") as log:
-        return subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=False)
+    total = _count_lines(trace)
+    gpus = serving_gpus()
+    board = _Board()
+    started = time.monotonic()
+    with (out / "aiperf.out").open("w") as log, (out / "gpu.csv").open("w") as gpu_log:
+        sampler = (
+            subprocess.Popen(
+                [
+                    "nvidia-smi",
+                    f"--query-gpu={_GPU_FIELDS}",
+                    "--format=csv,noheader,nounits",
+                    "-i",
+                    ",".join(gpus),
+                    "-l",
+                    "1",
+                ],
+                stdout=gpu_log,
+                stderr=subprocess.DEVNULL,
+            )
+            if gpus
+            else None
+        )
+        run = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            while True:
+                try:
+                    run.wait(timeout=refresh)
+                    break
+                except subprocess.TimeoutExpired:
+                    done = _count_lines(out / "profile_export.jsonl")
+                    latest = {sample["gpu"]: sample for sample in _gpu_samples(out)}
+                    board.show(
+                        f"{out.name}: {done}/{total} calls ({done / total:.0%}),"
+                        f" {_clock(time.monotonic() - started)}",
+                        list(latest.values()),
+                    )
+        finally:
+            # An interrupted run must not keep loading the server.
+            if run.poll() is None:
+                run.kill()
+                run.wait()
+            if sampler:
+                sampler.terminate()
+                sampler.wait()
+    samples = _gpu_samples(out)
+    if samples:
+        board.show(
+            f"{out.name}: done in {_clock(time.monotonic() - started)}. Average per GPU over the run",
+            _averages(samples),
+            final=True,
+        )
+    return subprocess.CompletedProcess(command, run.returncode)
+
+
+_GPU_FIELDS = "index,utilization.gpu,memory.used,memory.total,power.draw,power.limit"
+
+
+def _count_lines(path: Path) -> int:
+    if not path.exists():
+        return 0
+    with path.open("rb") as handle:
+        return sum(1 for _ in handle)
+
+
+def _clock(seconds: float) -> str:
+    return f"{int(seconds // 60)}:{int(seconds % 60):02d}"
+
+
+def serving_gpus() -> list[str]:
+    """The GPUs holding the model: more than 1 GiB in use. Empty without `nvidia-smi`."""
+
+    try:
+        rows = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    return [index for index, used in (row.split(", ") for row in rows) if float(used) > 1024]
+
+
+def _parse_gpu(row: str) -> dict | None:
+    try:
+        index, busy, memory, total, power, limit = (field.strip() for field in row.split(","))
+        return {
+            "gpu": index,
+            "busy": float(busy),
+            "memory_mib": float(memory),
+            "total_mib": float(total),
+            "power_w": float(power),
+            "limit_w": float(limit),
+        }
+    except ValueError:  # "[N/A]" fields, or a line cut off mid-write
+        return None
+
+
+def _gpu_samples(out: Path) -> list[dict]:
+    path = out / "gpu.csv"
+    rows = path.read_text().splitlines() if path.exists() else []
+    return [sample for sample in map(_parse_gpu, rows) if sample]
+
+
+def _gpu_query(gpus: list[str]) -> list[dict]:
+    rows = subprocess.run(
+        [
+            "nvidia-smi",
+            f"--query-gpu={_GPU_FIELDS}",
+            "--format=csv,noheader,nounits",
+            "-i",
+            ",".join(gpus),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.splitlines()
+    return [sample for sample in map(_parse_gpu, rows) if sample]
+
+
+def _averages(samples: list[dict]) -> list[dict]:
+    """Per GPU: mean busy share and power, peak memory."""
+
+    by_gpu = defaultdict(list)
+    for sample in samples:
+        by_gpu[sample["gpu"]].append(sample)
+    return [
+        {
+            "gpu": gpu,
+            "busy": sum(s["busy"] for s in rows) / len(rows),
+            "power_w": sum(s["power_w"] for s in rows) / len(rows),
+            "limit_w": rows[0]["limit_w"],
+            "memory_mib": max(s["memory_mib"] for s in rows),
+            "total_mib": rows[0]["total_mib"],
+        }
+        for gpu, rows in sorted(by_gpu.items(), key=lambda item: int(item[0]))
+    ]
+
+
+def _bar(share: float, label: str) -> str:
+    share = max(0.0, min(1.0, share))
+    color = "#76b900" if share < 0.6 else "#f5a623" if share < 0.9 else "#e0452e"
+    return (
+        '<div style="display:inline-block;width:160px;height:12px;background:#ddd;'
+        f'vertical-align:middle"><div style="width:{share:.0%};height:100%;background:{color}">'
+        f"</div></div>&nbsp;{label}"
+    )
+
+
+def _gpu_table(head: str, samples: list[dict]) -> str:
+    rows = "".join(
+        "<tr><td>GPU {}</td><td>{}</td><td>{}</td><td>{}</td></tr>".format(
+            s["gpu"],
+            _bar(s["busy"] / 100, "{:.0f}%".format(s["busy"])),
+            _bar(
+                s["power_w"] / s["limit_w"], "{:.0f} / {:.0f} W".format(s["power_w"], s["limit_w"])
+            ),
+            _bar(
+                s["memory_mib"] / s["total_mib"],
+                "{:.0f} / {:.0f} GiB".format(s["memory_mib"] / 1024, s["total_mib"] / 1024),
+            ),
+        )
+        for s in samples
+    )
+    return (
+        f"<b>{head}</b><table><tr><th>GPU</th><th>Busy</th><th>Power</th><th>Memory</th></tr>"
+        f"{rows}</table>"
+    )
+
+
+def _gpu_lines(head: str, samples: list[dict]) -> str:
+    return "\n".join(
+        [head]
+        + [
+            f"  GPU {s['gpu']}: {s['busy']:3.0f}% busy   {s['power_w']:4.0f} of {s['limit_w']:.0f} W"
+            f"   {s['memory_mib'] / 1024:.0f} of {s['total_mib'] / 1024:.0f} GiB"
+            for s in samples
+        ]
+    )
+
+
+class _Board:
+    """GPU bars redrawn in place in a notebook; elsewhere, text every `every` seconds."""
+
+    def __init__(self, every: float = 30):
+        self.handle, self.every, self.last = None, every, 0.0
+        try:
+            from IPython import get_ipython
+            from IPython.display import HTML, display
+        except ImportError:
+            return
+        shell = get_ipython()
+        if shell is not None and "IPKernelApp" in shell.config:
+            self.html = HTML
+            self.handle = display(HTML(""), display_id=True)
+
+    def show(self, head: str, samples: list[dict], final: bool = False) -> None:
+        if self.handle:
+            self.handle.update(self.html(_gpu_table(head, samples)))
+        elif final or time.monotonic() - self.last >= self.every:
+            self.last = time.monotonic()
+            print(_gpu_lines(head, samples), flush=True)
+
+
+def gpu_dashboard(seconds: float = 20) -> list[dict]:
+    """Watch the GPUs holding the model for `seconds`, then print their averages."""
+
+    gpus = serving_gpus()
+    if not gpus:
+        print("No GPU holds the model, or there is no nvidia-smi here.")
+        return []
+    board = _Board(every=5)
+    samples = []
+    end = time.monotonic() + seconds
+    while (left := end - time.monotonic()) > 0:
+        now = _gpu_query(gpus)
+        samples += now
+        board.show(f"GPUs {', '.join(gpus)} hold the model. Live, {left:.0f} s left", now)
+        time.sleep(1)
+    averages = _averages(samples)
+    board.show(f"GPUs {', '.join(gpus)}: average over {seconds:.0f} s", averages, final=True)
+    if board.handle:
+        print(_gpu_lines(f"Average over {seconds:.0f} s:", averages))
+    return averages
+
+
+def gpu_summary(out: Path) -> dict:
+    """Averages over a run, per GPU. `busy` is the share of time any kernel ran,
+    not how much of the GPU it used; power against the limit says more."""
+
+    samples = _gpu_samples(out)
+    if not samples:
+        return {
+            "gpu_busy_pct": None,
+            "gpu_power_w": None,
+            "gpu_power_limit_w": None,
+            "gpu_memory_peak_gib": None,
+        }
+    return {
+        "gpu_busy_pct": sum(sample["busy"] for sample in samples) / len(samples),
+        "gpu_power_w": sum(sample["power_w"] for sample in samples) / len(samples),
+        "gpu_power_limit_w": samples[0]["limit_w"],
+        "gpu_memory_peak_gib": max(sample["memory_mib"] for sample in samples) / 1024,
+    }
 
 
 def _server_total(server: dict, name: str) -> float | None:
@@ -272,13 +526,15 @@ def gates(out: Path, trace: list[dict], manifest: list[dict]) -> dict:
 
 
 def append_summary(row: dict, path: Path = RESULTS / "summary.csv") -> Path:
+    """Add a row. Rewrites the file, so rows with new columns keep it aligned."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    new = not path.exists()
-    with path.open("a", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(row))
-        if new:
-            writer.writeheader()
-        writer.writerow(row)
+    rows = [*(read_summary(path) if path.exists() else []), row]
+    fields = list(dict.fromkeys(field for existing in rows for field in existing))
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, restval="")
+        writer.writeheader()
+        writer.writerows(rows)
     return path
 
 

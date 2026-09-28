@@ -18,10 +18,9 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-MODEL="${MODEL:-nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026}"
-# Pinned to a release: vLLM before 0.30 does not load this architecture, and
-# nightly tags are deleted from Docker Hub after a few days.
-VLLM_IMAGE="${VLLM_IMAGE:-vllm/vllm-openai:v0.30.0}"
+MODEL="${MODEL:-nvidia/NVIDIA-Nemotron-3.5-Super-VL-09212026}"
+# Pinned: stock vLLM does not load this architecture.
+VLLM_IMAGE="${VLLM_IMAGE:-vllm/vllm-openai:nightly-2a02f6efe319c885e3ccbcecde402e0028f9ec1e}"
 
 PORT="${PORT:-8000}"
 CONTAINER_NAME="${CONTAINER_NAME:-nemotron35}"
@@ -115,10 +114,10 @@ if [[ "$PREFIX_CACHE" == "1" ]]; then
     --block-size "$BLOCK_SIZE"
     --prefix-match-unit "$BLOCK_SIZE"
   )
-  # Without this the Mamba state is recomputed on every prefix hit, and the
+  # Without these the Mamba state is recomputed on every prefix hit, and the
   # hit-rate counter still climbs. verify_prefix_cache.sh measures TTFT.
   if [[ "$MAMBA_PREFIX" == "1" ]]; then
-    ARGS+=( --mamba-cache-mode align )
+    ARGS+=( --enable-mamba-shared-prefix-checkpoint --mamba-cache-mode align )
   fi
 else
   ARGS+=( --no-enable-prefix-caching )
@@ -141,6 +140,7 @@ docker run -d --name "$CONTAINER_NAME" --init --restart unless-stopped \
   --network host --ipc host --shm-size 32g \
   --ulimit memlock=-1 --ulimit stack=67108864 \
   -e HF_TOKEN \
+  -e VLLM_USE_FASTOKENS=1 \
   -v "$HF_CACHE:/root/.cache/huggingface" \
   "$VLLM_IMAGE" \
   --model "$MODEL" \
@@ -159,7 +159,7 @@ for _ in $(seq 1 240); do
     echo "==> container exited. Last 60 lines:"
     docker logs --tail 60 "$CONTAINER_NAME" 2>&1 || true
     echo
-    echo "    Rejected --mamba-cache-mode align? Retry with MAMBA_PREFIX=0"
+    echo "    Rejected --enable-mamba-shared-prefix-checkpoint? Retry with MAMBA_PREFIX=0"
     echo "    and record that Mamba reuse was off. Out of memory? See README.md."
     exit 1
   fi

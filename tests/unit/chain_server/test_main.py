@@ -3200,6 +3200,12 @@ class TestDeepAgentsRuntimeRefs:
         assert "read_file" in excluded_tools
         assert "write_file" in excluded_tools
         assert "execute" in excluded_tools
+        # Deep Agents 0.7 added `delete` and nothing failed: a filesystem tool
+        # the library adds later must fail here rather than reach the model.
+        from deepagents.middleware.filesystem import FilesystemMiddleware
+
+        filesystem_tools = {tool.name for tool in FilesystemMiddleware().tools}
+        assert filesystem_tools <= excluded_tools
         # Where a rule lives is now part of the contract: procedure belongs to
         # the skill that performs it and must reach the model on that turn,
         # while the always-on prompt keeps only what every turn needs.

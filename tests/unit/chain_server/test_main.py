@@ -306,6 +306,14 @@ class TestHealthAndRoot:
         assert body["models"]["app_llm"]["enabled"] is True
         assert body["models"]["vlm"]["model"] == "test-vlm"
         assert body["models"]["vlm"]["enabled"] is True
+        assert body["guardrails"] == {
+            "default_enabled": True,
+            "failure_mode": "closed",
+            "speculative_main_model_enabled": False,
+            "speculative_main_model_scope": "text_only",
+            "supported_modalities": ["text", "image", "video"],
+            "request_override_supported": True,
+        }
         assert body["catalog"]["catalog_id"] == "test_catalog"
         assert body["catalog"]["filters"]["category"]["values"] == ["bag", "dress"]
 
@@ -416,6 +424,7 @@ class TestTimingEndpoint:
         assert "total" in body["timings"]
         assert body["timings"]["total"] > 0
         assert body["model_usage"] == {}
+        assert body["guardrail_report"] == {}
         assert body["agent_diagnostics"] == {}
 
     def test_returns_agent_diagnostics_additively(
@@ -1293,7 +1302,14 @@ class TestDeepAgentsRuntimeScopes:
             cart_user_id=222,
             request_id="request-a",
         )
-        monkeypatch.setattr(runtime, "_check_safety", lambda *_args: (False, True))
+        class BlockingGuardrails:
+            async def check_input(self, **_kwargs):
+                from chain_server.src.guardrails import GuardrailDecision
+                return GuardrailDecision(
+                    status="block", stage="input", policy="test"
+                )
+
+        runtime._guardrails = BlockingGuardrails()
 
         output = await runtime._run_turn(
             State(user_id=111, query="blocked", guardrails=True),
@@ -1886,8 +1902,16 @@ class TestDeepAgentsRuntimeModelUsage:
 
         state = State(user_id=1, query="hello")
 
-        _record_safety_model_usage(state, "input")
-        _record_safety_model_usage(state, "output")
+        _record_safety_model_usage(
+            state,
+            "input",
+            model_calls={"content_safety": 1, "topic_control": 1},
+        )
+        _record_safety_model_usage(
+            state,
+            "output",
+            model_calls={"content_safety": 1},
+        )
 
         assert state.model_usage["content_safety"]["status"] == "used"
         assert state.model_usage["content_safety"]["calls"] == 2
@@ -1899,31 +1923,35 @@ class TestDeepAgentsRuntimeModelUsage:
 
         state = State(user_id=1, query="hello")
 
-        _record_safety_model_usage(state, "input", ok=False)
+        _record_safety_model_usage(state, "input", model_calls={}, ok=False)
 
         assert state.model_usage["content_safety"]["status"] == "failed"
         assert state.model_usage["content_safety"]["calls"] == 1
         assert state.model_usage["topic_control"]["status"] == "failed"
         assert state.model_usage["topic_control"]["calls"] == 1
 
-    def test_safety_check_transport_error_fails_open_with_failed_usage_signal(
+    @pytest.mark.asyncio
+    async def test_safety_provider_transport_error_returns_typed_error(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from chain_server.src.runtime import runtime as runtime_mod
+        import httpx
+        from chain_server.src.guardrails import GuardrailServiceClient
 
-        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        async def unavailable(_request):
+            raise httpx.ConnectError("rails down")
 
-        def fake_post(*args, **kwargs):
-            raise runtime_mod.requests.RequestException("rails down")
+        provider = GuardrailServiceClient("http://rails", timeout_seconds=1)
+        await provider._client.aclose()
+        provider._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(unavailable), timeout=1
+        )
+        decision = await provider.check_input(text="hello", media=[])
 
-        monkeypatch.setattr(runtime_mod.requests, "post", fake_post)
-
-        safe, check_ok = runtime._check_safety("input", 1, "hello")
-
-        assert safe is True
-        assert check_ok is False
+        assert decision.status == "error"
+        assert decision.diagnostic_code == "invalid_or_unavailable"
+        await provider._client.aclose()
 
     def test_language_model_failure_usage_is_explicit(self) -> None:
         from chain_server.src.runtime.model_usage import _record_language_model_failure

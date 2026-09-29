@@ -256,6 +256,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
   const [hasBeenOpened, setHasBeenOpened] = useState<boolean>(false);
   const [newMessage, setNewMessage] = useState<string>("");
   const [isGuardrailsOn, setIsGuardrailsOn] = useState(config.features.guardrails.defaultState);
+  const guardrailOverrideRef = useRef<boolean | undefined>(undefined);
   const [image, setImage] = useState("");
   const [previewImage, setPreviewImage] = useState("");
   const [video, setVideo] = useState("");
@@ -271,8 +272,6 @@ const Chatbox: React.FC<ChatboxProps> = ({
   const productsByNameRef = useRef<Map<string, ProductSummary>>(new Map());
   //: Display order for the panel: most recent turn first, catalog rank within it.
   const productOrderRef = useRef<string[]>([]);
-  const currentTurnHasMedia = useRef(false);
-  const currentTurnGuardrails = useRef(isGuardrailsOn);
   const inFlightRef = useRef<AbortController | null>(null);
   const handleResetRef = useRef<((clearIdentity: boolean) => Promise<void>) | null>(null);
   const initialResetStartedRef = useRef(false);
@@ -331,7 +330,9 @@ const Chatbox: React.FC<ChatboxProps> = ({
 
   // Event handlers
   const toggleGuardrails = () => {
-    setIsGuardrailsOn(!isGuardrailsOn);
+    const next = !isGuardrailsOn;
+    guardrailOverrideRef.current = next;
+    setIsGuardrailsOn(next);
   };
 
   const handleNewMessageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -546,9 +547,6 @@ const Chatbox: React.FC<ChatboxProps> = ({
     const userSession = getOrCreateUserSession();
     setConversationId(userSession.conversationId);
     setIsLoading(true);
-    currentTurnHasMedia.current = Boolean(image || video);
-    currentTurnGuardrails.current = isGuardrailsOn;
-
     // Will be used to enable submit shortly after the last token
     let enableSubmitTimer: number | undefined;
 
@@ -592,7 +590,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
         userSession,
         outgoing,
         image || "",
-        isGuardrailsOn,
+        guardrailOverrideRef.current,
         media,
         selectedShopperProfileId
       );
@@ -679,11 +677,6 @@ const Chatbox: React.FC<ChatboxProps> = ({
             }
 
             if (type === "media_analysis" && payload && typeof payload === "object") {
-              // Arrives while the turn is still running, seconds before any
-              // product, so the shopper sees their image being read. Inserted
-              // ahead of the loader rather than replacing it: the loader still
-              // marks the search that is running, and the results take its
-              // place when they land, below this card.
               setMessages((prev) => {
                 const card = {
                   role: "media_analysis" as MessageRole,
@@ -718,6 +711,24 @@ const Chatbox: React.FC<ChatboxProps> = ({
               );
               setModelUsage(sessionModelUsageRef.current);
               setSessionUsage(sessionUsageRef.current);
+              if (metricsPayload.guardrail_report?.enabled) {
+                setMessages((previous) => {
+                  const updated = [...previous];
+                  for (let index = updated.length - 1; index >= 0; index -= 1) {
+                    if (
+                      updated[index].role === "assistant" &&
+                      updated[index].content !== "loader"
+                    ) {
+                      updated[index] = {
+                        ...updated[index],
+                        guardrailReport: metricsPayload.guardrail_report,
+                      };
+                      break;
+                    }
+                  }
+                  return updated;
+                });
+              }
               continue;
             }
 
@@ -897,9 +908,14 @@ const Chatbox: React.FC<ChatboxProps> = ({
         if (data.media_input) {
           setMediaCapabilities(data.media_input);
         }
+        if (data.guardrails) {
+          if (guardrailOverrideRef.current === undefined) {
+            setIsGuardrailsOn(data.guardrails.default_enabled);
+          }
+        }
         setModelCapabilities(data.models ?? {});
       } catch (error) {
-        console.warn("Failed to load media capabilities", error);
+        console.warn("Failed to load runtime capabilities", error);
       }
     };
     loadCapabilities();
@@ -935,6 +951,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
               productName={msg.productName}
               selectedProductName={selectedProduct?.productName}
               onProductSelect={onProductSelect}
+              guardrailReport={msg.guardrailReport}
               ref={messageRefs.current[messages.length - 1 - index]}
             />
           ))}

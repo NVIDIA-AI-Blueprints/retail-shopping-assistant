@@ -107,7 +107,8 @@ Use one host URL such as `http://NIM_HOST`; the runner derives these endpoints:
 - text embeddings: `:8001/v1`
 - image embeddings: `:8002/v1`
 - content safety: `:8003/v1`
-- topic control: `:8004/v1`
+- preferred dedicated topic control: `:8004/v1`
+- VLM and complete-video submission safety: `:8005/v1`
 
 Run:
 

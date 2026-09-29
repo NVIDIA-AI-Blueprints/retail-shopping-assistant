@@ -19,6 +19,7 @@ from .loop_control import ToolLoopControlMiddleware
 from .policy import SHOPPING_TOOL_POLICIES, load_shopper_skill_registry
 from .skill_gate import (
     SKILL_ACTIVATION_COMPLETE,
+    InputGuardrailToolGate,
     ShopperSkillActivationMiddleware,
 )
 from .skill_input import _skill_activation_input_model
@@ -31,6 +32,7 @@ def build_skill_activation(
     skills_root: Path,
     turn_capabilities: CatalogCapabilities,
     tool_loop_control: ToolLoopControlMiddleware,
+    input_guardrail_tool_gate: InputGuardrailToolGate | None = None,
 ):
     """The activation tool and the gate middleware that enforces what it
     granted, built from the skills registered under `skills_root`."""
@@ -98,6 +100,7 @@ def build_skill_activation(
         activation_system_prompt=(
             MEDIA_FENCE.notice if state.media_analysis else ""
         ),
+        input_guardrail_tool_gate=input_guardrail_tool_gate,
     )
 
     @tool(args_schema=skill_activation_input, return_direct=False)

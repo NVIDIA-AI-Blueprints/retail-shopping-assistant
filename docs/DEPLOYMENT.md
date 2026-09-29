@@ -352,7 +352,20 @@ set there; a unit test fails if the two differ, so change both together.
 | `VLM_API_KEY` | Optional VLM media perception API key; Compose falls back to `NVIDIA_API_KEY` when unset | When `vlm` uses an authenticated endpoint and `NVIDIA_API_KEY` is unset | `NVIDIA_API_KEY` |
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
-| `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Guardrails is opt-in: set this to enable it | No | `false` |
+| `GUARDRAILS_URL` | Chain-server URL for the guardrail service | No | `http://rails:8012` |
+| `RAILS_CONTENT_BASE_URL` / `RAILS_CONTENT_MODEL` | Endpoint and model for current text/image content safety | No | `models.yaml`: `content_safety` |
+| `RAILS_TOPIC_BASE_URL` / `RAILS_TOPIC_MODEL` | Topic-control endpoint and model. The dedicated Topic Control model is preferred; selecting Content Safety applies the configured retail policy through `custom_policy` | No | `models.yaml`: `topic_control` |
+| `MULTIMODAL_SAFETY_API_KEY` | Key for the independently routed video safety judge; Compose falls back to the VLM/NVIDIA key | When the video safety endpoint requires authentication | `VLM_API_KEY` |
+| `MULTIMODAL_SAFETY_BASE_URL` | OpenAI-compatible endpoint for the video safety judge | No | `models.yaml`: `multimodal_safety` |
+| `MULTIMODAL_SAFETY_MODEL` | Video safety model override, independent of perception | No | `models.yaml`: `multimodal_safety` |
+| `MULTIMODAL_SAFETY_MODALITIES` | Media modalities covered by configured judges; unsupported video fails closed | No | `rails.py` (image,video) |
+| `MULTIMODAL_SAFETY_VIDEO_FPS` | Temporal sampling rate sent to Nemotron Omni. The complete video object and embedded audio are submitted, but the model evaluates sampled frames | No | `rails.py` (2.0) |
+| `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the content and topic input rails in `parallel` or `sequential` mode | No | `rails.py` (parallel) |
+| `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Guardrails is opt-in: set this to enable it | No | `config.yaml`: `guardrails_enabled` (off) |
+| `GUARDRAILS_FAILURE_MODE` | Required-check error/timeout behavior: `open` bypasses and `closed` stops the turn. Explicit unsafe decisions always block in either mode | No | `config.yaml`: `guardrails_failure_mode` (closed) |
+| `GUARDRAILS_TIMEOUT_SECONDS` | Timeout for each isolated guardrail service decision. Both services read it: the chain server bounds its call, the guardrail service bounds the judges behind it | No | `config.yaml`: `guardrails_timeout_seconds`, and `rails.py` (15.0) |
+| `GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` | For guarded text-only turns, overlap the first app-model step with input guardrails while holding every tool behind the allow decision. Reduces latency but blocked turns can still incur one app-model request. Media remains sequential | No | `config.yaml`: `guardrails_speculative_main_model_enabled` (off) |
+| `GUARDRAILS_SUPPORTED_MODALITIES` | Modalities advertised to clients as covered by configured guardrails | No | `config.yaml`: `guardrails_supported_modalities` |
 | `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` | Shared deadline for the Deep Agents graph and grounding editor before the durable turn fails cleanly | No | `config.yaml`: `deepagents_execution_timeout_seconds` |
 | `EXPOSE_AGENT_DIAGNOSTICS` | Expose detailed agent/tool traces in query responses; enable only behind a trusted operator or evaluation surface | No | `config.yaml`: `expose_agent_diagnostics` (off) |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
@@ -528,12 +541,16 @@ configured separately in `shared/configs/models.yaml`:
 ```yaml
 retriever_port: "http://localhost:8010"
 memory_port: "http://localhost:8011"
-rails_port: "http://localhost:8012"
+guardrails_url: "http://localhost:8012"
 memory_length: 16384
 deepagents_recursion_limit: 24
 max_catalog_searches_per_turn: 3
 max_product_detail_reads_per_turn: 2
 guardrails_enabled: false
+guardrails_failure_mode: closed
+guardrails_timeout_seconds: 15.0
+guardrails_speculative_main_model_enabled: false
+guardrails_supported_modalities: [text, image, video]
 ```
 
 The legacy routing and chatter prompt keys remain in that file for compatibility
@@ -737,6 +754,31 @@ passes all four to `chain-server`.
 A reply that reaches its token ceiling is cut off mid-sentence, with no error.
 Long answers, such as a detailed comparison of several products, can need more
 than 1024 tokens.
+
+#### Guardrail Defaults
+
+Guardrails span two services, so a default lives with whichever one reads it.
+`.env.example` and `docker-compose.yaml` only pass these through, empty by
+default, so neither restates a value.
+
+- **Chain server**, which decides whether a turn is guarded and what a failed
+  check costs: edit the `guardrails_` keys in
+  `shared/configs/chain_server/config.yaml`. Compose mounts `shared/`, so
+  restarting `chain-server` picks the change up without a rebuild.
+
+- **Guardrail service**, which decides how the judges run: edit the defaults in
+  `guardrails/src/rails.py`, then rebuild with
+  `docker compose up -d --build rails`. This covers modality coverage, video
+  sampling rate, and whether the input rails run in parallel.
+
+- **Which model each judge calls:** edit the `content_safety`, `topic_control`
+  and `multimodal_safety` roles in `shared/configs/models.yaml`.
+
+`GUARDRAILS_TIMEOUT_SECONDS` is the one setting both services read, so changing
+it for every deployment means editing both places.
+
+To change any of this for one deployment only, set the environment variable in
+the env profile you source; it wins over these defaults.
 
 ## 📊 Monitoring
 

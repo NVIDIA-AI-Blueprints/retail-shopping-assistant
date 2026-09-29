@@ -636,6 +636,16 @@ difference to the model serving the shopper alone, keep embedding hosted; the
 hosted hop then stays on the critical path, so figures are a floor rather than
 a best case.
 
+**Speculative input execution trades blocked-turn cost for latency.** With
+`GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED=true`, a guarded text-only turn starts
+its first app-model step while the parallel input rails run. Every tool remains
+behind the input allow decision, and media remains sequential. An allowed turn
+can save at most the overlap between input-rail latency and that first model
+step. A blocked turn runs no tool, but its already-started model request can
+still be billed even after cancellation. Keep the default `false` unless that
+cost tradeoff is intentional, and compare allowed and blocked traffic mixes as
+well as latency percentiles.
+
 **A deployment can wedge without anything noticing.** Under sustained concurrency
 the model server can stop dispatching while the container stays up, the process tree stays
 intact and the weights stay resident — every endpoint including `/health` timing

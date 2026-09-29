@@ -27,7 +27,7 @@ COPY ./skills ./skills
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV LLM_API_KEY=${LLM_API_KEY}
-ENV RAILS_URL=http://rails:8012
+ENV GUARDRAILS_URL=http://rails:8012
 
 # Expose the port the app runs on
 EXPOSE 8009

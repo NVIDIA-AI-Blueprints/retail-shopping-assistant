@@ -36,6 +36,23 @@ def test_agent_diagnostics_are_disabled_by_default() -> None:
     assert _chain_server_config()["expose_agent_diagnostics"] is False
 
 
+def test_guardrail_settings_have_one_source() -> None:
+    # Compose passes these through empty, so guardrails/src/rails.py decides.
+    # A second copy here could drift below the coverage the service reports,
+    # and modality coverage is the setting that decides whether an upload is
+    # vetted at all.
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.yaml").read_text())
+    environment = compose["services"]["rails"]["environment"]
+
+    for name in (
+        "MULTIMODAL_SAFETY_MODALITIES",
+        "MULTIMODAL_SAFETY_VIDEO_FPS",
+        "GUARDRAILS_INPUT_EXECUTION_MODE",
+        "GUARDRAILS_TIMEOUT_SECONDS",
+    ):
+        assert f"{name}=${{{name}:-}}" in environment
+
+
 def test_weather_secret_is_disabled_and_scoped_to_chain_server() -> None:
     compose = yaml.safe_load((REPO_ROOT / "docker-compose.yaml").read_text())
     services = compose["services"]

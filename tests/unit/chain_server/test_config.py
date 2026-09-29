@@ -146,6 +146,13 @@ class TestChainServerConfigValidation:
         with pytest.raises(ValidationError):
             ChainServerConfig(**{**valid_config_dict, "memory_length": value})
 
+    @pytest.mark.parametrize("value", [-0.1, float("inf"), float("nan")])
+    def test_llm_temperature_must_be_finite_and_non_negative(
+        self, valid_config_dict: dict, value: float
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(**{**valid_config_dict, "llm_temperature": value})
+
     @pytest.mark.parametrize("value", [0, -4])
     def test_top_k_retrieve_must_be_positive(
         self, valid_config_dict: dict, value: int
@@ -460,6 +467,39 @@ class TestLoadConfig:
         config = load_config(str(path))
 
         assert config.deepagents_execution_timeout_seconds == 31.5
+
+    def test_llm_temperature_env_override(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("APP_LLM_TEMPERATURE", "0.2")
+        path = write_yaml("config.yaml", {**valid_config_dict, "llm_temperature": 0.9})
+
+        config = load_config(str(path))
+
+        assert config.llm_temperature == 0.2
+
+    def test_empty_sampling_env_leaves_the_shipped_defaults(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Compose passes these through empty when unset; config.yaml must win.
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        for name in (
+            "APP_LLM_TEMPERATURE",
+            "LLM_MAX_OUTPUT_TOKENS",
+            "GROUNDING_EDITOR_MAX_OUTPUT_TOKENS",
+        ):
+            monkeypatch.setenv(name, "")
+
+        config = load_config(str(REPO_ROOT / "shared/configs/chain_server/config.yaml"))
+
+        assert config.llm_temperature == 0.7
+        assert config.llm_max_output_tokens == 1024
+        assert config.grounding_editor_max_output_tokens == 1024
 
     def test_max_product_detail_reads_env_override(
         self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch

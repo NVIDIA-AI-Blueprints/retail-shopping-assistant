@@ -151,6 +151,13 @@ class ChainServerConfig(BaseModel):
         default=12000,
         description="Maximum tool evidence characters passed to the grounding editor",
     )
+    llm_temperature: float = Field(
+        default=0.0,
+        description=(
+            "Sampling temperature for the shopping agent and the grounding "
+            "editor, which share one model client."
+        ),
+    )
     llm_max_output_tokens: int = Field(
         default=4096,
         description=(
@@ -273,6 +280,13 @@ class ChainServerConfig(BaseModel):
             raise ValueError("grounding_rewrite_max_evidence_chars must be positive")
         return v
 
+    @validator('llm_temperature')
+    def validate_llm_temperature(cls, v):
+        """Validate the temperature is a finite, non-negative number."""
+        if not math.isfinite(v) or v < 0:
+            raise ValueError("llm_temperature must be a finite, non-negative number")
+        return v
+
     @validator('llm_max_output_tokens', 'grounding_editor_max_output_tokens')
     def validate_max_output_tokens(cls, v):
         """Validate output token ceilings are positive."""
@@ -332,6 +346,7 @@ def load_config(config_path: str | None = None) -> ChainServerConfig:
         "grounding_rewrite_max_evidence_chars": os.environ.get(
             "GROUNDING_REWRITE_MAX_EVIDENCE_CHARS"
         ),
+        "llm_temperature": os.environ.get("APP_LLM_TEMPERATURE"),
         "llm_max_output_tokens": os.environ.get("LLM_MAX_OUTPUT_TOKENS"),
         "grounding_editor_max_output_tokens": os.environ.get(
             "GROUNDING_EDITOR_MAX_OUTPUT_TOKENS"

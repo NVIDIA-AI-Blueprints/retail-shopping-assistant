@@ -333,7 +333,7 @@ are for whoever writes them.
 |----------|-------------|----------|---------|
 | `NGC_API_KEY` | NVIDIA NGC API key | Yes | - |
 | `LLM_API_KEY` | Language model API key | Yes | - |
-| `APP_LLM_TEMPERATURE` | Temperature for the shopping agent and grounding editor; see [Model Sampling and Output Limits](#model-sampling-and-output-limits) | No | `0.7` |
+| `APP_LLM_TEMPERATURE` | Temperature for the shopping agent and grounding editor; overrides `config.yaml`; see [Model Sampling and Output Limits](#model-sampling-and-output-limits) | No | `0.7` |
 | `APP_LLM_FREQUENCY_PENALTY` | Optional frequency penalty for the same calls | No | off |
 | `LLM_MAX_OUTPUT_TOKENS` | Shopping agent output ceiling per call; overrides `config.yaml` | No | `1024` |
 | `GROUNDING_EDITOR_MAX_OUTPUT_TOKENS` | Grounding editor output ceiling per call; overrides `config.yaml` | No | `1024` |
@@ -694,8 +694,8 @@ output token ceiling are set in one place, listed here:
 
 | Call | Temperature | Max output tokens |
 |------|-------------|-------------------|
-| Shopping agent: picks tools, writes the reply | `APP_LLM_TEMPERATURE`, default `0.7` | `llm_max_output_tokens` in `shared/configs/chain_server/config.yaml`, default `1024`; `LLM_MAX_OUTPUT_TOKENS` overrides |
-| Grounding editor: rewrites the draft to match the tools' product data | Same client as the agent: `APP_LLM_TEMPERATURE` | `grounding_editor_max_output_tokens` in the same file, default `1024`; `GROUNDING_EDITOR_MAX_OUTPUT_TOKENS` overrides |
+| Shopping agent: picks tools, writes the reply | `llm_temperature` in `shared/configs/chain_server/config.yaml`, default `0.7`; `APP_LLM_TEMPERATURE` overrides | `llm_max_output_tokens` in the same file, default `1024`; `LLM_MAX_OUTPUT_TOKENS` overrides |
+| Grounding editor: rewrites the draft to match the tools' product data | Same client as the agent: `llm_temperature` | `grounding_editor_max_output_tokens` in the same file, default `1024`; `GROUNDING_EDITOR_MAX_OUTPUT_TOKENS` overrides |
 | Media perception: reads uploaded photos and videos | `0.6`, `_TEMPERATURE` in `chain_server/src/media_perception.py` | `4096`, `_MAX_TOKENS` in the same file; change `_MAX_ANALYSIS_CHARS` (`16000`) with it, as it caps the analysis passed to the agent |
 | Vocabulary judge: matches shopper words to catalog values | `0`, in `chain_server/src/vocabulary_judge.py` | `1200`, `_MAX_TOKENS` in the same file |
 
@@ -705,14 +705,12 @@ and grounding editor. It is off when unset.
 To change a default so it holds for every deployment and every way of running
 the chain server:
 
-- **Token ceilings:** edit `shared/configs/chain_server/config.yaml`. It is
-  mounted into the container, so a restart of `chain-server` picks it up.
-- **Temperature:** it has no config key. Change the default in both
-  `.env.example` (`APP_LLM_TEMPERATURE="${APP_LLM_TEMPERATURE:-0.7}"`), which
-  covers local process runs, and the `chain-server` service in
-  `docker-compose.yaml` (`APP_LLM_TEMPERATURE=${APP_LLM_TEMPERATURE:-0.7}`),
-  which covers Compose. Keep the two equal. The value must be a number: an
-  empty `APP_LLM_TEMPERATURE` fails to parse at startup.
+- **Agent and grounding editor:** edit `llm_temperature`,
+  `llm_max_output_tokens` and `grounding_editor_max_output_tokens` in
+  `shared/configs/chain_server/config.yaml`. It is the only place these
+  defaults live. It is mounted into the container, so a restart of
+  `chain-server` picks it up. `.env.example` and `docker-compose.yaml` only
+  pass the overrides through, empty by default.
 
 - **Media perception and the vocabulary judge:** these have no environment
   variable or config key. Edit the values in the files named above, then

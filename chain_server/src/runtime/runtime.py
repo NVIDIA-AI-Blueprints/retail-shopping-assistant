@@ -1367,8 +1367,8 @@ class DeepAgentsRuntime:
         # a byte-identical tool call against a byte-identical result, and died
         # on the recursion limit. That is degenerate repetition under
         # likelihood-maximising decoding, and at `temperature=0` with no
-        # penalty it cannot be told apart from a model that will not stop. The
-        # default stays 0 so every measurement taken at 0 still holds.
+        # penalty it cannot be told apart from a model that will not stop.
+        # Measurements taken before llm_temperature left 0 do not carry over.
         sampling: dict[str, Any] = {}
         frequency_penalty = os.environ.get("APP_LLM_FREQUENCY_PENALTY", "")
         if frequency_penalty:
@@ -1377,7 +1377,7 @@ class DeepAgentsRuntime:
             model=self.config.llm_name,
             base_url=self.config.llm_port,
             api_key=api_key or "not-needed",
-            temperature=float(os.environ.get("APP_LLM_TEMPERATURE", "0")),
+            temperature=self.config.llm_temperature,
             **sampling,
             # Uncapped output let one call run to the model's own ceiling.
             # Callers pick a smaller one where that fits; this is the default.

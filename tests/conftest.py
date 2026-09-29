@@ -63,6 +63,7 @@ def base_config() -> SimpleNamespace:
         max_product_detail_reads_per_turn=2,
         grounding_rewrite_enabled=True,
         grounding_rewrite_max_evidence_chars=12000,
+        llm_temperature=0.0,
         llm_max_output_tokens=1024,
         grounding_editor_max_output_tokens=512,
         expose_agent_diagnostics=False,

@@ -19,10 +19,9 @@ services:
       - LLM_BASE_URL=${LLM_BASE_URL:-}
       - LLM_MODEL=${LLM_MODEL:-}
       # The agent's sampling; docs/DEPLOYMENT.md, Model Sampling and Output
-      # Limits. The temperature needs a number, as an empty value does not
-      # parse; keep its default equal to .env.example's. The rest pass through
-      # empty, so config.yaml wins.
-      - APP_LLM_TEMPERATURE=${APP_LLM_TEMPERATURE:-0.7}
+      # Limits. Pass-through, no default here: empty means unset, so
+      # shared/configs/chain_server/config.yaml wins.
+      - APP_LLM_TEMPERATURE=${APP_LLM_TEMPERATURE:-}
       - APP_LLM_FREQUENCY_PENALTY=${APP_LLM_FREQUENCY_PENALTY:-}
       - LLM_MAX_OUTPUT_TOKENS=${LLM_MAX_OUTPUT_TOKENS:-}
       - GROUNDING_EDITOR_MAX_OUTPUT_TOKENS=${GROUNDING_EDITOR_MAX_OUTPUT_TOKENS:-}

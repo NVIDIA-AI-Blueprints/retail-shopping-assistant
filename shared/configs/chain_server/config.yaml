@@ -24,11 +24,13 @@ deepagents_execution_timeout_seconds: 90.0
 # 2026-08-04: editor p90 12.5s, agent loop p90 39.8s against a 45s total, with
 # six turns consuming the entire budget.
 grounding_editor_reserve_seconds: 15.0
-# Output ceilings per call for the shopping agent and the grounding editor.
-# LLM_MAX_OUTPUT_TOKENS and GROUNDING_EDITOR_MAX_OUTPUT_TOKENS override them;
-# docs/DEPLOYMENT.md, Model Sampling and Output Limits, lists every call. A
-# long reply, such as a detailed comparison of several products, can need more
-# than 1024; a reply that hits the ceiling is cut off mid-sentence.
+# Sampling for the shopping agent and the grounding editor, which share one
+# model client. APP_LLM_TEMPERATURE, LLM_MAX_OUTPUT_TOKENS and
+# GROUNDING_EDITOR_MAX_OUTPUT_TOKENS override these; docs/DEPLOYMENT.md, Model
+# Sampling and Output Limits, lists every call. A long reply, such as a
+# detailed comparison of several products, can need more than 1024 tokens; a
+# reply that hits the ceiling is cut off mid-sentence.
+llm_temperature: 0.7
 llm_max_output_tokens: 1024
 grounding_editor_max_output_tokens: 1024
 # Catalog filter naming who a product is for. Only the field name lives here;

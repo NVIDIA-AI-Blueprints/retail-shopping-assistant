@@ -72,7 +72,7 @@ def _configure_tracing() -> None:
 
         provider = TracerProvider(
             resource=Resource.create(
-                {"service.name": os.environ.get("OTEL_SERVICE_NAME", "chain-server")}
+                {"service.name": os.environ.get("OTEL_SERVICE_NAME") or "chain-server"}
             )
         )
         # Batched, never synchronous: the turn budget is 90s and the graph runs

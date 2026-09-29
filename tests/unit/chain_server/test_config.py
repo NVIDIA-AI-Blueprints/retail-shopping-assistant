@@ -481,7 +481,7 @@ class TestLoadConfig:
 
         assert config.llm_temperature == 0.2
 
-    def test_empty_sampling_env_leaves_the_shipped_defaults(
+    def test_empty_env_leaves_the_shipped_defaults(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Compose passes these through empty when unset; config.yaml must win.
@@ -492,14 +492,31 @@ class TestLoadConfig:
             "APP_LLM_TEMPERATURE",
             "LLM_MAX_OUTPUT_TOKENS",
             "GROUNDING_EDITOR_MAX_OUTPUT_TOKENS",
+            "CATALOG_RETRIEVER_URL",
+            "MEMORY_RETRIEVER_URL",
+            "DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS",
+            "EXPOSE_AGENT_DIAGNOSTICS",
+            "RELAY_ENABLED",
+            "WEATHER_ENABLED",
         ):
             monkeypatch.setenv(name, "")
+        path = REPO_ROOT / "shared/configs/chain_server/config.yaml"
+        shipped = yaml.safe_load(path.read_text())
 
-        config = load_config(str(REPO_ROOT / "shared/configs/chain_server/config.yaml"))
+        config = load_config(str(path))
 
         assert config.llm_temperature == 0.7
         assert config.llm_max_output_tokens == 1024
         assert config.grounding_editor_max_output_tokens == 1024
+        assert config.retriever_port == shipped["retriever_port"]
+        assert config.memory_port == shipped["memory_port"]
+        assert (
+            config.deepagents_execution_timeout_seconds
+            == shipped["deepagents_execution_timeout_seconds"]
+        )
+        assert config.expose_agent_diagnostics is False
+        assert config.relay_enabled is False
+        assert config.weather.enabled is False
 
     def test_max_product_detail_reads_env_override(
         self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch

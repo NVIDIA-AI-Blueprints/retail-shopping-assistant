@@ -27,8 +27,6 @@ COPY ./skills ./skills
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV LLM_API_KEY=${LLM_API_KEY}
-ENV CATALOG_RETRIEVER_URL=http://catalog-retriever:8010
-ENV MEMORY_RETRIEVER_URL=http://memory-retriever:8011
 ENV RAILS_URL=http://rails:8012
 
 # Expose the port the app runs on
@@ -40,7 +38,8 @@ EXPOSE 8009
 # CHAIN_SERVER_RELOAD=true brings it back for local work.
 #
 # --timeout-graceful-shutdown must clear a whole turn. A turn is allowed
-# DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS (150 in this deployment), and a rollout
+# deepagents_execution_timeout_seconds in shared/configs/chain_server/config.yaml
+# (DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS overrides it), and a rollout
 # that waits less than that kills shoppers mid-answer. Kubernetes must be told
 # the same thing: terminationGracePeriodSeconds has to exceed this, or the
 # kubelet sends SIGKILL while uvicorn is still draining.

@@ -502,7 +502,7 @@ def configure_relay_tracing(config: Any) -> bool:
         relay_config = OpenTelemetryConfig(
             "openinference", f"{endpoint.rstrip('/')}/v1/traces"
         )
-        relay_config.service_name = os.environ.get("OTEL_SERVICE_NAME", "chain-server")
+        relay_config.service_name = os.environ.get("OTEL_SERVICE_NAME") or "chain-server"
         subscriber = OpenTelemetrySubscriber(relay_config)
         # Registration is global and refuses a duplicate name, so a second
         # runtime would raise and read as "tracing broke" when the first

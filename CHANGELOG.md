@@ -1,3 +1,36 @@
+# Unreleased
+
+Substantial changes since 1.0.0. The architecture described in the 1.0.0 notes
+below is historical; these are the current shapes.
+
+## Changed
+
+- 🤖 **Deep Agents runtime** replaces the bespoke LangGraph planner, retriever,
+  cart, and chatter agents. One serving loop selects skills and calls tools,
+  with grants rechecked at dispatch.
+- 💬 **Nemotron 3.5 Super VL** replaces Llama 3.1 70B Instruct as the shopping
+  model, and reads image and video uploads directly.
+- 🐳 **vLLM with Hugging Face checkpoints** replaces NIM containers for
+  self-hosted models.
+- ⚙️ **One source for every setting**: Compose and the env templates pass
+  settings through empty, and each default lives once in `shared/configs/` or in
+  code. An unset or empty variable leaves the shipped default in place.
+
+## Added
+
+- 📚 **Skills and tools registries**, with per-skill tool grants enforced at
+  dispatch rather than by prompt instruction alone.
+- 💾 **Durable conversation turns**, so a turn's cart effects and raw history
+  survive a restart.
+- 🔒 **Optional guardrails** as an isolated service: content safety, topic
+  control, and video safety. Off by default, enabled per request or per
+  deployment, and reported back per turn.
+- 📊 **Observability**: per-turn spans, Phoenix session views, and optional
+  NeMo Relay for richer model spans.
+- 🔍 **Data-derived catalog filters**, published from the catalog and its schema
+  sidecar rather than hardcoded.
+- 🧪 **Evaluation harness** with Challenger and Judge workflows.
+
 # Retail Shopping Assistant 1.0.0 (03 September 2025)
 
 ## 🎉 First Release

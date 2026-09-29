@@ -10,7 +10,7 @@ Developers | Project Leads
 
 ### See also
 
-- [Issues](maintainers/work-management/issues.md)
+- [Issues](REF-issues.md)
 
 ## Triage goals
 
@@ -30,7 +30,7 @@ For each project there is one GitHub Project that contains multiple views, and c
 - Open Bugs
 - Feature Requests
 
-See [Release Board](maintainers/work-management/github_projects.md) for a deep dive on the project boards.
+See [Release Board](REF-github_projects.md) for a deep dive on the project boards.
 
 > **Note**
 > 
@@ -75,7 +75,7 @@ __PROJECT_LEAD: DEFINE WHO/WHEN HERE__
 
 1. Ensure the issue type is correct, i.e. is the issue really a bug or is it a feature request?
 2. Review the content of the issue, has the filer provided all of the needed information for that issue type? If not, ask for clarification
-3. Add any relevant [project fields](maintainers/work-management/github_projects.md)
+3. Add any relevant [project fields](REF-github_projects.md)
 4. Consider adding good first issue or help wanted labels to the issue if applicable
 5. Set the `Release` in the project to the decided release, this removes it from the triage view in the projects
 
@@ -89,4 +89,4 @@ Developers should be assigned to issues they are responsible for delivering. Try
 
 ### Link to PR
 
-Every [Pull Request](maintainers/work-management/prs.md) should have the issue number in the descriptions of the PR with `Closes #[issue number]` so when the PR is merged the issue that created the PR will automatically close as well and they will be linked in the project.
+Every [Pull Request](REF-prs.md) should have the issue number in the descriptions of the PR with `Closes #[issue number]` so when the PR is merged the issue that created the PR will automatically close as well and they will be linked in the project.

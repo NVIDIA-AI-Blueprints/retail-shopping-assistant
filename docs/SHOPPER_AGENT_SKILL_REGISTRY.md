@@ -376,10 +376,11 @@ runtime response assembly, cart state, policy, memory, inventory, or checkout.
 ## Tuning Loop
 
 The outfit behavior tuning surface is
-`chain_server/skills/shopper/outfit-styling/SKILL.md`. Shared seasonal framing
-lives in `chain_server/skills/shopper/trends-current.md`; it is read-only
-reference content, not a registered skill or catalog truth. Its frontmatter and
-update log own the refresh date and history.
+`chain_server/skills/shopper/outfit-styling/SKILL.md`. Seasonal framing is
+inline in that skill rather than a separate reference file: the agent has no
+filesystem and no `read_file` tool, so a pointer to one would be unreachable.
+Trend guidance is never catalog truth, and fundamentals and the shopper's own
+stated preferences outrank it.
 
 When changing the skill:
 

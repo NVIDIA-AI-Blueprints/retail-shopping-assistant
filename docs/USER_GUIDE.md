@@ -8,6 +8,7 @@
 - [Product Search](#-product-search)
 - [Shopping Cart Management](#-shopping-cart-management)
 - [Image Upload Feature](#%EF%B8%8F-image-upload-feature)
+- [Safety Guardrails](#-safety-guardrails)
 - [Best Practices](#-best-practices)
 - [Troubleshooting](#%EF%B8%8F-troubleshooting)
 - [FAQ](#-faq)
@@ -36,6 +37,7 @@ The application should be ready to use immediately. If you encounter any issues:
 - **🛒 Shopping Cart Management**: Add, remove, and manage items
 - **🖼️ Visual Search**: Upload images to find similar products
 - **💬 Conversational AI**: Natural language interactions
+- **🔒 Safety Guardrails**: Optional content and topic checks you can switch on
 - **📱 Responsive Design**: Works on desktop and mobile devices
 
 ### Available Product Filters
@@ -293,6 +295,56 @@ Upload: A black shoe image
 AI: "Here are some black shoes that match your image..."
 ```
 
+## 🔒 Safety Guardrails
+
+The assistant can run safety checks on what you send and on what it replies,
+using separate models that only judge safety and never write the reply.
+
+### Turning Them On
+
+A **Guardrails** switch sits next to the upload buttons below the message box.
+Guardrails are off unless your deployment turned them on, so the switch usually
+starts off. Flipping it takes effect on your next message, and it stays where
+you put it for the rest of the session.
+
+### What Gets Checked
+
+| What you send | Checked for |
+|---------------|-------------|
+| Your message text | Unsafe content, and whether the request is a shopping topic |
+| An image you upload | Unsafe content, and topic |
+| A video you upload | Unsafe content, judged on sampled frames including audio |
+
+The assistant's reply is checked too, before you see it.
+
+### Reading the Safety Row
+
+With guardrails on, each reply carries a collapsible **Safety** row showing the
+result, which checks ran, and how long they took. Open it to see each stage:
+
+- **input** covers your message and any upload.
+- **output** covers the assistant's reply.
+
+Each stage shows one of three results. **Passed** means the check ran and found
+nothing. **Blocked** means the check refused it, with the category that
+triggered the refusal. **Unavailable** means the safety model could not be
+reached, which is not a judgement about what you sent. The row also states
+whether an unavailable checker stops the request in this deployment.
+
+### When Something Is Blocked
+
+If a check blocks the turn, the assistant says it specializes in apparel and
+asks for a question closer to its expertise, rather than answering. This is
+also what you see for an off-topic request, such as asking about the weather in
+a way unrelated to shopping.
+
+If a safety model is unavailable and the deployment stops requests in that
+case, the assistant asks you to retry and to check your cart first, because a
+cart change may already have gone through before the check failed.
+
+Guardrails cost a little latency, since the checks are extra model calls. The
+Safety row shows exactly how much.
+
 ## 📝 Best Practices
 
 ### Writing Effective Queries
@@ -406,6 +458,28 @@ AI: "Here are some black shoes that match your image..."
 4. **Check your internet connection**
 5. **Refresh the page and try again**
 
+#### The Assistant Declines to Answer
+
+**Problem**: Instead of answering, the assistant says it specializes in apparel
+
+**Solutions**:
+1. **Rephrase as a shopping question** - a safety check found the request
+   off-topic or unsafe
+2. **Open the Safety row** under the reply to see which check refused it
+3. **Turn the Guardrails switch off** if your deployment allows it and the
+   request was a legitimate shopping question
+
+#### Safety Checks Show "Unavailable"
+
+**Problem**: The Safety row reports a check as unavailable
+
+**Solutions**:
+1. **Retry the message** - the safety model was unreachable, which says nothing
+   about what you sent
+2. **Check your cart** before retrying, in case a cart change already went
+   through
+3. **Ask your operator to check the guardrails service** if it keeps happening
+
 #### Products Not Found
 
 **Problem**: No products match your search
@@ -514,6 +588,24 @@ A: It's best to upload images with single products for more accurate results.
 
 **Q: What if no similar products are found?**
 A: Try uploading a different image or use text-based search instead.
+
+### Safety Guardrails
+
+**Q: What does the Guardrails switch do?**
+A: It turns on safety checks that read your message, any upload, and the
+assistant's reply, looking for unsafe content and off-topic requests.
+
+**Q: Why is it off by default?**
+A: The checks are optional and add latency, so the deployment decides whether
+they start on. Your operator can change that default.
+
+**Q: Does turning it on slow things down?**
+A: Slightly, since the checks are additional model calls. The Safety row under
+each reply shows the exact cost in milliseconds.
+
+**Q: Are my messages or images stored by the safety checks?**
+A: No. Only the decision and its timing are reported back, never your text or
+attachments.
 
 ### Technical Issues
 

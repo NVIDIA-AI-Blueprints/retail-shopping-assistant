@@ -24,7 +24,7 @@ The Retail Shopping Assistant API provides a comprehensive interface for an AI-p
 - **Shopping Cart Management**: Add, remove, and view cart items
 - **Representative Shoppers**: Read five immutable eval-derived shopper
   profiles for the bundled UI picker
-- **Content Safety**: Built-in guardrails for safe interactions
+- **Content Safety**: Optional guardrails for safe interactions, off by default
 - **Performance Monitoring**: Detailed timing information
 
 ## 🌐 Base URL
@@ -310,9 +310,45 @@ interface QueryResponse {
   timings: Record<string, number>;    // Performance timing data
   token_usage?: TokenUsage;           // LLM token usage summary
   model_usage?: ModelUsage;           // Per-role model usage summary
+  guardrail_report?: GuardrailReport; // What the safety checks decided this turn
   agent_diagnostics?: AgentDiagnostics; // Empty unless operator exposure is enabled
 }
 ```
+
+`GuardrailReport` reports what the safety checks did on this turn. It is present
+on every query response, streaming or not, and needs no operator flag, because
+it carries only the provider's sanitized decision metadata and never the
+shopper's text or attachments. When guardrails are disabled the report is still
+returned, with `enabled: false` and an empty `checks` list.
+
+```typescript
+interface GuardrailReport {
+  enabled: boolean;                   // Whether checks ran on this turn
+  failure_mode: 'closed' | 'open';    // Deployment policy for provider errors
+  checks: Array<{
+    stage: 'input' | 'output';
+    status: 'allow' | 'block' | 'error';
+    violated_categories: string[];    // Empty unless status is 'block'
+    latency_ms: number;
+    model_calls: Record<string, number>; // Guard role -> number of calls
+  }>;
+}
+```
+
+A turn runs an `input` check and, if the turn was not stopped, an `output`
+check, so `checks` normally holds one or two entries in the order they ran.
+
+`status: "error"` means a guard model could not be reached or did not answer. It
+is reported distinctly from `"block"` so a client can tell a genuine policy
+refusal from an unavailable checker. Whether an error stops the turn depends on
+`failure_mode`: `closed` (the default) stops it, `open` lets the turn proceed.
+A `"block"` always stops the turn regardless of the mode.
+
+When a turn is stopped by a guardrail, `agent_diagnostics.final_termination_reason`
+is one of `input_guardrail_blocked`, `input_guardrail_error`,
+`output_guardrail_blocked`, or `output_guardrail_error`. The shopper-facing text
+comes from `unsafe_message` or `guardrails_unavailable_message` in
+`shared/configs/chain_server/config.yaml`.
 
 `AgentDiagnostics` is operator-facing turn metadata. Internal collection is
 always available to the runtime, but public query responses return `{}` by
@@ -604,7 +640,7 @@ data: {"type": "images", "payload": {"Red Wrap Dress": "https://..."}, "timestam
 
 data: {"type": "content", "payload": "I found several red dresses...", "timestamp": 1716400001.2}
 
-data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 3}, "model_usage": {"text_embedding": {"status": "used", "calls": 1, "detail": "Catalog text/vector retrieval"}, "content_safety": {"status": "used", "calls": 2, "detail": "Input and output safety checks"}, "topic_control": {"status": "used", "calls": 1, "detail": "Input topic check"}}, "agent_diagnostics": {}}, "timestamp": 1716400001.8}
+data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 3}, "model_usage": {"text_embedding": {"status": "used", "calls": 1, "detail": "Catalog text/vector retrieval"}, "content_safety": {"status": "used", "calls": 2, "detail": "Input and output safety checks"}, "topic_control": {"status": "used", "calls": 1, "detail": "Input topic check"}}, "guardrail_report": {"enabled": true, "failure_mode": "closed", "checks": [{"stage": "input", "status": "allow", "violated_categories": [], "latency_ms": 118.4, "model_calls": {"content_safety": 1, "topic_control": 1}}, {"stage": "output", "status": "allow", "violated_categories": [], "latency_ms": 96.2, "model_calls": {"content_safety": 1}}]}, "agent_diagnostics": {}}, "timestamp": 1716400001.8}
 
 data: [DONE]
 ```

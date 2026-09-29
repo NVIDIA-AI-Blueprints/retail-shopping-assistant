@@ -28,7 +28,7 @@ src/
 ├── utils/
 │   └── index.ts                 # Utility functions
 ├── hooks/
-│   └── useChat.ts               # Custom chat hook (WIP)
+│   └── useChat.ts               # Custom chat hook
 └── assets/                      # Static assets
 ```
 

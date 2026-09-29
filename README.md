@@ -64,7 +64,7 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
 - 🖼️ **Visual Search**: Upload images to find similar products
 - 🎥 **Photo and Video Understanding**: Nemotron 3.5 Super VL, the same model as the app LLM, reads image and video uploads in shopping context
 - 💬 **Conversational AI**: Natural language interactions
-- 🔒 **Configurable Content Safety**: Built-in moderation and safety checks are on by default and can be disabled per request or config
+- 🔒 **Optional Content Safety**: Guardrail models can check shopper input and assistant output for unsafe content and off-topic requests; they ship disabled and are enabled per request or by config
 - ⚡ **SSE Response Stream**: Event-stream response framing for chat clients; token-level Deep Agents streaming is a follow-up after the harness migration
 - 📊 **Inference Visibility**: Model names, call counts, and token usage, with
   detailed ordered agent/tool diagnostics available only when explicitly
@@ -551,11 +551,11 @@ since the catalog indexer embeds the catalog once, at startup. The first start
 downloads the chat model's ~240 GB BF16 checkpoint into `HF_CACHE` and can take
 an hour; later starts read the cache.
 
-The complete four-GPU profile keeps Nemotron 3 Super on GPUs 0-1, places Omni
-and Content Safety under explicit memory caps on GPU 2, and places Topic Control
-with the smaller embedding NIMs on GPU 3. See the
+The default layout above needs five GPUs: four for the chat model's tensor
+parallel group and one for embedding. `LOCAL_LLM_GPUS`, `LOCAL_LLM_TP` and
+`LOCAL_EMBED_GPU` change that placement. See the
 [deployment guide](docs/DEPLOYMENT.md#step-2-verify-gpu-setup) before starting
-all local roles together.
+both local roles together.
 
 No tracked configuration changes. The environment is read before
 `shared/configs/models.yaml`, so the profile's `LLM_*`, `VLM_*` and
@@ -615,25 +615,40 @@ The Brev deployment guide walks you through the entire process from creating a L
 
 ## Documentation
 
-- **[Project Status](STATUS.md)**: Current implementation, verification, quality qualification, and remaining risks
+**[Documentation Hub](docs/README.md)** indexes everything below and suggests a
+reading path for your role. The documents most people need first:
+
+- **[Deployment Guide](docs/DEPLOYMENT.md)**: Prerequisites, both deployment
+  paths, every configuration setting, monitoring, and troubleshooting
+- **[Notebooks](notebook/README.md)**: Ordered walkthroughs that deploy the
+  stack, explore its traces, evaluate it, and measure its performance
 - **[User Guide](docs/USER_GUIDE.md)**: How to use the application
 - **[API Documentation](docs/API.md)**: Complete API reference
-- **[Catalog Schema and Filters](docs/CATALOG_FILTERS.md)**: JSONL field roles and data-derived filter capabilities
-- **[Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md)**: Start here for JSONL ingest, lifecycle-cached capabilities, compact agent discovery, validation, and retrieval
-- **[Commerce Contracts](docs/COMMERCE_CONTRACTS.md)**: Internal product, cart, and commerce tool contracts
-- **[Shopper Agent Architecture](docs/SHOPPER_AGENT_ARCHITECTURE.md)**: Clean map of the published catalog, turn flow, skills, tools, and memory boundaries
-- **[Shopper Agent Leadership Note](docs/SHOPPER_AGENT_LEADERSHIP_NOTE.md)**: Concise request flow, memory ownership, worked styling example, and prioritized next steps
-- **[Shopper Agent Tool Registry](docs/SHOPPER_AGENT_TOOL_REGISTRY.md)**: Registered Deep Agents tools for the shopper-serving agent
-- **[Shopper Agent Skill Registry](docs/SHOPPER_AGENT_SKILL_REGISTRY.md)**: Registered Deep Agents skills and markdown tuning loop
-- **[Deep Agents Migration Plan](docs/DEEP_AGENTS_MIGRATION_PLAN.md)**: SDK migration, session isolation, tools, skills, and scaling notes
-- **[Deep Agents Cart Tool Goal](docs/DEEP_AGENTS_CART_TOOL_GOAL.md)**: Minimal cart-tool smoke gate and constraints
-- **[Deployment Guide](docs/DEPLOYMENT.md)**: Installation and setup instructions
+
+Running and operating it:
+
+- **[Observability](docs/OBSERVABILITY.md)**: Read a shopper's session turn by
+  turn, open one turn's trace, and find what the model was told
 - **[Performance](docs/PERFORMANCE.md)**: Measure where a turn spends its time, sweep the local LLM to saturation, and size concurrent shoppers on given hardware
+- **[Deploy on NVIDIA Brev](docs/BREV.md)**: Managed cloud GPU deployment
 - **[Testing and Evaluation](tests/README.md)**: Unit, integration, and
   Challenger/Judge workflows; multi-turn judging uses the actual generated
   conversation plus bounded current-turn catalog evidence from successful
   search and detail tools
-- **[Documentation Hub](docs/README.md)**: Complete documentation index
+
+Using your own catalog:
+
+- **[Embedding Management](docs/EMBEDDING_MANAGEMENT.md)**: Catalog data format, fingerprinting, and reindexing
+- **[Catalog Schema and Filters](docs/CATALOG_FILTERS.md)**: JSONL field roles and data-derived filter capabilities
+- **[Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md)**: Start here for JSONL ingest, lifecycle-cached capabilities, compact agent discovery, validation, and retrieval
+
+Understanding and changing the agent:
+
+- **[Shopper Agent Architecture](docs/SHOPPER_AGENT_ARCHITECTURE.md)**: Clean map of the published catalog, turn flow, skills, tools, and memory boundaries
+- **[Shopper Agent Skill Registry](docs/SHOPPER_AGENT_SKILL_REGISTRY.md)**: Registered Deep Agents skills and markdown tuning loop
+- **[Shopper Agent Tool Registry](docs/SHOPPER_AGENT_TOOL_REGISTRY.md)**: Registered Deep Agents tools for the shopper-serving agent
+- **[Commerce Contracts](docs/COMMERCE_CONTRACTS.md)**: Internal product, cart, and commerce tool contracts
+- **[AGENTS.md](AGENTS.md)**: Service map, turn flow, file layout, and test commands for contributors
 
 ## Contribution Guidelines
 
@@ -674,9 +689,9 @@ GOVERNING TERMS: Use of the blueprint software and materials and NIM containers 
  
 ADDITIONAL INFORMATION: [Llama 3.1 Community License Agreement](https://www.llama.com/llama3_1/license/) for Llama 3.1 70B Instruct NIM, Llama 3.1 NemoGuard 8B - Content Safety and Llama 3.1 NemoGuard 8B - Topic Control models, built with Llama, (ii) MIT license for NV-EmbedQA-E5-v5.
  
-This project will download and install additional third-party open source software projects. Review the license terms of these open source projects before use, found in [License-3rd-party.txt](/LICENSE-3rd-party.txt).
+This project will download and install additional third-party open source software projects. Review the license terms of these open source projects before use, found in [License-3rd-party.txt](LICENSE-3rd-party.txt).
  
-Use of the product catalog data in the retail shopping assistant is governed by the terms of the [NVIDIA Data License for Retail Shopping Assistant](/LICENSE-assets.txt) (15Aug2025).
+Use of the product catalog data in the retail shopping assistant is governed by the terms of the [NVIDIA Data License for Retail Shopping Assistant](LICENSE-assets.txt) (15Aug2025).
 
 ---
 

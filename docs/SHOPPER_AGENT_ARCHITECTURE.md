@@ -10,9 +10,6 @@ which tools connect the agent to application services.
 
 [Open the full-size SVG](images/shopper-agent-architecture.svg).
 
-For the concise executive flow, worked example, and prioritized follow-up work,
-see the [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md).
-
 ## Architectural Boundaries
 
 | Boundary | Owns | Does not own |
@@ -447,9 +444,9 @@ Selecting `cart-management` currently grants its cart tools; deterministic refs
 and service preconditions still apply, but a server-owned current-turn intent
 authorization object is a later slice.
 
-[trends-current.md](../chain_server/skills/shopper/trends-current.md) is a
-read-only seasonal reference used by `outfit-styling`; it is not a registered
-skill and is not catalog truth.
+Seasonal trend guidance is inline in the `outfit-styling` skill rather than a
+separate reference file, because the agent has no filesystem to read one from.
+It is never catalog truth.
 
 ## 4. Tool Ownership
 

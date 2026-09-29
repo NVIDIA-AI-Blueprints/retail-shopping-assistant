@@ -202,6 +202,38 @@ came back; for `add_cart_items_tool`, exactly what went into the cart.
 The refusal is deliberate: those gates exist so a wrong tool call cannot become
 a wrong answer.
 
+### When guardrails ran
+
+With guardrails enabled, the turn also carries a `guardrails.decision` span per
+stage — one before the agent runs, one after it writes the reply:
+
+```
+guardrails.stage                 input
+guardrails.policy                configured
+guardrails.status                allow
+guardrails.modalities            text,image
+guardrails.latency_ms            118.4
+guardrails.failure_code          (absent unless the check failed)
+```
+
+`guardrails.status` is the one to read. `allow` and `block` are the guard
+model's verdict. **`error` is not a verdict** — it means the check could not be
+completed, and it is reported separately precisely so a provider outage never
+reads as a shopper writing something unsafe. When you see `error`,
+`guardrails.failure_code` says what went wrong, and whether the turn stopped
+depends on `GUARDRAILS_FAILURE_MODE` rather than on the decision.
+
+Note what the span does *not* carry: no shopper text, no attachment. Only the
+decision and its shape, so these spans stay safe to keep and to share.
+
+Two other places show the same turn from a different angle. `timings` on the
+turn holds `safety_input` and `safety_output`, which is the wall-clock cost of
+guardrails and the number to quote when someone asks what they cost. And
+`model_usage` gains a row per guard role that ran — `content_safety`,
+`topic_control`, `multimodal_safety` — each with its call count and a `failed`
+status when the role could not be reached. A guard role showing `failed` while
+the turn still completed means the deployment is running `GUARDRAILS_FAILURE_MODE=open`.
+
 ### Worked example: "it added the wrong product"
 
 1. `read_session.py <convo>` — find the turn, and check `tools`. Is

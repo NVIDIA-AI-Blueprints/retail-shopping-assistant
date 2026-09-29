@@ -1,0 +1,117 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Models served on this machine from Hugging Face checkpoints with vLLM. The
+# NGC NIM containers are in docker-compose-nim-local.yaml.
+#
+# .env.local-models.example points the app at these services; see
+# docs/DEPLOYMENT.md, Local Deployment.
+
+services:
+
+  local-llm:
+    # Nemotron 3.5 Super from Hugging Face, served by vLLM with the flags
+    # notebook/gpu/deploy.sh uses. app_llm and vlm both point here, as they
+    # share one hosted model, so the checkpoint must read images and video.
+    #
+    # BF16 weights are ~240 GB: four 80 GB GPUs at tensor parallel 4. The first
+    # start downloads them into HF_CACHE quietly and can take an hour.
+    #
+    # Pinned to a release: vLLM before 0.30 does not load this architecture.
+    image: ${LOCAL_LLM_VLLM_IMAGE:-vllm/vllm-openai:v0.30.0}
+    # vLLM is started without --api-key, so the host port is loopback only.
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+    command:
+      - --model=${LOCAL_LLM_HF_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026}
+      # The name LLM_MODEL asks for, whichever checkpoint is loaded.
+      - --served-model-name=nemotron-3.5-super
+      - --host=0.0.0.0
+      - --port=8000
+      - --tensor-parallel-size=${LOCAL_LLM_TP:-4}
+      - --trust-remote-code
+      - --async-scheduling
+      - --gpu-memory-utilization=0.85
+      - --max-num-seqs=128
+      - --max-model-len=32768
+      # Float32 SSM state for BF16 and FP8 checkpoints.
+      - --mamba-backend=flashinfer
+      - --mamba-ssm-cache-dtype=float32
+      - --enable-auto-tool-choice
+      - --tool-call-parser=qwen3_coder
+      - --reasoning-parser=nemotron_v3
+      # Unlike deploy.sh, no --chat-template-content-format string: that
+      # flattens every message to text and drops the image and video parts
+      # media perception sends.
+      - --enable-prefix-caching
+      - --block-size=64
+      - --prefix-match-unit=64
+      - --mamba-cache-mode=align
+    volumes:
+      - ${HF_CACHE}:/root/.cache/huggingface
+    ipc: host
+    shm_size: "32gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              # A comma-separated list, as many GPUs as LOCAL_LLM_TP.
+              device_ids: ['${LOCAL_LLM_GPUS:-0,1,2,3}']
+              capabilities: [gpu]
+    restart: "no"
+    networks:
+      - shopping-network
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 20
+      start_period: 3600s
+
+  local-embedding:
+    # Nemotron 3 Embed 1B from Hugging Face, served by vLLM:
+    #   https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16
+    # The model card validates `vllm serve` on vllm-openai v0.20.0 to v0.24.0.
+    # Its /v1/embeddings ignores input_type, so texts arrive without the
+    # model's "query: " and "passage: " prefixes.
+    image: ${LOCAL_EMBED_VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
+    # vLLM is started without --api-key, so the host port is loopback only.
+    ports:
+      - "127.0.0.1:8001:8000"
+    environment:
+      # Optional: the model is public. Set, it raises Hugging Face rate limits.
+      - HF_TOKEN
+    command:
+      - --model=nvidia/Nemotron-3-Embed-1B-BF16
+      - --host=0.0.0.0
+      - --port=8000
+    volumes:
+      - ${HF_CACHE}:/root/.cache/huggingface
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${LOCAL_EMBED_GPU:-4}']
+              capabilities: [gpu]
+    restart: "no"
+    networks:
+      - shopping-network
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 600s
+
+networks:
+  shopping-network:
+    driver: bridge
+    name: retail-shopping-assistant_shopping-network

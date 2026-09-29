@@ -136,12 +136,12 @@ default in `shared/configs/chain_server/config.yaml`.
 Use this only when this machine will serve the models itself. The local setup
 mirrors the hosted default: Nemotron 3.5 Super answers the shopper and reads
 photo and video uploads, and Nemotron 3 Embed 1B embeds the catalog. Both are
-Hugging Face checkpoints served by vLLM from `docker-compose-nim-local.yaml`:
+Hugging Face checkpoints served by vLLM from `docker-compose-local-models.yaml`:
 
 | Service | Checkpoint | GPUs |
 |---------|------------|------|
-| `nemotron` | `nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026`, BF16, tensor parallel 4 | `LOCAL_LLM_GPUS`, default `0,1,2,3` |
-| `embedqa` | `nvidia/Nemotron-3-Embed-1B-BF16` | `LOCAL_EMBED_GPU`, default `4` |
+| `local-llm` | `nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026`, BF16, tensor parallel 4 | `LOCAL_LLM_GPUS`, default `0,1,2,3` |
+| `local-embedding` | `nvidia/Nemotron-3-Embed-1B-BF16` | `LOCAL_EMBED_GPU`, default `4` |
 
 The defaults fit an 8x H100 80 GB machine. `.env.local-models.example` points
 the app LLM, media and text embedding at them through the environment, so
@@ -175,7 +175,7 @@ nvidia-smi --query-gpu=memory.total,memory.used,memory.free --format=csv
 ### Step 3: Authenticate with NVIDIA Registry
 
 The vLLM images come from Docker Hub. Log in to `nvcr.io` only to run the NGC
-NIMs in the same file (image embedding, guardrails):
+NIMs in `docker-compose-nim-local.yaml` (image embedding, guardrails):
 
 ```bash
 docker login nvcr.io
@@ -186,7 +186,7 @@ docker login nvcr.io
 ### Step 4: Start the Models, Then the App
 
 ```bash
-docker compose -f docker-compose-nim-local.yaml up -d --wait nemotron embedqa
+docker compose -f docker-compose-local-models.yaml up -d --wait local-llm local-embedding
 python scripts/model_config.py show --validate
 docker compose -f docker-compose.yaml up -d --build
 ```
@@ -194,7 +194,7 @@ docker compose -f docker-compose.yaml up -d --build
 `--wait` returns once both report healthy. Start the app after that: the
 catalog indexer embeds the catalog once, at startup. The first start downloads
 the chat model's ~240 GB into `HF_CACHE` and can take an hour; follow it with
-`docker compose -f docker-compose-nim-local.yaml logs -f nemotron`.
+`docker compose -f docker-compose-local-models.yaml logs -f local-llm`.
 
 ### Step 5: Index the catalog
 

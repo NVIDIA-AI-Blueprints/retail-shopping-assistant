@@ -176,12 +176,16 @@ services:
     ports:
       - "127.0.0.1:8011:8011"
     environment:
+      # The database lives on the memory-data volume below, so this default
+      # belongs to Compose.
       - MEMORY_DATABASE_URL=${MEMORY_DATABASE_URL:-sqlite:////data/context.db}
-      - MEMORY_SQLITE_BUSY_TIMEOUT_MS=${MEMORY_SQLITE_BUSY_TIMEOUT_MS:-5000}
-      - MEMORY_MAX_CONCURRENT_REQUESTS=${MEMORY_MAX_CONCURRENT_REQUESTS:-64}
-      - SHUTDOWN_GRACE_SECONDS=${SHUTDOWN_GRACE_SECONDS:-30}
-      - MEMORY_TURN_ABANDON_SECONDS=${MEMORY_TURN_ABANDON_SECONDS:-300}
-      - MEMORY_RECENT_TURNS=${MEMORY_RECENT_TURNS:-8}
+      # Pass-through, no defaults here: memory_retriever/src and
+      # memory_retriever/Dockerfile hold them. Empty means unset.
+      - MEMORY_SQLITE_BUSY_TIMEOUT_MS=${MEMORY_SQLITE_BUSY_TIMEOUT_MS:-}
+      - MEMORY_MAX_CONCURRENT_REQUESTS=${MEMORY_MAX_CONCURRENT_REQUESTS:-}
+      - SHUTDOWN_GRACE_SECONDS=${SHUTDOWN_GRACE_SECONDS:-}
+      - MEMORY_TURN_ABANDON_SECONDS=${MEMORY_TURN_ABANDON_SECONDS:-}
+      - MEMORY_RECENT_TURNS=${MEMORY_RECENT_TURNS:-}
     volumes:
       - ./shared:/app/shared
       - memory-data:/data

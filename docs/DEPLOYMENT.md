@@ -335,6 +335,11 @@ overrides it, and left empty it leaves the key in place. `docker-compose.yaml`
 and `.env.example` pass these variables through empty, so change a default in
 `config.yaml`, not in either of them.
 
+The memory service has no config file; a default written as a constant lives
+in its code, named in the table. `MEMORY_MAX_CONCURRENT_REQUESTS` has one more
+copy, in `memory_retriever/Dockerfile`, because uvicorn's admission limit is
+set there; a unit test fails if the two differ, so change both together.
+
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
 | `NGC_API_KEY` | NVIDIA NGC API key | Yes | - |
@@ -355,9 +360,10 @@ and `.env.example` pass these variables through empty, so change a default in
 | `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `config.yaml`: `max_product_detail_reads_per_turn` |
 | `CHECKPOINT_STORE` | Deep Agents conversation checkpoint store; currently supports only `memory` | No | `memory` |
 | `MEMORY_DATABASE_URL` | SQLite URL for durable raw turns and cart state; Compose supplies the named-volume path | No | Compose: `sqlite:////data/context.db` |
-| `MEMORY_SQLITE_BUSY_TIMEOUT_MS` | SQLite lock wait for the single memory-service writer | No | `5000` |
-| `MEMORY_TURN_ABANDON_SECONDS` | Age at which startup or the next turn start marks an unfinished `started` turn abandoned | No | `300` |
-| `MEMORY_RECENT_TURNS` | Maximum prior context-eligible raw turns returned at the next durable turn start | No | `8` |
+| `MEMORY_SQLITE_BUSY_TIMEOUT_MS` | SQLite lock wait for the single memory-service writer | No | `DEFAULT_BUSY_TIMEOUT_MS` in `memory_retriever/src/database.py` |
+| `MEMORY_MAX_CONCURRENT_REQUESTS` | Requests the memory service works on at once; sizes its connection pool, its threadpool and uvicorn's admission limit together | No | `DEFAULT_MAX_CONCURRENT_REQUESTS` in `memory_retriever/src/database.py`, and `memory_retriever/Dockerfile` |
+| `MEMORY_TURN_ABANDON_SECONDS` | Age at which startup or the next turn start marks an unfinished `started` turn abandoned | No | `DEFAULT_ABANDONED_SECONDS` in `memory_retriever/src/conversations.py` |
+| `MEMORY_RECENT_TURNS` | Maximum prior context-eligible raw turns returned at the next durable turn start | No | `DEFAULT_RECENT_TURNS_LIMIT` in `memory_retriever/src/conversations.py` |
 | `WEATHER_ENABLED` | Registers the forecast tool with the shopper agent (needs `WEATHER_API_KEY`) | No | `config.yaml`: `weather.enabled` (off) |
 | `WEATHER_API_KEY` | Visual Crossing server-side credential, read indirectly from the variable named by chain-server weather config | Only when directly constructing an enabled weather client | empty |
 | `HF_TOKEN` | Hugging Face token with access to the local LLM checkpoint | Local only | - |

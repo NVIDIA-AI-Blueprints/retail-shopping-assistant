@@ -108,8 +108,12 @@ def test_the_server_admits_no_more_requests_than_it_has_connections() -> None:
     # The shell is only there to expand the variable. Without `exec` it stays
     # as PID 1 and swallows the SIGTERM that should drain in-flight requests.
     assert "exec uvicorn" in dockerfile
-    assert "MEMORY_MAX_CONCURRENT_REQUESTS" in dockerfile
-    assert str(DEFAULT_MAX_CONCURRENT_REQUESTS) in dockerfile
+    # The shell cannot read the Python constant, so this default is the one
+    # copy; it must stay equal to the code's.
+    assert (
+        f"${{MEMORY_MAX_CONCURRENT_REQUESTS:-{DEFAULT_MAX_CONCURRENT_REQUESTS}}}"
+        in dockerfile
+    )
 
 
 def test_a_concurrency_of_zero_is_refused_rather_than_silently_serialising(
@@ -129,6 +133,13 @@ def test_the_default_survives_an_unset_environment(
 
     assert configured_max_concurrent_requests() == DEFAULT_MAX_CONCURRENT_REQUESTS
     assert build_engine(database_url).pool.size() == DEFAULT_MAX_CONCURRENT_REQUESTS
+
+
+def test_an_empty_setting_is_the_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Compose passes the variable through empty when it is unset.
+    monkeypatch.setenv("MEMORY_MAX_CONCURRENT_REQUESTS", "")
+
+    assert configured_max_concurrent_requests() == DEFAULT_MAX_CONCURRENT_REQUESTS
 
 
 def test_an_explicit_poolclass_still_wins(database_url: str) -> None:

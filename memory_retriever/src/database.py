@@ -65,10 +65,8 @@ def configured_max_concurrent_requests() -> int:
     """Return the one number the pool, the threadpool and uvicorn all use."""
 
     value = int(
-        os.environ.get(
-            "MEMORY_MAX_CONCURRENT_REQUESTS",
-            str(DEFAULT_MAX_CONCURRENT_REQUESTS),
-        )
+        os.environ.get("MEMORY_MAX_CONCURRENT_REQUESTS")
+        or DEFAULT_MAX_CONCURRENT_REQUESTS
     )
     if value < 1:
         raise ValueError("MEMORY_MAX_CONCURRENT_REQUESTS must be at least 1")
@@ -77,10 +75,7 @@ def configured_max_concurrent_requests() -> int:
 
 def _configured_busy_timeout_ms() -> int:
     timeout = int(
-        os.environ.get(
-            "MEMORY_SQLITE_BUSY_TIMEOUT_MS",
-            str(DEFAULT_BUSY_TIMEOUT_MS),
-        )
+        os.environ.get("MEMORY_SQLITE_BUSY_TIMEOUT_MS") or DEFAULT_BUSY_TIMEOUT_MS
     )
     if timeout < 0:
         raise ValueError("MEMORY_SQLITE_BUSY_TIMEOUT_MS must be non-negative")

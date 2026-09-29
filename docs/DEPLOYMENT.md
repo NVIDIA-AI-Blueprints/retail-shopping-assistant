@@ -401,6 +401,7 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 |----------|-------------|----------|---------|
 | `NGC_API_KEY` | NVIDIA NGC API key | Yes | - |
 | `LLM_API_KEY` | Language model API key | Yes | - |
+| `VLM_BASE_URL`, `VLM_MODEL` | Media perception endpoint and model; set separately from `LLM_*` | No | Same as `app_llm` in `models.yaml` |
 | `VLM_API_KEY` | Optional VLM media perception API key; Compose falls back to `NVIDIA_API_KEY` when unset | When `vlm` uses an authenticated endpoint and `NVIDIA_API_KEY` is unset | `NVIDIA_API_KEY` |
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
@@ -649,10 +650,13 @@ roles that do not need request-time auth, use `api_key_env: null`. Local NIM
 container startup credentials are separate and are listed once under
 `local_nims.required_env`.
 
-The `vlm` role controls image/video media perception for user uploads. It uses
-a hosted endpoint by default and can be set to `disabled` when media perception
-should be off. Image embedding search remains controlled separately by the
-`image_embedding` role and `CATALOG_IMAGE_EMBEDDING_ENABLED`.
+The `vlm` role controls image/video media perception for user uploads. By
+default it uses the same model as `app_llm`, Nemotron 3.5 Super VL, which reads
+photos and video. It is configured separately through `VLM_*`, so replacing the
+app LLM leaves media perception where it is; set `VLM_*` as well to move it.
+It can be set to `disabled` when media perception should be off. Image
+embedding search remains controlled separately by the `image_embedding` role
+and `CATALOG_IMAGE_EMBEDDING_ENABLED`.
 
 #### Standard Deployment Flow
 
@@ -727,22 +731,6 @@ models:
     base_url_env: VLM_BASE_URL
     model_env: VLM_MODEL
     api_key_env: VLM_API_KEY
-```
-
-The sourceable `.env.example` sets `VLM_API_KEY` from `NVIDIA_API_KEY` by
-default. Docker Compose also passes `NVIDIA_API_KEY` as the fallback for
-`VLM_API_KEY` so hosted Omni media perception works with the single-key
-developer setup.
-
-For VLM media perception through the Compose-managed local Omni NIM:
-
-```yaml
-models:
-  vlm:
-    source: local_nim
-    provider: openai_compatible
-    local_service: nemotron_omni
-    api_key_env: null
 ```
 
 Then deploy with:

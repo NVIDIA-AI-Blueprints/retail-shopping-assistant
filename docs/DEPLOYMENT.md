@@ -10,6 +10,7 @@
 - [Cloud Deployment](#%EF%B8%8F-cloud-deployment)
 - [Production Deployment](#-production-deployment)
 - [Configuration](#%EF%B8%8F-configuration)
+  - [Model Sampling and Output Limits](#model-sampling-and-output-limits): where each model call's temperature and max tokens are set
 - [Monitoring](#-monitoring)
 - [Troubleshooting](#%EF%B8%8F-troubleshooting)
 
@@ -332,6 +333,10 @@ are for whoever writes them.
 |----------|-------------|----------|---------|
 | `NGC_API_KEY` | NVIDIA NGC API key | Yes | - |
 | `LLM_API_KEY` | Language model API key | Yes | - |
+| `APP_LLM_TEMPERATURE` | Temperature for the shopping agent and grounding editor; see [Model Sampling and Output Limits](#model-sampling-and-output-limits) | No | `0.7` |
+| `APP_LLM_FREQUENCY_PENALTY` | Optional frequency penalty for the same calls | No | off |
+| `LLM_MAX_OUTPUT_TOKENS` | Shopping agent output ceiling per call; overrides `config.yaml` | No | `1024` |
+| `GROUNDING_EDITOR_MAX_OUTPUT_TOKENS` | Grounding editor output ceiling per call; overrides `config.yaml` | No | `1024` |
 | `VLM_BASE_URL`, `VLM_MODEL` | Media perception endpoint and model; set separately from `LLM_*` | No | Same as `app_llm` in `models.yaml` |
 | `VLM_API_KEY` | Optional VLM media perception API key; Compose falls back to `NVIDIA_API_KEY` when unset | When `vlm` uses an authenticated endpoint and `NVIDIA_API_KEY` is unset | `NVIDIA_API_KEY` |
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
@@ -681,6 +686,47 @@ python scripts/model_config.py deploy --build
 
 For locally deployed roles, reference a `local_service` in `models.yaml`. The
 deploy helper starts only those services.
+
+#### Model Sampling and Output Limits
+
+The chain server calls the app LLM in four places. Each call's temperature and
+output token ceiling are set in one place, listed here:
+
+| Call | Temperature | Max output tokens |
+|------|-------------|-------------------|
+| Shopping agent: picks tools, writes the reply | `APP_LLM_TEMPERATURE`, default `0.7` | `llm_max_output_tokens` in `shared/configs/chain_server/config.yaml`, default `1024`; `LLM_MAX_OUTPUT_TOKENS` overrides |
+| Grounding editor: rewrites the draft to match the tools' product data | Same client as the agent: `APP_LLM_TEMPERATURE` | `grounding_editor_max_output_tokens` in the same file, default `1024`; `GROUNDING_EDITOR_MAX_OUTPUT_TOKENS` overrides |
+| Media perception: reads uploaded photos and videos | `0.6`, `_TEMPERATURE` in `chain_server/src/media_perception.py` | `4096`, `_MAX_TOKENS` in the same file; change `_MAX_ANALYSIS_CHARS` (`16000`) with it, as it caps the analysis passed to the agent |
+| Vocabulary judge: matches shopper words to catalog values | `0`, in `chain_server/src/vocabulary_judge.py` | `1200`, `_MAX_TOKENS` in the same file |
+
+`APP_LLM_FREQUENCY_PENALTY` optionally adds a frequency penalty to the agent
+and grounding editor. It is off when unset.
+
+To change a default so it holds for every deployment and every way of running
+the chain server:
+
+- **Token ceilings:** edit `shared/configs/chain_server/config.yaml`. It is
+  mounted into the container, so a restart of `chain-server` picks it up.
+- **Temperature:** it has no config key. Change the default in both
+  `.env.example` (`APP_LLM_TEMPERATURE="${APP_LLM_TEMPERATURE:-0.7}"`), which
+  covers local process runs, and the `chain-server` service in
+  `docker-compose.yaml` (`APP_LLM_TEMPERATURE=${APP_LLM_TEMPERATURE:-0.7}`),
+  which covers Compose. Keep the two equal. The value must be a number: an
+  empty `APP_LLM_TEMPERATURE` fails to parse at startup.
+
+- **Media perception and the vocabulary judge:** these have no environment
+  variable or config key. Edit the values in the files named above, then
+  rebuild the chain server with `docker compose up -d --build chain-server`.
+  Compose mounts only `shared/` into the container, so a code edit takes
+  effect only after a rebuild.
+
+To change the agent's settings for one deployment only, set the environment
+variables in the env profile you source; they win over these defaults. Compose
+passes all four to `chain-server`.
+
+A reply that reaches its token ceiling is cut off mid-sentence, with no error.
+Long answers, such as a detailed comparison of several products, can need more
+than 1024 tokens.
 
 ## 📊 Monitoring
 

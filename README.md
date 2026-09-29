@@ -485,7 +485,10 @@ The exact published response is documented in
 
    For locally deployed models, see [Running models locally](#running-models-locally).
 
-   Model routing lives in `shared/configs/models.yaml`.
+   Model routing lives in `shared/configs/models.yaml`. Temperature and max
+   output tokens for each model call are set in several places;
+   [Model Sampling and Output Limits](docs/DEPLOYMENT.md#model-sampling-and-output-limits)
+   lists where to change each one.
 
 6. **Confirm the product catalog is indexed**:
    ```bash

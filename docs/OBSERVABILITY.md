@@ -64,7 +64,7 @@ NeMo Relay is separate and optional; see [Adding NeMo Relay](#adding-nemo-relay)
 |---|---|---|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | Collector address. Unset means no tracing at all. |
 | `OTEL_SERVICE_NAME` | `chain-server` | Service name on every span. |
-| `RELAY_ENABLED` | `true` in `.env.example`, `false` in compose | Also emit NeMo Relay's events. |
+| `RELAY_ENABLED` | off (`relay_enabled` in `chain_server/src/config.py`); `.env.example` turns it on for development | Also emit NeMo Relay's events. |
 | `INSTALL_RELAY` | `true` in `.env.example`, `false` in compose | **Build arg.** Whether the image contains `nemo-relay`. |
 | `RELAY_OTLP_ENDPOINT` | `http://127.0.0.1:4318` in compose; otherwise `OTEL_EXPORTER_OTLP_ENDPOINT` | Where Relay sends. Plain HTTP must be loopback; see [Why Relay sends to localhost](#why-relay-sends-to-localhost). |
 

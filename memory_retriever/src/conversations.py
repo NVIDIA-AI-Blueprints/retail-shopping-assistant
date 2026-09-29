@@ -227,10 +227,7 @@ def _cart_for_user(db, user_id: int) -> list[dict[str, Any]]:
 
 def _recent_turns_limit() -> int:
     configured = int(
-        os.environ.get(
-            "MEMORY_RECENT_TURNS",
-            str(DEFAULT_RECENT_TURNS_LIMIT),
-        )
+        os.environ.get("MEMORY_RECENT_TURNS") or DEFAULT_RECENT_TURNS_LIMIT
     )
     return min(MAX_RECENT_TURNS_LIMIT, max(1, configured))
 
@@ -937,10 +934,7 @@ def _reset_conversation(db, conversation_id: str) -> dict[str, Any]:
 
 def abandoned_timeout_seconds() -> int:
     timeout = int(
-        os.environ.get(
-            "MEMORY_TURN_ABANDON_SECONDS",
-            str(DEFAULT_ABANDONED_SECONDS),
-        )
+        os.environ.get("MEMORY_TURN_ABANDON_SECONDS") or DEFAULT_ABANDONED_SECONDS
     )
     if timeout < 1:
         raise ValueError("MEMORY_TURN_ABANDON_SECONDS must be positive")

@@ -2736,3 +2736,24 @@ def test_a_choice_is_filed_against_the_showing_it_was_made_from(
     index = latest.json()["projection"]["product_reference_index"]
     newest = max(index, key=lambda entry: entry["turn_seq"])
     assert "system_identified" not in newest
+
+
+def test_empty_settings_are_the_code_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Compose passes these through empty when they are unset.
+    from memory_retriever.src import conversations, database
+
+    for name in (
+        "MEMORY_SQLITE_BUSY_TIMEOUT_MS",
+        "MEMORY_TURN_ABANDON_SECONDS",
+        "MEMORY_RECENT_TURNS",
+    ):
+        monkeypatch.setenv(name, "")
+
+    assert database._configured_busy_timeout_ms() == database.DEFAULT_BUSY_TIMEOUT_MS
+    assert (
+        conversations.abandoned_timeout_seconds()
+        == conversations.DEFAULT_ABANDONED_SECONDS
+    )
+    assert (
+        conversations._recent_turns_limit() == conversations.DEFAULT_RECENT_TURNS_LIMIT
+    )

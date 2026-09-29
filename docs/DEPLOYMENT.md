@@ -10,6 +10,7 @@
 - [Cloud Deployment](#%EF%B8%8F-cloud-deployment)
 - [Production Deployment](#-production-deployment)
 - [Configuration](#%EF%B8%8F-configuration)
+  - [Model Sampling and Output Limits](#model-sampling-and-output-limits): where each model call's temperature and max tokens are set
 - [Monitoring](#-monitoring)
 - [Troubleshooting](#%EF%B8%8F-troubleshooting)
 
@@ -328,26 +329,42 @@ are for whoever writes them.
 
 ### Environment Variables
 
+A default written as a `config.yaml` key lives only in
+`shared/configs/chain_server/config.yaml`; look it up there. The variable
+overrides it, and left empty it leaves the key in place. `docker-compose.yaml`
+and `.env.example` pass these variables through empty, so change a default in
+`config.yaml`, not in either of them.
+
+The memory service has no config file; a default written as a constant lives
+in its code, named in the table. `MEMORY_MAX_CONCURRENT_REQUESTS` has one more
+copy, in `memory_retriever/Dockerfile`, because uvicorn's admission limit is
+set there; a unit test fails if the two differ, so change both together.
+
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
 | `NGC_API_KEY` | NVIDIA NGC API key | Yes | - |
 | `LLM_API_KEY` | Language model API key | Yes | - |
+| `APP_LLM_TEMPERATURE` | Temperature for the shopping agent and grounding editor; see [Model Sampling and Output Limits](#model-sampling-and-output-limits) | No | `config.yaml`: `llm_temperature` |
+| `APP_LLM_FREQUENCY_PENALTY` | Optional frequency penalty for the same calls | No | off |
+| `LLM_MAX_OUTPUT_TOKENS` | Shopping agent output ceiling per call | No | `config.yaml`: `llm_max_output_tokens` |
+| `GROUNDING_EDITOR_MAX_OUTPUT_TOKENS` | Grounding editor output ceiling per call | No | `config.yaml`: `grounding_editor_max_output_tokens` |
 | `VLM_BASE_URL`, `VLM_MODEL` | Media perception endpoint and model; set separately from `LLM_*` | No | Same as `app_llm` in `models.yaml` |
 | `VLM_API_KEY` | Optional VLM media perception API key; Compose falls back to `NVIDIA_API_KEY` when unset | When `vlm` uses an authenticated endpoint and `NVIDIA_API_KEY` is unset | `NVIDIA_API_KEY` |
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
 | `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Guardrails is opt-in: set this to enable it | No | `false` |
-| `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` | Shared deadline for the Deep Agents graph and grounding editor before the durable turn fails cleanly | No | `45` |
-| `EXPOSE_AGENT_DIAGNOSTICS` | Expose detailed agent/tool traces in query responses; enable only behind a trusted operator or evaluation surface | No | `false` |
+| `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` | Shared deadline for the Deep Agents graph and grounding editor before the durable turn fails cleanly | No | `config.yaml`: `deepagents_execution_timeout_seconds` |
+| `EXPOSE_AGENT_DIAGNOSTICS` | Expose detailed agent/tool traces in query responses; enable only behind a trusted operator or evaluation surface | No | `config.yaml`: `expose_agent_diagnostics` (off) |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
-| `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-plus-hard-constraint scope executions in one assistant turn; a repeated scope is stopped even when semantic wording changes | No | `3` |
-| `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `2` |
+| `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-plus-hard-constraint scope executions in one assistant turn; a repeated scope is stopped even when semantic wording changes | No | `config.yaml`: `max_catalog_searches_per_turn` |
+| `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `config.yaml`: `max_product_detail_reads_per_turn` |
 | `CHECKPOINT_STORE` | Deep Agents conversation checkpoint store; currently supports only `memory` | No | `memory` |
 | `MEMORY_DATABASE_URL` | SQLite URL for durable raw turns and cart state; Compose supplies the named-volume path | No | Compose: `sqlite:////data/context.db` |
-| `MEMORY_SQLITE_BUSY_TIMEOUT_MS` | SQLite lock wait for the single memory-service writer | No | `5000` |
-| `MEMORY_TURN_ABANDON_SECONDS` | Age at which startup or the next turn start marks an unfinished `started` turn abandoned | No | `300` |
-| `MEMORY_RECENT_TURNS` | Maximum prior context-eligible raw turns returned at the next durable turn start | No | `8` |
-| `WEATHER_ENABLED` | Registers the forecast tool with the shopper agent (needs `WEATHER_API_KEY`) | No | `false` |
+| `MEMORY_SQLITE_BUSY_TIMEOUT_MS` | SQLite lock wait for the single memory-service writer | No | `DEFAULT_BUSY_TIMEOUT_MS` in `memory_retriever/src/database.py` |
+| `MEMORY_MAX_CONCURRENT_REQUESTS` | Requests the memory service works on at once; sizes its connection pool, its threadpool and uvicorn's admission limit together | No | `DEFAULT_MAX_CONCURRENT_REQUESTS` in `memory_retriever/src/database.py`, and `memory_retriever/Dockerfile` |
+| `MEMORY_TURN_ABANDON_SECONDS` | Age at which startup or the next turn start marks an unfinished `started` turn abandoned | No | `DEFAULT_ABANDONED_SECONDS` in `memory_retriever/src/conversations.py` |
+| `MEMORY_RECENT_TURNS` | Maximum prior context-eligible raw turns returned at the next durable turn start | No | `DEFAULT_RECENT_TURNS_LIMIT` in `memory_retriever/src/conversations.py` |
+| `WEATHER_ENABLED` | Registers the forecast tool with the shopper agent (needs `WEATHER_API_KEY`) | No | `config.yaml`: `weather.enabled` (off) |
 | `WEATHER_API_KEY` | Visual Crossing server-side credential, read indirectly from the variable named by chain-server weather config | Only when directly constructing an enabled weather client | empty |
 | `HF_TOKEN` | Hugging Face token with access to the local LLM checkpoint | Local only | - |
 | `HF_CACHE` | Hugging Face cache the locally deployed models download into | Local only | `~/.cache/huggingface` |
@@ -681,6 +698,45 @@ python scripts/model_config.py deploy --build
 
 For locally deployed roles, reference a `local_service` in `models.yaml`. The
 deploy helper starts only those services.
+
+#### Model Sampling and Output Limits
+
+The chain server calls the app LLM in four places. Each call's temperature and
+output token ceiling are set in one place, listed here:
+
+| Call | Temperature | Max output tokens |
+|------|-------------|-------------------|
+| Shopping agent: picks tools, writes the reply | `llm_temperature` in `shared/configs/chain_server/config.yaml`, default `0.7`; `APP_LLM_TEMPERATURE` overrides | `llm_max_output_tokens` in the same file, default `1024`; `LLM_MAX_OUTPUT_TOKENS` overrides |
+| Grounding editor: rewrites the draft to match the tools' product data | Same client as the agent: `llm_temperature` | `grounding_editor_max_output_tokens` in the same file, default `1024`; `GROUNDING_EDITOR_MAX_OUTPUT_TOKENS` overrides |
+| Media perception: reads uploaded photos and videos | `0.6`, `_TEMPERATURE` in `chain_server/src/media_perception.py` | `4096`, `_MAX_TOKENS` in the same file; change `_MAX_ANALYSIS_CHARS` (`16000`) with it, as it caps the analysis passed to the agent |
+| Vocabulary judge: matches shopper words to catalog values | `0`, in `chain_server/src/vocabulary_judge.py` | `1200`, `_MAX_TOKENS` in the same file |
+
+`APP_LLM_FREQUENCY_PENALTY` optionally adds a frequency penalty to the agent
+and grounding editor. It is off when unset.
+
+To change a default so it holds for every deployment and every way of running
+the chain server:
+
+- **Agent and grounding editor:** edit `llm_temperature`,
+  `llm_max_output_tokens` and `grounding_editor_max_output_tokens` in
+  `shared/configs/chain_server/config.yaml`. It is the only place these
+  defaults live. It is mounted into the container, so a restart of
+  `chain-server` picks it up. `.env.example` and `docker-compose.yaml` only
+  pass the overrides through, empty by default.
+
+- **Media perception and the vocabulary judge:** these have no environment
+  variable or config key. Edit the values in the files named above, then
+  rebuild the chain server with `docker compose up -d --build chain-server`.
+  Compose mounts only `shared/` into the container, so a code edit takes
+  effect only after a rebuild.
+
+To change the agent's settings for one deployment only, set the environment
+variables in the env profile you source; they win over these defaults. Compose
+passes all four to `chain-server`.
+
+A reply that reaches its token ceiling is cut off mid-sentence, with no error.
+Long answers, such as a detailed comparison of several products, can need more
+than 1024 tokens.
 
 ## 📊 Monitoring
 

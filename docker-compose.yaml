@@ -18,26 +18,38 @@ services:
       - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
       - LLM_MODEL=${LLM_MODEL:-}
+      # The agent's sampling; docs/DEPLOYMENT.md, Model Sampling and Output
+      # Limits. Pass-through, no default here: empty means unset, so
+      # shared/configs/chain_server/config.yaml wins.
+      - APP_LLM_TEMPERATURE=${APP_LLM_TEMPERATURE:-}
+      - APP_LLM_FREQUENCY_PENALTY=${APP_LLM_FREQUENCY_PENALTY:-}
+      - LLM_MAX_OUTPUT_TOKENS=${LLM_MAX_OUTPUT_TOKENS:-}
+      - GROUNDING_EDITOR_MAX_OUTPUT_TOKENS=${GROUNDING_EDITOR_MAX_OUTPUT_TOKENS:-}
       - VLM_API_KEY=${VLM_API_KEY:-${NVIDIA_API_KEY:-}}
       - VLM_BASE_URL=${VLM_BASE_URL:-}
       - VLM_MODEL=${VLM_MODEL:-}
-      - CATALOG_RETRIEVER_URL=http://catalog-retriever:8010
-      - MEMORY_RETRIEVER_URL=http://memory-retriever:8011
-      # Pass-through, no default here: shared/configs/chain_server/config.yaml
-      # declares it. Empty means unset, so config wins.
+      # Pass-through, no defaults here: shared/configs/chain_server/config.yaml
+      # holds them (relay_enabled's is in chain_server/src/config.py), and the
+      # service URLs there already name the Compose hosts. Empty means unset,
+      # so config wins.
+      - CATALOG_RETRIEVER_URL=${CATALOG_RETRIEVER_URL:-}
+      - MEMORY_RETRIEVER_URL=${MEMORY_RETRIEVER_URL:-}
       - GUARDRAILS_ENABLED=${GUARDRAILS_ENABLED:-}
-      - CHECKPOINT_STORE=${CHECKPOINT_STORE-memory}
-      - DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS=${DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS:-45}
-      - CHAIN_SERVER_RELOAD=${CHAIN_SERVER_RELOAD:-false}
-      - SHUTDOWN_GRACE_SECONDS=${SHUTDOWN_GRACE_SECONDS:-160}
-      - EXPOSE_AGENT_DIAGNOSTICS=${EXPOSE_AGENT_DIAGNOSTICS:-false}
-      - RELAY_ENABLED=${RELAY_ENABLED:-false}
-      - WEATHER_ENABLED=${WEATHER_ENABLED:-false}
+      - DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS=${DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS:-}
+      - EXPOSE_AGENT_DIAGNOSTICS=${EXPOSE_AGENT_DIAGNOSTICS:-}
+      - RELAY_ENABLED=${RELAY_ENABLED:-}
+      - WEATHER_ENABLED=${WEATHER_ENABLED:-}
       - WEATHER_API_KEY=${WEATHER_API_KEY:-}
+      # An empty value fails at startup on purpose, so this one keeps its
+      # default; memory is the only store.
+      - CHECKPOINT_STORE=${CHECKPOINT_STORE-memory}
+      # Pass-through: chain_server/Dockerfile holds these defaults.
+      - CHAIN_SERVER_RELOAD=${CHAIN_SERVER_RELOAD:-}
+      - SHUTDOWN_GRACE_SECONDS=${SHUTDOWN_GRACE_SECONDS:-}
       # Unset by default: no endpoint means no exporter and no instrumentation.
       # Set it to http://otel-collector:4318 to trace.
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-chain-server}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-}
       # Relay sends plain HTTP only to loopback, so it goes to relay-collector,
       # which shares this container's network. See relay-collector below.
       - RELAY_OTLP_ENDPOINT=${RELAY_OTLP_ENDPOINT:-http://127.0.0.1:4318}
@@ -164,12 +176,16 @@ services:
     ports:
       - "127.0.0.1:8011:8011"
     environment:
+      # The database lives on the memory-data volume below, so this default
+      # belongs to Compose.
       - MEMORY_DATABASE_URL=${MEMORY_DATABASE_URL:-sqlite:////data/context.db}
-      - MEMORY_SQLITE_BUSY_TIMEOUT_MS=${MEMORY_SQLITE_BUSY_TIMEOUT_MS:-5000}
-      - MEMORY_MAX_CONCURRENT_REQUESTS=${MEMORY_MAX_CONCURRENT_REQUESTS:-64}
-      - SHUTDOWN_GRACE_SECONDS=${SHUTDOWN_GRACE_SECONDS:-30}
-      - MEMORY_TURN_ABANDON_SECONDS=${MEMORY_TURN_ABANDON_SECONDS:-300}
-      - MEMORY_RECENT_TURNS=${MEMORY_RECENT_TURNS:-8}
+      # Pass-through, no defaults here: memory_retriever/src and
+      # memory_retriever/Dockerfile hold them. Empty means unset.
+      - MEMORY_SQLITE_BUSY_TIMEOUT_MS=${MEMORY_SQLITE_BUSY_TIMEOUT_MS:-}
+      - MEMORY_MAX_CONCURRENT_REQUESTS=${MEMORY_MAX_CONCURRENT_REQUESTS:-}
+      - SHUTDOWN_GRACE_SECONDS=${SHUTDOWN_GRACE_SECONDS:-}
+      - MEMORY_TURN_ABANDON_SECONDS=${MEMORY_TURN_ABANDON_SECONDS:-}
+      - MEMORY_RECENT_TURNS=${MEMORY_RECENT_TURNS:-}
     volumes:
       - ./shared:/app/shared
       - memory-data:/data

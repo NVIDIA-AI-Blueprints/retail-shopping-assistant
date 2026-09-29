@@ -19,13 +19,21 @@ def test_memory_service_host_port_is_loopback_only() -> None:
     ]
 
 
+def _chain_server_config() -> dict:
+    return yaml.safe_load(
+        (REPO_ROOT / "shared/configs/chain_server/config.yaml").read_text()
+    )
+
+
 def test_agent_diagnostics_are_disabled_by_default() -> None:
+    # Compose passes the variable through empty, so config.yaml decides.
     compose = yaml.safe_load((REPO_ROOT / "docker-compose.yaml").read_text())
 
     assert (
-        "EXPOSE_AGENT_DIAGNOSTICS=${EXPOSE_AGENT_DIAGNOSTICS:-false}"
+        "EXPOSE_AGENT_DIAGNOSTICS=${EXPOSE_AGENT_DIAGNOSTICS:-}"
         in compose["services"]["chain-server"]["environment"]
     )
+    assert _chain_server_config()["expose_agent_diagnostics"] is False
 
 
 def test_weather_secret_is_disabled_and_scoped_to_chain_server() -> None:
@@ -33,9 +41,10 @@ def test_weather_secret_is_disabled_and_scoped_to_chain_server() -> None:
     services = compose["services"]
 
     assert (
-        "WEATHER_ENABLED=${WEATHER_ENABLED:-false}"
+        "WEATHER_ENABLED=${WEATHER_ENABLED:-}"
         in services["chain-server"]["environment"]
     )
+    assert _chain_server_config()["weather"]["enabled"] is False
     assert (
         "WEATHER_API_KEY=${WEATHER_API_KEY:-}"
         in services["chain-server"]["environment"]
@@ -54,7 +63,7 @@ def test_weather_secret_is_disabled_and_scoped_to_chain_server() -> None:
 def test_weather_environment_template_contains_no_secret() -> None:
     env_template = (REPO_ROOT / ".env.example").read_text()
 
-    assert 'export WEATHER_ENABLED="${WEATHER_ENABLED:-false}"' in env_template
+    assert 'export WEATHER_ENABLED="${WEATHER_ENABLED:-}"' in env_template
     assert 'export WEATHER_API_KEY="${WEATHER_API_KEY:-}"' in env_template
 
 

@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 
 MEDIA_ONLY_QUERY = "The user submitted visual media without additional text."
 
+_TEMPERATURE = 0.6
+_MAX_TOKENS = 4096
+# The analysis is cut to this many characters before it reaches the agent's
+# prompt. At about four characters a token it fits a full _MAX_TOKENS reply;
+# a smaller cap would cut long analyses mid-JSON. Change the two together.
+_MAX_ANALYSIS_CHARS = 16000
+
 
 class MediaPerceptionClient:
     """Small adapter around the configured VLM endpoint."""
@@ -54,8 +61,8 @@ class MediaPerceptionClient:
                 self.client.chat.completions.create,
                 model=self.model_name,
                 messages=self._messages(state),
-                temperature=0,
-                max_tokens=1200,
+                temperature=_TEMPERATURE,
+                max_tokens=_MAX_TOKENS,
                 extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             content = response.choices[0].message.content or ""
@@ -218,4 +225,4 @@ def _normalize_vlm_content(content: str) -> str:
 
     if not isinstance(parsed, dict):
         parsed = {"summary": str(parsed)}
-    return json.dumps(parsed, sort_keys=True)[:4000]
+    return json.dumps(parsed, sort_keys=True)[:_MAX_ANALYSIS_CHARS]

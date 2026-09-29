@@ -20,6 +20,7 @@ import ast
 from pathlib import Path
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 from memory_retriever.src import main as memory_main
 from memory_retriever.src.migrations import (
@@ -158,12 +159,16 @@ def test_the_reload_watcher_is_off_unless_asked_for() -> None:
 
 
 def test_the_chain_server_window_outlasts_a_whole_turn() -> None:
-    """A turn may run to DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS, 150 here.
+    """A turn may run to deepagents_execution_timeout_seconds.
 
     A shorter window means a rollout kills shoppers mid-answer, which is the
     failure this is for.
     """
 
     dockerfile = (REPO_ROOT / "chain_server" / "Dockerfile").read_text()
+    config = yaml.safe_load(
+        (REPO_ROOT / "shared/configs/chain_server/config.yaml").read_text()
+    )
 
     assert "SHUTDOWN_GRACE_SECONDS:-160" in dockerfile
+    assert config["deepagents_execution_timeout_seconds"] < 160

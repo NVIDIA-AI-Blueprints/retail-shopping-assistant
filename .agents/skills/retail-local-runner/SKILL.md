@@ -1,6 +1,6 @@
 ---
 name: retail-local-runner
-description: Start, stop, configure, inspect, redeploy, and troubleshoot the Retail Shopping Assistant locally or through the Docker Compose cloud blueprint, including /home/ubuntu/Personal deploy files, local app processes, local Milvus infra containers, and remote NIM endpoints from docker-compose-nim-local.yaml.
+description: Start, stop, configure, inspect, redeploy, and troubleshoot the Retail Shopping Assistant locally or through the Docker Compose cloud blueprint, including /home/ubuntu/Personal deploy files, local app processes, local Milvus infra containers, and remote locally deployed models from docker-compose-model-local.yaml.
 metadata:
   short-description: Run Retail Shopping Assistant locally
 ---

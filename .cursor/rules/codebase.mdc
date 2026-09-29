@@ -291,8 +291,8 @@ JSONL. The sidecar declares field roles and types, not category or enum values.
 
 Model endpoints are selected from `shared/configs/models.yaml`. Service configs
 keep service behavior; `models.yaml` owns base URLs, model names, API-key env
-vars, and local NIM service selection. Each role independently uses
-`source: endpoint`, `source: local_nim`, or `source: disabled`.
+vars, and locally deployed model selection. Each role independently uses
+`source: endpoint`, `source: local_model`, or `source: disabled`.
 
 ## Frontend Implementation
 
@@ -422,17 +422,17 @@ EMBED_API_KEY=$NVIDIA_API_KEY
 RAIL_API_KEY=$NVIDIA_API_KEY
 ```
 
-**Optional**:
-```bash
-LOCAL_NIM_CACHE=~/.cache/nim       # For local NIM caching
-```
-
 ### Deployment Options
 
-**Option A: Local Deployment** (requires 4x H100 GPUs):
+Locally deployed models are vLLM serving Hugging Face checkpoints from
+`docker-compose-model-local.yaml`.
+
+**Option A: Local Deployment** (8x H100 by default: 4 for the LLM, 1 for embedding):
 ```bash
-# First set desired roles in shared/configs/models.yaml to source: local_nim.
-python scripts/model_config.py deploy --build
+cp .env.local-models.example .env.local-models  # add HF_TOKEN, NVIDIA_API_KEY
+source .env.local-models
+docker compose -f docker-compose-model-local.yaml up -d --wait local-llm local-embedding
+docker compose up -d --build
 ```
 
 **Option B: Cloud Deployment** (uses NVIDIA API Catalog):

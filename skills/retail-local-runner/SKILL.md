@@ -1,6 +1,6 @@
 ---
 name: retail-local-runner
-description: Start, stop, configure, inspect, redeploy, and troubleshoot the Retail Shopping Assistant locally or through the Docker Compose cloud blueprint, including /home/ubuntu/Personal deploy files, local app processes, local Milvus infra containers, and remote NIM endpoints from docker-compose-nim-local.yaml.
+description: Start, stop, configure, inspect, redeploy, and troubleshoot the Retail Shopping Assistant locally or through the Docker Compose cloud blueprint, including /home/ubuntu/Personal deploy files, local app processes, local Milvus infra containers, and remote locally deployed models from docker-compose-model-local.yaml.
 metadata:
   short-description: Run Retail Shopping Assistant locally
 ---
@@ -85,7 +85,7 @@ The stop command only kills PID files tracked under `.local-run/pids/` and stops
 - `minio`
 - `etcd`
 
-It must not stop or modify the remote NIM machine from `docker-compose-nim-local.yaml`. If ports are still occupied after `stop`, use `status` and `lsof` to report the untracked owner instead of killing unrelated processes.
+It must not stop or modify the remote model host running `docker-compose-model-local.yaml`. If ports are still occupied after `stop`, use `status` and `lsof` to report the untracked owner instead of killing unrelated processes.
 
 ## Remote NIM Host
 

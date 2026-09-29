@@ -1,6 +1,6 @@
-# Prometheus + Grafana for a locally deployed LLM NIM.
+# Prometheus + Grafana for a locally deployed LLM.
 #
-# Only useful when the app is served by a local NIM (docker-compose-nim-local.yaml).
+# Only useful when the app is served by a locally deployed model (docker-compose-model-local.yaml).
 # A hosted endpoint exposes no metrics to scrape, so there is nothing to show.
 #
 # Dashboard is vLLM's official one, adapted from
@@ -9,9 +9,9 @@
 # Two things differ from that upstream example:
 #
 #  1. Both services join the application's existing compose network rather than
-#     using host networking, so Prometheus reaches the NIM as `nemotron:8000` by
+#     using host networking, so Prometheus reaches the model as `local-llm:8000` by
 #     service name. That keeps this portable: nothing depends on which host port
-#     the NIM happens to publish, or on the NIM publishing one at all.
+#     the model happens to publish, or on it publishing one at all.
 #
 #  2. The datasource and dashboard are provisioned from files, so the stack comes
 #     up with panels already working instead of needing a manual import.
@@ -19,7 +19,7 @@
 services:
   prometheus:
     image: prom/prometheus:latest
-    container_name: nim-prometheus
+    container_name: rsa-prometheus
     restart: unless-stopped
     ports:
       # Loopback only. These are unauthenticated and should not be reachable
@@ -38,7 +38,7 @@ services:
 
   grafana:
     image: grafana/grafana:latest
-    container_name: nim-grafana
+    container_name: rsa-grafana
     restart: unless-stopped
     depends_on:
       - prometheus
@@ -70,7 +70,7 @@ services:
   # Docker API, needs no privileged container, and mounts nothing but the socket.
   container-stats:
     image: python:3.12-slim
-    container_name: nim-container-stats
+    container_name: rsa-container-stats
     restart: unless-stopped
     command: ["python", "-u", "/app/docker_stats_exporter.py"]
     volumes:
@@ -87,7 +87,7 @@ services:
   # that already reached it.
   dcgm:
     image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.5-3.4.0-ubuntu22.04
-    container_name: nim-dcgm
+    container_name: rsa-dcgm
     restart: unless-stopped
     # Collect every second. The default is 30s, which is longer than many of
     # the runs here and far longer than a prefill burst -- so the same stale
@@ -108,7 +108,7 @@ services:
 
 networks:
   # Created by the application's docker-compose.yaml, which pins this name.
-  # Start the app (and the NIM) before starting this stack.
+  # Start the app (and the locally deployed LLM) before starting this stack.
   shopping-network:
     external: true
     name: retail-shopping-assistant_shopping-network

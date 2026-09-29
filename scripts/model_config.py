@@ -82,9 +82,9 @@ def deploy(args: argparse.Namespace) -> int:
 
     services = list(config.required_local_nim_services)
     if services:
-        _run(["docker", "compose", "-f", "docker-compose-nim-local.yaml", "up", "-d", *services])
+        _run(["docker", "compose", "-f", "docker-compose-model-local.yaml", "up", "-d", "--wait", *services])
     else:
-        print("No local NIM services required by models.yaml.")
+        print("No locally deployed models required by models.yaml.")
 
     command = ["docker", "compose", "-f", "docker-compose.yaml", "up", "-d"]
     if args.build:

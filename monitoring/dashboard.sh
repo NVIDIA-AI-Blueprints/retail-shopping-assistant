@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# The observability stack for the locally deployed LLM NIM.
+# The observability stack for the locally deployed LLM.
 #
-# Only meaningful when the app LLM is a local NIM (docker-compose-nim-local.yaml).
+# Only meaningful when the app LLM is a locally deployed model (docker-compose-model-local.yaml).
 # A hosted endpoint publishes no metrics, so there would be nothing to scrape.
 #
 # Stack is Prometheus + Grafana running vLLM's official dashboard, adapted from
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# The NIM as seen from this host. Prometheus itself reaches it as nemotron:8000
+# The local LLM as seen from this host. Prometheus itself reaches it as local-llm:8000
 # over the compose network; these are only for this script's health checks.
 VLLM_HOST="${VLLM_HOST:-127.0.0.1}"
 VLLM_PORT="${VLLM_PORT:-8000}"

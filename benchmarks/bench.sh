@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Load generation and measurement against the locally deployed LLM NIM.
+# Load generation and measurement against the locally deployed LLM.
 #
-# Only meaningful when the app LLM is a local NIM (docker-compose-nim-local.yaml).
+# Only meaningful when the app LLM is a locally deployed model (docker-compose-model-local.yaml).
 # A hosted endpoint publishes no metrics and rate-limits sustained load, so there
 # is nothing to measure and no way to measure it.
 #
@@ -19,7 +19,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# The NIM as seen from this host. The load tools run here rather than in a
+# The local LLM as seen from this host. The load tools run here rather than in a
 # container, so they reach it over the published port.
 VLLM_HOST="${VLLM_HOST:-127.0.0.1}"
 VLLM_PORT="${VLLM_PORT:-8000}"
@@ -32,9 +32,9 @@ log() { printf '%s[%s]%s %s\n' "$BLU" "$(date +%H:%M:%S)" "$RST" "$*"; }
 ok()  { printf '%s  ok%s %s\n' "$GRN" "$RST" "$*"; }
 die() { printf '%sfail%s %s\n' "$RED" "$RST" "$*" >&2; exit 1; }
 
-require_nim() {
+require_model() {
   curl -sf --max-time 5 "http://$VLLM_HOST:$VLLM_PORT/health" >/dev/null \
-    || die "the NIM is not responding on $VLLM_HOST:$VLLM_PORT - start it first"
+    || die "the local LLM is not responding on $VLLM_HOST:$VLLM_PORT - start it first"
 }
 
 # Terminal view straight off /metrics. No Prometheus, no Grafana, no browser --
@@ -47,7 +47,7 @@ stage_top() {
 # dashboard looks identical to a broken one.
 stage_load() {
   local conc="${1:-8}" reqs="${2:-32}"
-  require_nim
+  require_model
   log "Generating load: $reqs requests at concurrency $conc"
   VLLM_BASE="http://$VLLM_HOST:$VLLM_PORT" \
     "$PY" "$HERE/loadgen.py" "$conc" "$reqs"
@@ -56,7 +56,7 @@ stage_load() {
 # Concurrency sweep to find where the server stops keeping up. Load comes from
 # vLLM's own benchmark; this adds the metric peaks the benchmark cannot see.
 stage_sweep() {
-  require_nim
+  require_model
 
   # The sweep drives load with vLLM's own benchmark rather than a homegrown
   # client, so the throughput and latency figures are the ones vLLM's
@@ -81,7 +81,7 @@ stage_sweep() {
   local tok="${TOKENIZER:-}"
   if [[ -z "$tok" ]]; then
     # bench serve counts tokens locally, so it needs tokenizer files on disk.
-    # The served name is tried first, but a NIM reports a catalog name rather
+    # The served name is tried first, but it can be a served name rather
     # than a path, and resolving that name against HuggingFace fails without
     # credentials -- so fall back to any local checkpoint that has a tokenizer.
     tok=$(curl -sf "http://$VLLM_HOST:$VLLM_PORT/v1/models" \
@@ -89,8 +89,9 @@ stage_sweep() {
 d=json.load(sys.stdin)["data"]
 print(d[0].get("root") or d[0]["id"] if d else "")' 2>/dev/null || true)
     if [[ ! -f "$tok/tokenizer_config.json" ]]; then
-      # Search the NIM cache and any local checkpoint directory. The NIM unpacks
-      # tokenizer files somewhere under its cache, so this looks a few levels in.
+      # Search the Hugging Face cache and any local checkpoint directory. The
+      # cache keeps tokenizer files under hub/models--*/snapshots/, so this
+      # looks a few levels in.
       #
       # Only existing directories are passed to find, and the result is guarded
       # with `|| true`. Without both, one absent path makes find exit non-zero,
@@ -98,12 +99,12 @@ print(d[0].get("root") or d[0]["id"] if d else "")' 2>/dev/null || true)
       # has already found a usable tokenizer, which is a memorably annoying way
       # to spend an afternoon.
       local search=()
-      for d in "${LOCAL_NIM_CACHE:-$HOME/.cache/nim}" /data/models "$HOME/nemotron-tokenizer"; do
+      for d in "${HF_CACHE:-$HOME/.cache/huggingface}" /data/models "$HOME/nemotron-tokenizer"; do
         [[ -d "$d" ]] && search+=("$d")
       done
       if (( ${#search[@]} )); then
-        # Snapshot directories before tmp ones: the NIM leaves tokenizer files in
-        # both, but its tmp copies are not guaranteed to outlive a restart.
+        # Snapshot directories before tmp ones: tmp copies are not guaranteed
+        # to outlive a restart.
         tok=$(find "${search[@]}" -maxdepth 5 -name tokenizer_config.json \
                 -printf '%h\n' 2>/dev/null | grep -v '/tmp/' | head -1 || true)
         [[ -z "$tok" ]] && tok=$(find "${search[@]}" -maxdepth 5 \
@@ -150,7 +151,7 @@ case "${1:-}" in
     ../monitoring/dashboard.sh $1" ;;
   *)      die "usage: $0 {load|sweep|top}
 
-  load [c] [n]   generate concurrent traffic straight at the NIM,
+  load [c] [n]   generate concurrent traffic straight at the model,
                  so the dashboard panels have something to show
   sweep [levels] concurrency sweep to find the saturation point,
                  e.g. 'sweep 1,8,32,128'   (default 1,4,8,16,32,64,128)

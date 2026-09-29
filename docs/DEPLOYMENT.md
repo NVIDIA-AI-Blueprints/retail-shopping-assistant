@@ -17,7 +17,9 @@
 
 This guide covers deploying the Retail Shopping Assistant. Model routing lives
 in one file, `shared/configs/models.yaml`. Each model role can independently
-use an external endpoint, a local NIM container, or be disabled.
+use an external endpoint, a locally deployed model, or be disabled. Locally
+deployed models are vLLM serving Hugging Face checkpoints from
+`docker-compose-model-local.yaml`.
 
 ## 📋 Prerequisites
 
@@ -35,7 +37,7 @@ use an external endpoint, a local NIM container, or be disabled.
 - **CPU**: 16+ cores
 - **RAM**: 128GB+ system memory
 - **Storage**: 100GB+ available disk space
-- **GPUs**: 4x H100 (for local NIM deployment)
+- **GPUs**: 8x H100 (for locally deployed models; 5 are used by default)
 - **Network**: High-speed internet connection
 
 ### Software Dependencies
@@ -63,8 +65,9 @@ use an external endpoint, a local NIM container, or be disabled.
    - Copy the key (starts with `nvapi-`)
 
 3. **Accept Terms**:
-   - Accept the terms of service for required NIM containers
    - Ensure you have access to the NVIDIA Container Registry
+   - For local NIMs, request access to the Nemotron 3.5 Super checkpoint on
+     Hugging Face and create an `HF_TOKEN`
 
 ## 🚀 Fresh Deployment
 
@@ -91,7 +94,7 @@ python scripts/model_config.py deploy --build
 Open `http://localhost:3000`.
 
 The deploy helper resolves models from `shared/configs/models.yaml`, starts
-only local NIM containers referenced by roles with `source: local_nim`, and then
+only locally deployed models referenced by roles with `source: local_model`, and then
 starts the app stack from `docker-compose.yaml`.
 
 The env file is a sourceable shell profile. Source the profile you want before
@@ -108,10 +111,10 @@ contract matches the active catalog.
 
 Model routing is per role:
 
-| `source` | Meaning | Local NIMs started |
+| `source` | Meaning | Local models started |
 |----------|---------|--------------------|
 | `endpoint` | Use the role's `base_url`/`model` or env overrides | none |
-| `local_nim` | Start and use the referenced local NIM service | that service only |
+| `local_model` | Start and use the referenced locally deployed model | that service only |
 | `disabled` | Capability is intentionally unavailable | none |
 
 Use `shared/configs/models.yaml` to choose the source for each role. Copy
@@ -133,7 +136,20 @@ default in `shared/configs/chain_server/config.yaml`.
 
 ## 🏠 Local Deployment
 
-Use this only when this machine will run local NIM containers.
+Use this only when this machine will serve the models itself. The local setup
+mirrors the hosted default: Nemotron 3.5 Super answers the shopper and reads
+photo and video uploads, and Nemotron 3 Embed 1B embeds the catalog. Both are
+locally deployed models: Hugging Face checkpoints served by vLLM from
+`docker-compose-model-local.yaml`:
+
+| Service | Checkpoint | GPUs |
+|---------|------------|------|
+| `local-llm` | `nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026`, BF16, tensor parallel 4 | `LOCAL_LLM_GPUS`, default `0,1,2,3` |
+| `local-embedding` | `nvidia/Nemotron-3-Embed-1B-BF16` | `LOCAL_EMBED_GPU`, default `4` |
+
+The defaults fit an 8x H100 80 GB machine. `.env.local-models.example` points
+the app LLM, media and text embedding at them through the environment, so
+`models.yaml` does not change. Image embedding and guardrails stay hosted.
 
 ### Step 1: Environment Setup
 
@@ -141,15 +157,11 @@ Use this only when this machine will run local NIM containers.
 git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
 cd retail-shopping-assistant
 
-cp .env.example .env.local-nim
-$EDITOR .env.local-nim
-source .env.local-nim
-mkdir -p "$LOCAL_NIM_CACHE"
-chmod a+w "$LOCAL_NIM_CACHE"
+cp .env.local-models.example .env.local-models
+$EDITOR .env.local-models   # HF_TOKEN, with access to the Nemotron 3.5 Super checkpoint
+source .env.local-models
+mkdir -p "$HF_CACHE"
 ```
-
-Then edit `shared/configs/models.yaml` and set each local role to
-`source: local_nim` with the matching `local_service`.
 
 ### Step 2: Verify GPU Setup
 
@@ -166,24 +178,27 @@ nvidia-smi --query-gpu=memory.total,memory.used,memory.free --format=csv
 
 ### Step 3: Authenticate with NVIDIA Registry
 
+The vLLM images come from Docker Hub; the UI image builds from an `nvcr.io`
+base image, which needs an NGC login:
+
 ```bash
-# Login to NVIDIA Container Registry
 docker login nvcr.io
-
-# Username: oauthtoken
-# Password: your_nvapi_key_here
+# Username: $oauthtoken
+# Password: your NGC API key
 ```
 
-### Step 4: Validate and Deploy
+### Step 4: Start the Models, Then the App
 
 ```bash
+docker compose -f docker-compose-model-local.yaml up -d --wait local-llm local-embedding
 python scripts/model_config.py show --validate
-python scripts/model_config.py deploy --build
-docker compose -f docker-compose.yaml logs -f
+docker compose -f docker-compose.yaml up -d --build
 ```
 
-The helper starts only the NIM services referenced by roles with
-`source: local_nim`, then starts the application services.
+`--wait` returns once both report healthy. Start the app after that: the
+catalog indexer embeds the catalog once, at startup. The first start downloads
+the chat model's ~240 GB into `HF_CACHE` and can take an hour; follow it with
+`docker compose -f docker-compose-model-local.yaml logs -f local-llm`.
 
 ### Step 5: Index the catalog
 
@@ -216,7 +231,7 @@ unbuilt index is alive and unable to answer.
 
 ```bash
 docker compose -f docker-compose.yaml ps
-docker compose -f docker-compose-nim-local.yaml ps
+docker compose -f docker-compose-model-local.yaml ps
 
 curl http://localhost:8009/ready    # chain server
 curl http://localhost:8010/ready    # catalog: 503 until the index is built
@@ -334,7 +349,8 @@ are for whoever writes them.
 | `MEMORY_RECENT_TURNS` | Maximum prior context-eligible raw turns returned at the next durable turn start | No | `8` |
 | `WEATHER_ENABLED` | Registers the forecast tool with the shopper agent (needs `WEATHER_API_KEY`) | No | `false` |
 | `WEATHER_API_KEY` | Visual Crossing server-side credential, read indirectly from the variable named by chain-server weather config | Only when directly constructing an enabled weather client | empty |
-| `LOCAL_NIM_CACHE` | NIM cache directory | Local only | `~/.cache/nim` |
+| `HF_TOKEN` | Hugging Face token with access to the local LLM checkpoint | Local only | - |
+| `HF_CACHE` | Hugging Face cache the locally deployed models download into | Local only | `~/.cache/huggingface` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
 
@@ -367,7 +383,7 @@ To enable it, set `WEATHER_ENABLED=true` and provide
 `WEATHER_API_KEY` through an ignored `.env`, the process environment, or the
 deployment secret manager. Compose passes those two variables only to
 `chain-server`; it does not bake a value into an image or expose it to catalog,
-memory, guardrail, UI, or local-NIM services. The config stores only the
+memory, guardrail, UI, or locally deployed model services. The config stores only the
 variable name, never the secret value. Enabling the client without the named
 key fails closed, and no MCP server is required. The local process runner
 enforces the same boundary by removing both weather variables from memory,
@@ -549,22 +565,22 @@ semantic template changes.
 
 Model endpoints are selected from one file: `shared/configs/models.yaml`.
 Service behavior stays in each service's normal config file, while model base
-URLs, model names, API-key environment variables, and local NIM service metadata
+URLs, model names, API-key environment variables, and locally deployed model metadata
 live in `models.yaml`.
 
 Each role has a `source`:
 
 | Source | Use case |
 |--------|----------|
-| `endpoint` | Hosted NVIDIA endpoint, remote NIM endpoint, or any OpenAI-compatible HTTP endpoint |
-| `local_nim` | A NIM service started from `docker-compose-nim-local.yaml` by the deploy helper |
+| `endpoint` | Hosted NVIDIA endpoint, remote model host, or any OpenAI-compatible HTTP endpoint |
+| `local_model` | A locally deployed model started from `docker-compose-model-local.yaml` by the deploy helper |
 | `disabled` | Optional capability intentionally turned off for a deployment |
 
 If `api_key_env` is set, `show --validate` requires that environment variable
-to be present and the runtime sends it to the model endpoint. For local NIM
-roles that do not need request-time auth, use `api_key_env: null`. Local NIM
-container startup credentials are separate and are listed once under
-`local_nims.required_env`.
+to be present and the runtime sends it to the model endpoint. For locally
+deployed roles that do not need request-time auth, use `api_key_env: null`.
+Local model container startup credentials are separate and are listed once under
+`local_models.required_env`.
 
 The `vlm` role controls image/video media perception for user uploads. By
 default it uses the same model as `app_llm`, Nemotron 3.5 Super VL, which reads
@@ -589,19 +605,23 @@ python scripts/model_config.py deploy --build
 `show --validate` prints the resolved model routing without printing key values.
 It fails if a required API-key variable or endpoint variable is missing.
 
-For fully local NIMs:
+For locally deployed models, source the local profile, which sets the roles' `*_BASE_URL`
+and `*_MODEL` to the local services, and start them before the app, as in
+[Local Deployment](#-local-deployment):
 
 ```bash
-export LOCAL_NIM_CACHE=~/.cache/nim
-mkdir -p "$LOCAL_NIM_CACHE" && chmod a+w "$LOCAL_NIM_CACHE"
+source .env.local-models
+docker compose -f docker-compose-model-local.yaml up -d --wait local-llm local-embedding
 python scripts/model_config.py show --validate
-python scripts/model_config.py deploy --build
+docker compose -f docker-compose.yaml up -d --build
 ```
 
-Before running that command, edit each desired role in
-`shared/configs/models.yaml` to use `source: local_nim`.
+To have `deploy` start them instead, set those roles in
+`shared/configs/models.yaml` to `source: local_model` with `local_service:
+local-llm` or `local-embedding`. Keep the profile sourced: a role's own
+`base_url` and `model` take precedence over the service's.
 
-For a single remote NIM host in local app-code mode:
+For a single remote model host in local app-code mode:
 
 ```bash
 python skills/retail-local-runner/scripts/local_runner.py configure --nim-host http://HOST
@@ -625,15 +645,15 @@ models:
     api_key_env: LLM_API_KEY
 ```
 
-For a Compose-managed local NIM, use `source: local_nim` and reference a local
-service:
+For a Compose-managed locally deployed model, use `source: local_model` and reference a
+service under `local_models.services`:
 
 ```yaml
 models:
-  image_embedding:
-    source: local_nim
+  text_embedding:
+    source: local_model
     provider: openai_compatible
-    local_service: nvclip
+    local_service: local-embedding
     api_key_env: null
 ```
 
@@ -660,7 +680,7 @@ python scripts/model_config.py deploy --build
 ```
 
 For locally deployed roles, reference a `local_service` in `models.yaml`. The
-deploy helper starts only those local NIM services.
+deploy helper starts only those services.
 
 ## 📊 Monitoring
 
@@ -681,8 +701,8 @@ curl http://localhost:3000         # UI
 # View application logs
 docker compose -f docker-compose.yaml logs -f
 
-# View NIM logs
-docker compose -f docker-compose-nim-local.yaml logs -f
+# View locally deployed model logs
+docker compose -f docker-compose-model-local.yaml logs -f
 
 # View specific service logs
 docker compose -f docker-compose.yaml logs -f chain-server
@@ -692,7 +712,7 @@ docker compose -f docker-compose.yaml logs -f chain-server
 
 ### Common Issues
 
-#### 1. NIM Container Pull Failures
+#### 1. nvcr.io Pull Failures
 
 **Symptoms**: Docker pull errors for nvcr.io containers
 
@@ -720,9 +740,12 @@ curl -I https://nvcr.io
 # Check GPU memory usage
 nvidia-smi
 
-# Move roles off local NIMs (source: endpoint in shared/configs/models.yaml),
-# then redeploy
-python scripts/model_config.py deploy --build
+# Pick free GPUs for the local models (LOCAL_LLM_GPUS must hold LOCAL_LLM_TP
+# IDs), or lower --gpu-memory-utilization in docker-compose-model-local.yaml
+LOCAL_LLM_GPUS=4,5,6,7 LOCAL_EMBED_GPU=3 \
+  docker compose -f docker-compose-model-local.yaml up -d --wait local-llm local-embedding
+
+# Or return to hosted endpoints: source .env instead of .env.local-models
 ```
 
 #### 3. Service Startup Failures

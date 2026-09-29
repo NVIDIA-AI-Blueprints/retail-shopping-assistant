@@ -171,4 +171,4 @@ def test_the_chain_server_window_outlasts_a_whole_turn() -> None:
     )
 
     assert "SHUTDOWN_GRACE_SECONDS:-160" in dockerfile
-    assert 160 > config["deepagents_execution_timeout_seconds"]
+    assert config["deepagents_execution_timeout_seconds"] < 160

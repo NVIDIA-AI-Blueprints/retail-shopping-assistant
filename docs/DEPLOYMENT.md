@@ -51,12 +51,6 @@ use an external endpoint, a local NIM container, or be disabled.
   python -m pip install --user -r requirements-deploy.txt
   ```
 
-#### Optional Software
-- **Kubernetes**: For production orchestration
-- **Helm**: For Kubernetes deployments
-- **Prometheus**: For monitoring
-- **Grafana**: For visualization
-
 ### NVIDIA Account Setup
 
 1. **Create NVIDIA Account**:
@@ -274,7 +268,10 @@ docker compose -f docker-compose.yaml ps
 
 ## 🏭 Production Deployment
 
-### Kubernetes Deployment
+### Kubernetes
+
+No Kubernetes manifests or Helm chart ship with this repository. These notes
+are for whoever writes them.
 
 #### What is already decided, so it need not be re-decided here
 
@@ -311,87 +308,6 @@ docker compose -f docker-compose.yaml ps
   another node. It is read-only at runtime, so the fix is
   `COPY ./shared /app/shared` in the four Dockerfiles and dropping the mounts.
   Open, and deliberately deferred to this work.
-
-#### Prerequisites
-- Kubernetes cluster (1.24+)
-- Helm (3.0+)
-- NVIDIA GPU Operator installed
-- Ingress controller configured
-
-#### Step 1: Create Namespace
-
-```bash
-kubectl create namespace retail-assistant
-kubectl config set-context --current --namespace=retail-assistant
-```
-
-#### Step 2: Create ConfigMap
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: retail-assistant-config
-data:
-  config.yaml: |
-    llm_port: "https://api.nvcf.nvidia.com/v1/chat/completions"
-    llm_name: "meta/llama-3.1-70b-instruct"
-    retriever_port: "https://api.nvcf.nvidia.com/v1/embeddings"
-    memory_port: "http://memory-retriever:8011"
-    rails_port: "https://api.nvcf.nvidia.com/v1/chat/completions"
-    memory_length: 16384
-    top_k_retrieve: 4
-    deepagents_recursion_limit: 24
-    max_catalog_searches_per_turn: 3
-    max_product_detail_reads_per_turn: 2
-    multimodal: true
-```
-
-#### Step 3: Create Secret
-
-```bash
-kubectl create secret generic nvidia-api-keys \
-  --from-literal=ngc-api-key=your_nvapi_key_here \
-  --from-literal=llm-api-key=your_nvapi_key_here \
-  --from-literal=embed-api-key=your_nvapi_key_here \
-  --from-literal=rail-api-key=your_nvapi_key_here
-```
-
-#### Step 4: Deploy with Helm
-
-```bash
-# Add Helm repository (if using a chart)
-helm repo add retail-assistant https://charts.example.com
-helm repo update
-
-# Deploy the application
-helm install retail-assistant retail-assistant/retail-assistant \
-  --namespace retail-assistant \
-  --set nvidiaApiKey=your_nvapi_key_here
-```
-
-### Docker Swarm Deployment
-
-#### Step 1: Initialize Swarm
-
-```bash
-docker swarm init
-```
-
-#### Step 2: Create Secrets
-
-```bash
-echo "your_nvapi_key_here" | docker secret create ngc-api-key -
-echo "your_nvapi_key_here" | docker secret create llm-api-key -
-echo "your_nvapi_key_here" | docker secret create embed-api-key -
-echo "your_nvapi_key_here" | docker secret create rail-api-key -
-```
-
-#### Step 3: Deploy Stack
-
-```bash
-docker stack deploy -c docker-compose.prod.yaml retail-assistant
-```
 
 ## ⚙️ Configuration
 
@@ -746,31 +662,6 @@ python scripts/model_config.py deploy --build
 For locally deployed roles, reference a `local_service` in `models.yaml`. The
 deploy helper starts only those local NIM services.
 
-### Performance Tuning
-
-#### GPU Memory Optimization
-
-```yaml
-# In docker-compose-nim-local.yaml
-environment:
-  - NIM_KVCACHE_PERCENT=.5  # Adjust based on GPU memory
-  - NIM_MAX_BATCH_SIZE=1    # Reduce for memory constraints
-```
-
-#### System Resource Limits
-
-```yaml
-# In docker-compose.yaml
-deploy:
-  resources:
-    limits:
-      memory: 8G
-      cpus: '4.0'
-    reservations:
-      memory: 4G
-      cpus: '2.0'
-```
-
 ## 📊 Monitoring
 
 ### Health Checks
@@ -797,39 +688,6 @@ docker compose -f docker-compose-nim-local.yaml logs -f
 docker compose -f docker-compose.yaml logs -f chain-server
 ```
 
-### Metrics Collection
-
-#### Prometheus Configuration
-
-```yaml
-# prometheus.yml
-global:
-  scrape_interval: 15s
-
-scrape_configs:
-  - job_name: 'retail-assistant'
-    static_configs:
-      - targets: ['localhost:8000', 'localhost:8010', 'localhost:8011']
-```
-
-#### Grafana Dashboard
-
-Create a Grafana dashboard with the following metrics:
-- Request rate and latency
-- GPU utilization
-- Memory usage
-- Error rates
-- Response times by agent
-
-### Alerting
-
-Set up alerts for:
-- Service health status
-- High error rates
-- GPU memory usage
-- Response time degradation
-- API key expiration
-
 ## 🛠️ Troubleshooting
 
 ### Common Issues
@@ -840,8 +698,8 @@ Set up alerts for:
 
 **Solutions**:
 ```bash
-# Verify NGC API key
-echo $NGC_API_KEY
+# Verify the NGC API key is set (without printing it)
+test -n "$NGC_API_KEY" && echo set
 
 # Re-authenticate
 docker login nvcr.io
@@ -862,14 +720,9 @@ curl -I https://nvcr.io
 # Check GPU memory usage
 nvidia-smi
 
-# Reduce batch sizes in config
-# Edit docker-compose-nim-local.yaml
-environment:
-  - NIM_KVCACHE_PERCENT=.3
-  - NIM_MAX_BATCH_SIZE=1
-
-# Restart NIMs
-docker compose -f docker-compose-nim-local.yaml restart
+# Move roles off local NIMs (source: endpoint in shared/configs/models.yaml),
+# then redeploy
+python scripts/model_config.py deploy --build
 ```
 
 #### 3. Service Startup Failures
@@ -888,7 +741,7 @@ docker stats
 docker compose -f docker-compose.yaml ps
 
 # Check port conflicts
-sudo netstat -tulpn | grep :8000
+sudo netstat -tulpn | grep -E ':(3000|8009|8010|8011|8012)'
 ```
 
 #### 4. Performance Issues
@@ -903,15 +756,10 @@ nvidia-smi -l 1
 # Monitor system resources
 htop
 
-# Check network latency (for cloud deployment)
-ping api.nvcf.nvidia.com
-
-# Optimize configuration
-# Edit chain_server/app/config.yaml
-top_k_retrieve: 2  # Reduce for faster responses
-deepagents_recursion_limit: 24  # Raise modestly for multi-item outfit planning
-max_catalog_searches_per_turn: 3  # Bound distinct taxonomy-plus-hard-constraint scopes
-max_product_detail_reads_per_turn: 2  # Bound product-detail reads per turn
+# Bound per-turn work in shared/configs/chain_server/config.yaml:
+#   deepagents_recursion_limit         graph steps per turn
+#   max_catalog_searches_per_turn      distinct catalog search scopes per turn
+#   max_product_detail_reads_per_turn  product-detail reads per turn
 ```
 
 #### 5. Authentication Issues
@@ -920,15 +768,8 @@ max_product_detail_reads_per_turn: 2  # Bound product-detail reads per turn
 
 **Solutions**:
 ```bash
-# Verify API key format
-echo $NGC_API_KEY | head -c 10
-
-# Check key permissions
-# Ensure key has access to required NIMs
-
-# Test API key
-curl -H "Authorization: Bearer $NGC_API_KEY" \
-  https://api.nvcf.nvidia.com/v1/models
+# Show which key variables each role needs and whether they are set
+python scripts/model_config.py show --validate
 ```
 
 ### Debug Mode
@@ -964,14 +805,6 @@ docker compose -f docker-compose.yaml up -d --build
 #### Data Recovery
 
 ```bash
-# Backup volumes
-docker run --rm -v retail-shopping-assistant_milvus_data:/data \
-  -v $(pwd):/backup alpine tar czf /backup/milvus_backup.tar.gz -C /data .
-
-# Restore volumes
-docker run --rm -v retail-shopping-assistant_milvus_data:/data \
-  -v $(pwd):/backup alpine tar xzf /backup/milvus_backup.tar.gz -C /data
-
 # Back up memory-service SQLite while its writer is stopped
 docker compose stop memory-retriever
 docker run --rm -v retail-shopping-assistant_memory-data:/data \
@@ -1023,20 +856,6 @@ still completes on one worker. The remaining durable-state limit is the memory
 service's single local SQLite writer. Replace it with a validated shared/
 multi-writer store before increasing memory-service replicas.
 
-The following scaling example is future-only. Do not apply it as a complete
-production topology until shared durable memory, server-owned identity, and
-traffic testing are in place.
-
-```yaml
-# In docker-compose.yaml
-deploy:
-  replicas: 3
-  resources:
-    limits:
-      memory: 4G
-      cpus: '2.0'
-```
-
 ### Load Balancing
 
 The bundled UI sends uploaded media as base64 JSON. Keep any reverse proxy
@@ -1044,39 +863,6 @@ request-body limit aligned with `media_input.max_video_bytes` after base64
 expansion. With the default 50 MiB raw video cap, `nginx.conf` uses
 `client_max_body_size 80m`. Keep API proxy read/send timeouts high enough for
 media analysis and retrieval; the bundled `nginx.conf` uses 300 seconds.
-
-```yaml
-# nginx.conf
-upstream retail_assistant {
-    server chain-server:8000;
-    server chain-server:8001;
-    server chain-server:8002;
-}
-```
-
-### Auto-scaling
-
-```yaml
-# Kubernetes HPA
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: retail-assistant-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: retail-assistant
-  minReplicas: 2
-  maxReplicas: 10
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-```
 
 ---
 

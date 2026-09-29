@@ -133,7 +133,19 @@ default in `shared/configs/chain_server/config.yaml`.
 
 ## 🏠 Local Deployment
 
-Use this only when this machine will run local NIM containers.
+Use this only when this machine will serve the models itself. The local setup
+mirrors the hosted default: Nemotron 3.5 Super answers the shopper and reads
+photo and video uploads, and Nemotron 3 Embed 1B embeds the catalog. Both are
+Hugging Face checkpoints served by vLLM from `docker-compose-nim-local.yaml`:
+
+| Service | Checkpoint | GPUs |
+|---------|------------|------|
+| `nemotron` | `nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026`, BF16, tensor parallel 4 | `LOCAL_LLM_GPUS`, default `0,1,2,3` |
+| `embedqa` | `nvidia/Nemotron-3-Embed-1B-BF16` | `LOCAL_EMBED_GPU`, default `4` |
+
+The defaults fit an 8x H100 80 GB machine. `.env.local-models.example` points
+the app LLM, media and text embedding at them through the environment, so
+`models.yaml` does not change. Image embedding and guardrails stay hosted.
 
 ### Step 1: Environment Setup
 
@@ -141,15 +153,11 @@ Use this only when this machine will run local NIM containers.
 git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
 cd retail-shopping-assistant
 
-cp .env.example .env.local-nim
-$EDITOR .env.local-nim
-source .env.local-nim
-mkdir -p "$LOCAL_NIM_CACHE"
-chmod a+w "$LOCAL_NIM_CACHE"
+cp .env.local-models.example .env.local-models
+$EDITOR .env.local-models   # HF_TOKEN, with access to the Nemotron 3.5 Super checkpoint
+source .env.local-models
+mkdir -p "$HF_CACHE"
 ```
-
-Then edit `shared/configs/models.yaml` and set each local role to
-`source: local_nim` with the matching `local_service`.
 
 ### Step 2: Verify GPU Setup
 
@@ -166,24 +174,27 @@ nvidia-smi --query-gpu=memory.total,memory.used,memory.free --format=csv
 
 ### Step 3: Authenticate with NVIDIA Registry
 
+The vLLM images come from Docker Hub. Log in to `nvcr.io` only to run the NGC
+NIMs in the same file (image embedding, guardrails):
+
 ```bash
-# Login to NVIDIA Container Registry
 docker login nvcr.io
-
-# Username: oauthtoken
-# Password: your_nvapi_key_here
+# Username: $oauthtoken
+# Password: your NGC API key
 ```
 
-### Step 4: Validate and Deploy
+### Step 4: Start the Models, Then the App
 
 ```bash
+docker compose -f docker-compose-nim-local.yaml up -d --wait nemotron embedqa
 python scripts/model_config.py show --validate
-python scripts/model_config.py deploy --build
-docker compose -f docker-compose.yaml logs -f
+docker compose -f docker-compose.yaml up -d --build
 ```
 
-The helper starts only the NIM services referenced by roles with
-`source: local_nim`, then starts the application services.
+`--wait` returns once both report healthy. Start the app after that: the
+catalog indexer embeds the catalog once, at startup. The first start downloads
+the chat model's ~240 GB into `HF_CACHE` and can take an hour; follow it with
+`docker compose -f docker-compose-nim-local.yaml logs -f nemotron`.
 
 ### Step 5: Index the catalog
 

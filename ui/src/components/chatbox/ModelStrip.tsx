@@ -34,10 +34,9 @@ interface ModelStripProps {
  * claim rather than a status.
  */
 const SHOWN_MODELS: Array<{ label: string; roles: string[] }> = [
-  { label: "Nemotron VLM", roles: ["vlm"] },
-  // The grounding editor is the same model doing a second job. A shopper
-  // reading "LLM" wants the cost of the answer, not an org chart.
-  { label: "LLM", roles: ["app_llm", "app_llm_grounding_editor"] },
+  // The grounding editor and media perception are the same model doing other
+  // jobs. A shopper reading this wants the cost of the answer, not an org chart.
+  { label: "Model Calls (Text, Vision)", roles: ["app_llm", "app_llm_grounding_editor", "vlm"] },
   { label: "Embedding", roles: ["text_embedding"] },
   { label: "Guardrails", roles: ["content_safety", "topic_control"] },
 ];
@@ -74,9 +73,13 @@ const ModelStrip: React.FC<ModelStripProps> = ({
     <div className="model-strip" aria-label="Models in use">
       <div className="model-strip__models">
         {shown.map((entry) => {
-          const names = entry.roles
-            .map((role) => models[role]?.model)
-            .filter((name): name is string => Boolean(name));
+          const names = Array.from(
+            new Set(
+              entry.roles
+                .map((role) => models[role]?.model)
+                .filter((name): name is string => Boolean(name))
+            )
+          );
           const calls = sum(entry.roles, (role) => modelUsage[role]?.calls);
           const tokens = sum(entry.roles, (role) => modelUsage[role]?.tokens);
           return (

@@ -24,12 +24,6 @@ local_nims:
       base_url: "http://nvclip:8000/v1"
       model: "nvidia/nvclip"
 
-    nemotron_omni:
-      compose_file: docker-compose-nim-local.yaml
-      compose_service: nemotron-omni
-      base_url: "http://nemotron-omni:8000/v1"
-      model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
-
     content_safety_nim:
       compose_file: docker-compose-nim-local.yaml
       compose_service: content
@@ -47,9 +41,9 @@ models:
     source: endpoint
     provider: openai_compatible
     base_url_env: LLM_BASE_URL
-    base_url: "https://integrate.api.nvidia.com/v1"
+    base_url: "https://inference-api.nvidia.com/v1"
     model_env: LLM_MODEL
-    model: "nvidia/nemotron-3-super-120b-a12b"
+    model: "nvidia/nvidia/nemotron-3.5-super-vl-preview"
     api_key_env: LLM_API_KEY
 
   text_embedding:
@@ -70,14 +64,15 @@ models:
     model: "nvidia/nvclip"
     api_key_env: EMBED_API_KEY
 
+  # Media perception for photo and video uploads. The same model as app_llm by
+  # default, since it reads images and video; VLM_* points it elsewhere.
   vlm:
     source: endpoint
     provider: openai_compatible
-    local_service: nemotron_omni
     base_url_env: VLM_BASE_URL
-    base_url: "https://integrate.api.nvidia.com/v1"
+    base_url: "https://inference-api.nvidia.com/v1"
     model_env: VLM_MODEL
-    model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+    model: "nvidia/nvidia/nemotron-3.5-super-vl-preview"
     api_key_env: VLM_API_KEY
 
   content_safety:

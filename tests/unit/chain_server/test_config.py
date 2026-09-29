@@ -270,8 +270,9 @@ class TestLoadConfig:
         assert config.max_catalog_searches_per_turn == valid_config_dict["max_catalog_searches_per_turn"]
         assert config.max_product_detail_reads_per_turn == valid_config_dict["max_product_detail_reads_per_turn"]
         assert config.guardrails_enabled is True
-        assert config.llm_name == "nvidia/nemotron-3-super-120b-a12b"
+        assert config.llm_name == "nvidia/nvidia/nemotron-3.5-super-vl-preview"
         assert config.vlm_enabled is True
+        assert (config.vlm_port, config.vlm_name) == (config.llm_port, config.llm_name)
 
     @pytest.mark.parametrize(
         "raw_value,expected",

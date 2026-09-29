@@ -62,7 +62,7 @@ The Retail Shopping Assistant is an AI-powered blueprint that provides a compreh
   declares its role and tool grants, only their grant union becomes
   model-visible, and dispatch rechecks the grant before execution
 - 🖼️ **Visual Search**: Upload images to find similar products
-- 🎥 **Optional VLM Media Perception**: Enable a VLM role to analyze image and video uploads in shopping context
+- 🎥 **Photo and Video Understanding**: Nemotron 3.5 Super VL, the same model as the app LLM, reads image and video uploads in shopping context
 - 💬 **Conversational AI**: Natural language interactions
 - 🔒 **Configurable Content Safety**: Built-in moderation and safety checks are on by default and can be disabled per request or config
 - ⚡ **SSE Response Stream**: Event-stream response framing for chat clients; token-level Deep Agents streaming is a follow-up after the harness migration
@@ -475,11 +475,13 @@ The exact published response is documented in
    ```
 
    The helper prints resolved endpoints without printing API keys. By default,
-   `shared/configs/models.yaml` uses NVIDIA Build hosted endpoints for the
-   app LLM, text embeddings, image embeddings, and guardrails, and starts no
-   local NIM containers. The `vlm` role uses a hosted endpoint by default for
-   image/video media understanding in addition to image embedding search; set it
-   to `disabled` in `models.yaml` when that capability should be off.
+   `shared/configs/models.yaml` uses hosted endpoints for every model and
+   starts no local NIM containers: Nemotron 3.5 Super VL on
+   `inference-api.nvidia.com` for the app LLM, and NVIDIA Build for
+   embeddings and guardrails. The same model reads image and video uploads
+   (the `vlm` role), configured separately with `VLM_BASE_URL`, `VLM_MODEL` and
+   `VLM_API_KEY`, so replacing the app LLM leaves media working. Set the role
+   to `source: disabled` in `models.yaml` to turn it off.
 
    For local NIMs, edit the desired model roles in
    `shared/configs/models.yaml` to `source: local_nim`, then run:

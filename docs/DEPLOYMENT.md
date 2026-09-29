@@ -401,7 +401,8 @@ docker stack deploy -c docker-compose.prod.yaml retail-assistant
 |----------|-------------|----------|---------|
 | `NGC_API_KEY` | NVIDIA NGC API key | Yes | - |
 | `LLM_API_KEY` | Language model API key | Yes | - |
-| `VLM_API_KEY` | Optional VLM media perception API key; Compose falls back to `NVIDIA_API_KEY` when unset | When `vlm` uses an authenticated endpoint and `NVIDIA_API_KEY` is unset | `NVIDIA_API_KEY` |
+| `VLM_BASE_URL`, `VLM_MODEL` | Endpoint and model for photo and video uploads. They do not follow `LLM_*` | No | Nemotron 3.5 Super VL on `inference-api.nvidia.com`, as the app LLM |
+| `VLM_API_KEY` | Key for the media endpoint | When `vlm` uses an authenticated endpoint and `NVIDIA_API_KEY` is unset | `NVIDIA_API_KEY` |
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
 | `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Guardrails is opt-in: set this to enable it | No | `false` |
@@ -649,9 +650,24 @@ roles that do not need request-time auth, use `api_key_env: null`. Local NIM
 container startup credentials are separate and are listed once under
 `local_nims.required_env`.
 
-The `vlm` role controls image/video media perception for user uploads. It uses
-a hosted endpoint by default and can be set to `disabled` when media perception
-should be off. Image embedding search remains controlled separately by the
+The `vlm` role controls image/video media perception for user uploads. By
+default it is the same model as `app_llm`, Nemotron 3.5 Super VL on
+`inference-api.nvidia.com`, which reads photos and video, so there is no
+separate vision model. It is configured on its own (`VLM_BASE_URL`,
+`VLM_MODEL`, `VLM_API_KEY`, the key falling back to `NVIDIA_API_KEY`), so
+changing `LLM_*` does not move it.
+
+When replacing the app LLM, either:
+
+- **Leave media where it is.** It keeps reading photos and video with Nemotron
+  3.5 Super VL, whatever the app LLM is.
+- **Or move media too:** set `VLM_BASE_URL`, `VLM_MODEL` and `VLM_API_KEY` in
+  your env file. A replacement app LLM that reads images and video can serve
+  both: set the `VLM_*` values to the same as `LLM_*`.
+
+If the media model cannot read the upload, media understanding reports itself
+unavailable and the assistant asks the shopper to describe the item. Set the
+role to `source: disabled` when media perception should be off. Image embedding search remains controlled separately by the
 `image_embedding` role and `CATALOG_IMAGE_EMBEDDING_ENABLED`.
 
 #### Standard Deployment Flow
@@ -717,7 +733,8 @@ models:
     api_key_env: null
 ```
 
-For VLM media perception through a hosted endpoint:
+Media perception defaults to the same model as the app LLM, and `VLM_*` moves
+it:
 
 ```yaml
 models:
@@ -725,24 +742,10 @@ models:
     source: endpoint
     provider: openai_compatible
     base_url_env: VLM_BASE_URL
+    base_url: "https://inference-api.nvidia.com/v1"
     model_env: VLM_MODEL
+    model: "nvidia/nvidia/nemotron-3.5-super-vl-preview"
     api_key_env: VLM_API_KEY
-```
-
-The sourceable `.env.example` sets `VLM_API_KEY` from `NVIDIA_API_KEY` by
-default. Docker Compose also passes `NVIDIA_API_KEY` as the fallback for
-`VLM_API_KEY` so hosted Omni media perception works with the single-key
-developer setup.
-
-For VLM media perception through the Compose-managed local Omni NIM:
-
-```yaml
-models:
-  vlm:
-    source: local_nim
-    provider: openai_compatible
-    local_service: nemotron_omni
-    api_key_env: null
 ```
 
 Then deploy with:

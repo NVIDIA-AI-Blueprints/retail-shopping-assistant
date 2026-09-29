@@ -69,6 +69,50 @@ def test_resolves_endpoint_local_and_disabled_roles(
     assert config.required_local_nim_env == ("NGC_API_KEY", "LOCAL_NIM_CACHE")
 
 
+_SHIPPED = Path(__file__).resolve().parents[3] / "shared" / "configs"
+
+
+@pytest.fixture
+def no_model_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+    for key in ("LLM_BASE_URL", "LLM_MODEL", "VLM_BASE_URL", "VLM_MODEL"):
+        monkeypatch.delenv(key, raising=False)
+    return monkeypatch
+
+
+def test_shipped_media_perception_is_the_app_llm_model(no_model_env: pytest.MonkeyPatch) -> None:
+    config = resolve_model_config(config_root=_SHIPPED)
+
+    app_llm, vlm = config.require("app_llm"), config.require("vlm")
+    assert (vlm.base_url, vlm.model) == (app_llm.base_url, app_llm.model)
+    assert vlm.api_key_env == "VLM_API_KEY"
+    assert config.required_local_nim_services == ()
+
+
+def test_media_perception_stays_put_when_the_app_llm_moves(
+    no_model_env: pytest.MonkeyPatch,
+) -> None:
+    default = resolve_model_config(config_root=_SHIPPED).require("vlm")
+    no_model_env.setenv("LLM_BASE_URL", "https://text-only.example/v1")
+    no_model_env.setenv("LLM_MODEL", "text-only-model")
+
+    vlm = resolve_model_config(config_root=_SHIPPED).require("vlm")
+
+    assert (vlm.base_url, vlm.model) == (default.base_url, default.model)
+
+
+def test_vlm_env_moves_media_perception(no_model_env: pytest.MonkeyPatch) -> None:
+    no_model_env.setenv("VLM_BASE_URL", "https://vision.example/v1")
+    no_model_env.setenv("VLM_MODEL", "vision-model")
+
+    vlm = resolve_model_config(config_root=_SHIPPED).require("vlm")
+
+    assert (vlm.base_url, vlm.model, vlm.api_key_env) == (
+        "https://vision.example/v1",
+        "vision-model",
+        "VLM_API_KEY",
+    )
+
+
 def test_validate_model_config_reports_missing_required_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

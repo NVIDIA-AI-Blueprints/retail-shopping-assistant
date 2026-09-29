@@ -20,14 +20,14 @@ def _write_models(root: Path) -> Path:
         yaml.safe_dump(
             {
                 "version": 1,
-                "local_nims": {
-                    "required_env": ["NGC_API_KEY", "LOCAL_NIM_CACHE"],
+                "local_models": {
+                    "required_env": ["HF_TOKEN", "HF_CACHE"],
                     "services": {
-                        "nvclip": {
-                            "compose_file": "docker-compose-nim-local.yaml",
-                            "compose_service": "nvclip",
-                            "base_url": "http://nvclip:8000/v1",
-                            "model": "nvidia/nvclip",
+                        "local-embedding": {
+                            "compose_file": "docker-compose-model-local.yaml",
+                            "compose_service": "local-embedding",
+                            "base_url": "http://local-embedding:8000/v1",
+                            "model": "nvidia/Nemotron-3-Embed-1B-BF16",
                         }
                     },
                 },
@@ -38,9 +38,9 @@ def _write_models(root: Path) -> Path:
                         "model": "llm",
                         "api_key_env": "LLM_API_KEY",
                     },
-                    "image_embedding": {
-                        "source": "local_nim",
-                        "local_service": "nvclip",
+                    "text_embedding": {
+                        "source": "local_model",
+                        "local_service": "local-embedding",
                         "api_key_env": None,
                     },
                     "topic_control": {
@@ -62,11 +62,11 @@ def test_resolves_endpoint_local_and_disabled_roles(
     config = resolve_model_config(config_root=config_root)
 
     assert config.require("app_llm").base_url == "https://llm.example/v1"
-    assert config.require("image_embedding").base_url == "http://nvclip:8000/v1"
-    assert config.require("image_embedding").api_key_env is None
+    assert config.require("text_embedding").base_url == "http://local-embedding:8000/v1"
+    assert config.require("text_embedding").api_key_env is None
     assert config.get("topic_control").disabled is True
-    assert config.required_local_nim_services == ("nvclip",)
-    assert config.required_local_nim_env == ("NGC_API_KEY", "LOCAL_NIM_CACHE")
+    assert config.required_local_nim_services == ("local-embedding",)
+    assert config.required_local_nim_env == ("HF_TOKEN", "HF_CACHE")
 
 
 _SHIPPED = Path(__file__).resolve().parents[3] / "shared" / "configs"
@@ -136,14 +136,14 @@ def test_validate_local_nim_env_only_when_local_services_are_used(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     config = resolve_model_config(config_root=_write_models(tmp_path))
-    monkeypatch.delenv("NGC_API_KEY", raising=False)
-    monkeypatch.delenv("LOCAL_NIM_CACHE", raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HF_CACHE", raising=False)
 
-    with pytest.raises(ModelConfigError, match="NGC_API_KEY"):
+    with pytest.raises(ModelConfigError, match="HF_TOKEN"):
         validate_local_nim_env(config)
 
-    monkeypatch.setenv("NGC_API_KEY", "test-key")
-    monkeypatch.setenv("LOCAL_NIM_CACHE", "/tmp/nim")
+    monkeypatch.setenv("HF_TOKEN", "test-token")
+    monkeypatch.setenv("HF_CACHE", "/tmp/hf")
     validate_local_nim_env(config)
 
 

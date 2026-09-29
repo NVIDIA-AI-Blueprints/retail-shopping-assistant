@@ -1,7 +1,7 @@
 """Model endpoint routing and deployment metadata.
 
 Each model role is resolved independently. A role can point at an external
-endpoint, a local NIM service that this repo can start, or be explicitly
+endpoint, a locally deployed model that this repo can start, or be explicitly
 disabled. Secrets are referenced by environment-variable name and are never
 returned by this module.
 """
@@ -18,7 +18,7 @@ import yaml
 
 DEFAULT_CONFIG_ROOT = Path("/app/shared/configs")
 MODEL_CONFIG_FILE_NAME = "models.yaml"
-SOURCES = {"endpoint", "local_nim", "disabled"}
+SOURCES = {"endpoint", "local_model", "disabled"}
 
 
 class ModelConfigError(ValueError):
@@ -82,11 +82,11 @@ def resolve_model_config(
     if version != 1:
         raise ModelConfigError(f"Unsupported model config version in {path}: {version}")
 
-    local_nims = _as_mapping(data.get("local_nims", {}), "local_nims")
-    local_services = _as_mapping(local_nims.get("services", {}), "local_nims.services")
+    local_models = _as_mapping(data.get("local_models", {}), "local_models")
+    local_services = _as_mapping(local_models.get("services", {}), "local_models.services")
     required_local_nim_env = tuple(
-        _as_str(value, "local_nims.required_env")
-        for value in _as_list(local_nims.get("required_env", []), "local_nims.required_env")
+        _as_str(value, "local_models.required_env")
+        for value in _as_list(local_models.get("required_env", []), "local_models.required_env")
     )
 
     raw_models = _as_mapping(data.get("models"), "models")
@@ -169,7 +169,7 @@ def validate_local_nim_env(config: ResolvedModelConfig) -> None:
     ]
     if missing:
         raise ModelConfigError(
-            "Missing required local NIM environment variables: " + ", ".join(missing)
+            "Missing required local model environment variables: " + ", ".join(missing)
         )
 
 
@@ -204,17 +204,17 @@ def _resolve_model(
     local_service = None
     compose_file = None
     compose_service = None
-    if source == "local_nim":
+    if source == "local_model":
         local_service = _as_str(data.get("local_service"), f"models.{role}.local_service")
         service_data = _as_mapping(
-            local_services.get(local_service), f"local_nims.services.{local_service}"
+            local_services.get(local_service), f"local_models.services.{local_service}"
         )
         compose_file = _as_str(
-            service_data.get("compose_file"), f"local_nims.services.{local_service}.compose_file"
+            service_data.get("compose_file"), f"local_models.services.{local_service}.compose_file"
         )
         compose_service = _as_str(
             service_data.get("compose_service"),
-            f"local_nims.services.{local_service}.compose_service",
+            f"local_models.services.{local_service}.compose_service",
         )
 
     base_url = _resolve_value(

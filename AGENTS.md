@@ -12,7 +12,7 @@ Retail Shopping Assistant is a multi-service application with:
 - `ui`: React + TypeScript chat UI using SSE streaming.
 - `shared`: Shared YAML configs, JSONL catalog data/role sidecars, and image assets.
 
-Top-level orchestration is via `docker-compose.yaml`; optional local NIM model containers are in `docker-compose-nim-local.yaml`.
+Top-level orchestration is via `docker-compose.yaml`; optional locally deployed models (vLLM serving Hugging Face checkpoints) are in `docker-compose-model-local.yaml`.
 
 ## 2) Architecture and Request Flow
 
@@ -115,7 +115,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional local NIM model c
 
 ## 4) Runbook
 
-### Cloud endpoint mode (no local NIM containers)
+### Cloud endpoint mode (no locally deployed models)
 
 ```bash
 cp .env.example .env
@@ -125,25 +125,27 @@ python scripts/model_config.py show --validate
 python scripts/model_config.py deploy --build
 ```
 
-### Local NIM mode (requires multi-GPU setup)
+### Locally deployed model mode (requires multi-GPU setup)
 
-Brings up the local LLM (`nemotron` service, image `nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b`), `nvclip`, `embedqa`, and the two NemoGuard guardrail containers.
+`docker-compose-model-local.yaml` serves Nemotron 3.5 Super (`local-llm`, 4
+GPUs) and Nemotron 3 Embed 1B (`local-embedding`, 1 GPU) with vLLM from
+Hugging Face checkpoints. Image
+embedding and guardrails stay hosted.
 
 ```bash
-cp .env.example .env.local-nim
-$EDITOR .env.local-nim
-source .env.local-nim
-mkdir -p "$LOCAL_NIM_CACHE" && chmod a+w "$LOCAL_NIM_CACHE"
+cp .env.local-models.example .env.local-models
+$EDITOR .env.local-models      # HF_TOKEN, NVIDIA_API_KEY
+source .env.local-models
+mkdir -p "$HF_CACHE"
+docker compose -f docker-compose-model-local.yaml up -d --wait local-llm local-embedding
 python scripts/model_config.py show --validate
-python scripts/model_config.py deploy --build
+docker compose up -d --build
 ```
 
-Before running full local NIM mode, edit the relevant roles in
-`shared/configs/models.yaml` to `source: local_nim`. The `nemotron` service is
-launched with `NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser
-llama3_json` so vLLM accepts `tool_choice="auto"`. Reasoning output is
-suppressed via `extra_body={"chat_template_kwargs": {"enable_thinking": False}}`
-on the chain-server side so streamed tokens flow eagerly.
+The profile's `LLM_*`, `VLM_*` and `TEXT_EMBED_*` override `models.yaml`, so
+tracked configuration does not change. Reasoning output is suppressed via
+`extra_body={"chat_template_kwargs": {"enable_thinking": False}}` on the
+chain-server side so streamed tokens flow eagerly.
 
 ### Local app-code mode (recommended for iterative development)
 
@@ -158,13 +160,13 @@ python skills/retail-local-runner/scripts/local_runner.py stop
 The local runner:
 - Starts app services as local processes and uses Docker only for Milvus infra (`etcd`, `minio`, `milvus`).
 - Uses `shared/configs/models.yaml` plus environment overrides.
-- `configure --nim-host http://HOST` writes ignored `.local-run/model-endpoints.env` with remote NIM URLs.
+- `configure --nim-host http://HOST` writes ignored `.local-run/model-endpoints.env` with remote model URLs.
 - Retains `WEATHER_ENABLED` and `WEATHER_API_KEY` only for the chain-server
   process and removes them from memory, guardrail, catalog, and UI processes.
 - Sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, `REACT_APP_API_BASE_URL=http://localhost:8009`, and `BROWSER=none`.
 - Creates runtime files under ignored `.local-run/` and links ignored `ui/public/images -> shared/images`.
 
-If a remote NIM host is needed, ask for the base host URL and run `configure`; do not hard-code private hosts in committed files.
+If a remote model host is needed, ask for the base host URL and run `configure`; do not hard-code private hosts in committed files.
 
 ### Health checks
 
@@ -207,7 +209,7 @@ Integration outputs are generated under `tests/integration/conversations/<TEST_P
 - Service behavior lives in `shared/configs/chain_server/config.yaml`,
   `shared/configs/catalog_retriever/config.yaml`, and
   `shared/configs/rails/config.yml`.
-- Model endpoints live in `models.yaml`; each role independently uses `source: endpoint`, `source: local_nim`, or `source: disabled`.
+- Model endpoints live in `models.yaml`; each role independently uses `source: endpoint`, `source: local_model`, or `source: disabled`.
 - Catalog image helpers read assets from `SHARED_ROOT` when set, otherwise `/app/shared`.
 - Catalog data and role-sidecar paths can be overridden with
   `CATALOG_DATA_SOURCE` and `CATALOG_SCHEMA_SOURCE`.
@@ -218,7 +220,8 @@ Key env vars:
 - `LLM_API_KEY`
 - `EMBED_API_KEY`
 - `RAIL_API_KEY` / `NVIDIA_API_KEY` (guardrails container)
-- `NGC_API_KEY` (for local NIM containers)
+- `NGC_API_KEY` (for `docker login nvcr.io`)
+- `HF_TOKEN`, `HF_CACHE` (for locally deployed models)
 - `LLM_BASE_URL`, `LLM_MODEL`
 - `TEXT_EMBED_BASE_URL`, `TEXT_EMBED_MODEL`
 - `IMAGE_EMBED_BASE_URL`, `IMAGE_EMBED_MODEL`
@@ -342,8 +345,8 @@ Key env vars:
   exact resolution can restore a prior product after restart or on another
   worker. Missing, ambiguous, or stale-catalog references require clarification
   or a fresh search.
-- Local LLM service is named `nemotron` (was `llama`); chain-server reaches it through `shared/configs/models.yaml` when the app LLM role uses `source: local_nim`.
-- Tool calling against the local NIM requires `--enable-auto-tool-choice --tool-call-parser llama3_json` passthrough args. Without them, requests with `tool_choice="auto"` 400.
+- Local LLM service is named `local-llm`; chain-server reaches it through `LLM_BASE_URL` (set by `.env.local-models.example`), or through `shared/configs/models.yaml` when the app LLM role uses `source: local_model`.
+- Tool calling against the locally deployed LLM requires `--enable-auto-tool-choice --tool-call-parser qwen3_coder`, set in the service's `command`. Without them, requests with `tool_choice="auto"` 400.
 - The Deep Agents model first selects shopper skills through the internal
   activation control tool. Only after the runtime injects the complete selected
   files may it choose from the union of their declared tool grants; dispatch

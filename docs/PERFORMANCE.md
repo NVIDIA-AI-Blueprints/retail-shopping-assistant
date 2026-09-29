@@ -15,9 +15,10 @@ described. Where a number appears, it is illustrating the *shape* of an output,
 not reporting a finding. Measure your own, on the deployment you are actually
 asking about.
 
-Everything here needs the app LLM to be a **local NIM**
-([`docker-compose-nim-local.yaml`](../docker-compose-nim-local.yaml), configured
-by [`.env.local-llm.example`](../.env.local-llm.example)). A hosted endpoint
+Everything here needs the app LLM to be a **locally deployed
+model** (`local-llm` in
+[`docker-compose-model-local.yaml`](../docker-compose-model-local.yaml), configured
+by [`.env.local-models.example`](../.env.local-models.example)). A hosted endpoint
 publishes no metrics and rate-limits sustained load, so there is nothing to
 measure and no way to measure it.
 
@@ -119,22 +120,22 @@ this area starts with a deployment that was not doing what the measurer assumed.
 Confirm all six.
 
 ```bash
-# 1. The NIM is serving, at the precision you expect
+# 1. The local LLM is serving, at the precision you expect
 curl -s http://localhost:8000/v1/models | python3 -m json.tool
-docker logs retail-shopping-assistant-nemotron-1 2>&1 | grep -iE "Precision:|quant_algo"
-#    want: Precision: fp8   /   quant_algo=FP8
+docker logs retail-shopping-assistant-local-llm-1 2>&1 | grep -m1 -oE "dtype=[a-z0-9.]+"
+#    want: dtype=torch.bfloat16 for the default BF16 checkpoint
 
 # 2. The catalog is indexed -- an empty one yields confident nonsense
 curl -s http://localhost:8010/ready
 #    want: {"status":"ready","catalog_id":"fashion_products","products":<n>}
 
-# 3. The app is really using the local NIM. Count requests either side of a
+# 3. The app is really using the local LLM. Count requests either side of a
 #    query and check the delta equals the reported model_calls.
-before=$(docker logs retail-shopping-assistant-nemotron-1 2>&1 | grep -c "POST /v1/chat/completions")
+before=$(docker logs retail-shopping-assistant-local-llm-1 2>&1 | grep -c "POST /v1/chat/completions")
 curl -s -X POST http://localhost:8009/query/timing -H 'Content-Type: application/json' \
   -d '{"user_id":1,"query":"Show me black dresses under $100","session_id":"smoke-1"}' \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['token_usage'])"
-after=$(docker logs retail-shopping-assistant-nemotron-1 2>&1 | grep -c "POST /v1/chat/completions")
+after=$(docker logs retail-shopping-assistant-local-llm-1 2>&1 | grep -c "POST /v1/chat/completions")
 echo "local LLM calls: $((after-before))"
 
 # 4. Monitoring is scraping all three jobs, not just Prometheus itself
@@ -194,7 +195,7 @@ cd monitoring
 ./dashboard.sh up
 ```
 
-This checks the NIM is healthy and exposing metrics, starts Prometheus, Grafana
+This checks the local LLM is healthy and exposing metrics, starts Prometheus, Grafana
 and the exporters, waits for the scrape target to come up and the dashboards to
 provision, then prints URLs.
 
@@ -203,7 +204,7 @@ provision, then prints URLs.
 | Grafana | http://localhost:6005 |
 | Prometheus | http://localhost:9090 |
 | Phoenix (agent traces) | http://localhost:6006 |
-| Raw NIM metrics | http://localhost:8000/metrics |
+| Raw vLLM metrics | http://localhost:8000/metrics |
 
 Grafana is on **6005** because the app's nginx owns 3000 and Phoenix owns 6006.
 Both Prometheus and Grafana bind loopback only; reach them remotely with:
@@ -247,7 +248,7 @@ the numbers steps 4 and 5 need as inputs. **Do it before any sweep.**
 
 It measures the same turn from three vantage points and reconciles them, because
 no single one is sufficient. The app's `/query/timing` gives per-phase timings
-and which model roles were called; the NIM's counters give the true
+and which model roles were called; vLLM's counters give the true
 prefill/decode/queue split; Phoenix spans give per-LLM-call and per-tool-call
 granularity. The app cannot see inside the model, the model cannot see
 retrieval, and reconciling all three is what makes the unattributed remainder
@@ -457,7 +458,7 @@ The tells to recognise in your own data, if you ever suspect it:
 ### `monitoring/dashboard.sh`
 
 Manages the observability stack: `up`, `down`, `status`, `urls`, `logs`. Checks
-the NIM is healthy and exposing `vllm:` series *before* standing up a scraper,
+the local LLM is healthy and exposing `vllm:` series *before* standing up a scraper,
 then waits for the target to go healthy and the dashboards to provision rather
 than returning optimistically. `status` lists all three scrape jobs, because a
 missing exporter shows up as a panel reading zero rather than as an error.
@@ -482,7 +483,7 @@ disk.
 
 | Command | What it does | Needs |
 |---|---|---|
-| `load [conc] [n]` | Drive concurrent traffic at the NIM directly | — |
+| `load [conc] [n]` | Drive concurrent traffic at the local LLM directly | — |
 | `sweep [levels]` | Concurrency sweep to find saturation | `vllm` CLI + tokenizer |
 | `top [secs]` | Live metrics in the terminal, no browser | — |
 
@@ -491,10 +492,10 @@ TUI and will wedge a non-interactive shell.
 
 ### `benchmarks/loadgen.py`
 
-Concurrent request generator against the NIM's OpenAI-compatible endpoint.
+Concurrent request generator against the local LLM's OpenAI-compatible endpoint.
 Standard library only, so it runs anywhere. Discovers the served model name from
 `/v1/models` rather than hardcoding it, which matters because the name differs
-between a hand-built vLLM server and a NIM, and a stale name yields HTTP 404 for
+between checkpoints and served-model names, and a stale name yields HTTP 404 for
 every request. Behind `bench.sh load`.
 
 ### `benchmarks/saturate.py`
@@ -508,7 +509,7 @@ overwrite each other. Behind `bench.sh sweep`.
 
 ### `benchmarks/metrics_top.py`
 
-Terminal dashboard for the NIM's metrics, for when you have no browser or no port
+Terminal dashboard for vLLM's metrics, for when you have no browser or no port
 forward. Behind `bench.sh top`.
 
 ### `benchmarks/turn_profile.py`
@@ -618,45 +619,35 @@ with `401` on every batch if your key is scoped elsewhere. Deploy from a clean
 shell:
 
 ```bash
-env -i HOME="$HOME" PATH="$PATH" bash -c 'set -a; . ./.env.local-llm; set +a; docker compose up -d'
+env -i HOME="$HOME" PATH="$PATH" bash -c 'set -a; . ./.env.local-models; set +a; docker compose up -d'
 ```
 
-**Hosted endpoints rate-limit by IP.** Even with the LLM local, catalog search
-embeds every query through a hosted endpoint (`TEXT_EMBED_BASE_URL`), and
-guardrails add more hosted calls per turn when enabled. Sustained concurrency
-trips a per-IP limit and returns HTTP 429, which surfaces as mass application
-failure rather than as a rate limit. If load testing suddenly fails everywhere,
-suspect that before your code.
+**Hosted endpoints rate-limit by IP.** Guardrails add hosted calls per turn
+when enabled, and if you keep text embedding hosted (the comment in
+`.env.local-models.example` shows how), catalog search embeds every query
+through `TEXT_EMBED_BASE_URL` too. Sustained concurrency trips a per-IP limit
+and returns HTTP 429, which surfaces as mass application failure rather than as
+a rate limit. If load testing suddenly fails everywhere, suspect that before
+your code.
 
-**One remote hop stays on the critical path.** The same hosted embedding call
-means a fully local deployment would be faster than what you measure here, so
-your figures are a floor rather than a best case. `docker-compose-nim-local.yaml`
-defines local NIMs for the embedding and safety models, but a 2-GPU box running a
-120B model has no room left for them; everything local needs more GPUs.
-
-**The model profile can change under you.** Left unset, the NIM selects a profile
-by reading *free* GPU memory at startup, and this image also offers a BF16 profile
-it considers runnable — so precision, and therefore every performance number, can
-vary run to run depending on what happened to be resident. Pin it for the
-duration of any measurement you intend to compare:
-
-```bash
-# `list-model-profiles` in the image shows the available set
-NIM_MODEL_PROFILE=<id> docker compose -f docker-compose-nim-local.yaml up -d nemotron
-```
+**Decide what the comparison is.** With text embedding local, a run differs
+from a hosted `.env.example` run in two models, not one. To attribute a
+difference to the model serving the shopper alone, keep embedding hosted; the
+hosted hop then stays on the critical path, so figures are a floor rather than
+a best case.
 
 **A deployment can wedge without anything noticing.** Under sustained concurrency
-the NIM can stop dispatching while the container stays up, the process tree stays
+the model server can stop dispatching while the container stays up, the process tree stays
 intact and the weights stay resident — every endpoint including `/health` timing
-out, with no crash, no OOM and no restart. The image ships **no `HEALTHCHECK`**,
-so `docker inspect` reports `current health: not tracked`. If you run this under
-load, add a healthcheck against `/health` and a restart policy, or a wedged
-server will quietly absorb an entire test run.
+out, with no crash, no OOM and no restart. `local-llm` has a healthcheck against
+`/health`, so `docker inspect` reports it unhealthy, but `restart: "no"` means
+nothing acts on that. Watch the health status during a run, or a wedged server
+will quietly absorb an entire test run.
 
 **An empty dashboard has two causes that look identical.** Either no traffic
 (counters are cumulative, panels show rates, idle reads zero) or the `model_name`
 filter points at a model that no longer produces data — which happens whenever
-you switch between a hand-built vLLM server and a NIM. Check the dropdown before
+you switch the served model name. Check the dropdown before
 debugging anything else.
 
 ---

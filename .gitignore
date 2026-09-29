@@ -77,7 +77,6 @@ notebook/stress_results/
 .env
 .env.*
 !.env.example
-!.env.local-llm.example
 !.env.local-models.example
 
 # Next.js build output (the UI is CRA; this appears from stray tooling runs)

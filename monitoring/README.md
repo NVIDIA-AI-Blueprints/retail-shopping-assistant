@@ -1,6 +1,6 @@
 # Monitoring
 
-Prometheus + Grafana for the local LLM NIM, plus a per-container resource
+Prometheus + Grafana for the locally deployed LLM, plus a per-container resource
 exporter. This directory is the **observability stack** only — the tools that
 generate load and take measurements live in
 [`benchmarks/`](../benchmarks/README.md).
@@ -11,9 +11,9 @@ pieces here fit together.
 
 ## Prerequisites
 
-The app must be running with a **local NIM**
-(`docker-compose-nim-local.yaml`), since these tools read metrics that a NIM
-exposes and a hosted endpoint does not.
+The app LLM must be a **locally deployed model**
+(`local-llm` in `docker-compose-model-local.yaml`), since these tools read
+metrics that vLLM exposes and a hosted endpoint does not.
 
 ## Usage
 
@@ -33,8 +33,8 @@ To put traffic through the system so the panels have something to show, see
 ## How it is wired
 
 Both containers join the app's `shopping-network` as an external network rather
-than using host networking. That lets Prometheus scrape the NIM by service name
-at `nemotron:8000` with no host ports involved, and avoids the port collisions
+than using host networking. That lets Prometheus scrape the model by service
+name at `local-llm:8000` with no host ports involved, and avoids the port collisions
 host networking caused (the app's nginx owns 3000, Phoenix owns 6006).
 
 Host bindings are loopback-only, and Grafana defaults to **6005** to stay clear
@@ -53,7 +53,7 @@ deleting the volumes loses only Prometheus history.
 
 | Job | Source | Why it is separate |
 |---|---|---|
-| `vllm` | the NIM's `/metrics` | engine counters: tokens, queue depth, KV usage, preemptions |
+| `vllm` | the local LLM's `/metrics` | engine counters: tokens, queue depth, KV usage, preemptions |
 | `dcgm` | `dcgm-exporter` | GPU utilisation, memory, temperature, power |
 | `containers` | `docker_stats_exporter.py` | per-container CPU and memory |
 

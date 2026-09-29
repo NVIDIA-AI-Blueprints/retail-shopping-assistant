@@ -1,40 +1,25 @@
 version: 1
 
-local_nims:
+# Locally deployed models: containers on this machine serving an
+# OpenAI-compatible endpoint, here vLLM with Hugging Face checkpoints. A role
+# uses one with `source: local_model` and `local_service: <name>`.
+local_models:
   required_env:
-    - NGC_API_KEY
-    - LOCAL_NIM_CACHE
+    - HF_TOKEN
+    - HF_CACHE
 
   services:
-    nemotron:
-      compose_file: docker-compose-nim-local.yaml
-      compose_service: nemotron
-      base_url: "http://nemotron:8000/v1"
-      model: "nvidia/nemotron-3-super-120b-a12b"
+    local-llm:
+      compose_file: docker-compose-model-local.yaml
+      compose_service: local-llm
+      base_url: "http://local-llm:8000/v1"
+      model: "nemotron-3.5-super"
 
-    embedqa:
-      compose_file: docker-compose-nim-local.yaml
-      compose_service: embedqa
-      base_url: "http://embedqa:8000/v1"
-      model: "nvidia/nemotron-3-embed-1b"
-
-    nvclip:
-      compose_file: docker-compose-nim-local.yaml
-      compose_service: nvclip
-      base_url: "http://nvclip:8000/v1"
-      model: "nvidia/nvclip"
-
-    content_safety_nim:
-      compose_file: docker-compose-nim-local.yaml
-      compose_service: content
-      base_url: "http://content:8000/v1"
-      model: "nvidia/llama-3.1-nemoguard-8b-content-safety"
-
-    topic_control_nim:
-      compose_file: docker-compose-nim-local.yaml
-      compose_service: topic_control
-      base_url: "http://topic_control:8000/v1"
-      model: "nvidia/llama-3.1-nemoguard-8b-topic-control"
+    local-embedding:
+      compose_file: docker-compose-model-local.yaml
+      compose_service: local-embedding
+      base_url: "http://local-embedding:8000/v1"
+      model: "nvidia/Nemotron-3-Embed-1B-BF16"
 
 models:
   app_llm:

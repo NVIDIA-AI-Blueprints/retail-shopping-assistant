@@ -1,11 +1,11 @@
-# Scrape config for a locally deployed LLM NIM.
+# Scrape config for the locally deployed LLM.
 #
 # The target is the compose service name, not a host port. Prometheus runs on the
-# application's network, so `nemotron:8000` resolves regardless of whether the NIM
-# publishes a host port -- and keeps working if that published port changes.
+# application's network, so `local-llm:8000` resolves regardless of whether the
+# model publishes a host port -- and keeps working if that published port changes.
 #
-# If you serve the app LLM from a different local NIM service, change the target
-# to match its service name in docker-compose-nim-local.yaml.
+# If you serve the app LLM from a different local service, change the target
+# to match its service name in docker-compose-model-local.yaml.
 
 global:
   scrape_interval: 5s
@@ -15,7 +15,7 @@ scrape_configs:
   - job_name: vllm
     static_configs:
       - targets:
-          - 'nemotron:8000'
+          - 'local-llm:8000'
 
   # Per-container CPU and memory for every service in the stack, so a ceiling can
   # be attributed to the component that caused it rather than assumed to be the

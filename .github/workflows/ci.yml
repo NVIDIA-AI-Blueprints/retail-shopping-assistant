@@ -212,7 +212,7 @@ jobs:
           echo "Stopping Docker Compose services and removing images..."
           cd retail-shopping-assistant
           docker compose -f docker-compose.yaml down --rmi all 2>/dev/null || true
-          docker compose -f docker-compose-nim-local.yaml down --rmi all 2>/dev/null || true
+          docker compose -f docker-compose-model-local.yaml down --rmi all 2>/dev/null || true
           cd ..
           echo "✅ Docker Compose services and images removed"
           

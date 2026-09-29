@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Models served on this machine from Hugging Face checkpoints with vLLM. The
-# NGC NIM containers are in docker-compose-nim-local.yaml.
+# Locally deployed models -- `local_models` in shared/configs/models.yaml --
+# served on this machine by vLLM from Hugging Face checkpoints.
 #
 # .env.local-models.example points the app at these services; see
 # docs/DEPLOYMENT.md, Local Deployment.

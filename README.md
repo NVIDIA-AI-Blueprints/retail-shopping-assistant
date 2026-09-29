@@ -431,21 +431,21 @@ The exact published response is documented in
 
    Set `NVIDIA_API_KEY` in the file.
 
-   Two templates are provided, and they differ by one role:
+   Two templates are provided. **Local** means a locally deployed model:
+   vLLM serving a Hugging Face checkpoint on your GPUs.
 
-   | template | app LLM | everything else |
-   |---|---|---|
-   | `.env.example` | hosted endpoint | hosted |
-   | `.env.local-llm.example` | **local NIM**, on your GPUs | hosted |
+   | template | app LLM and media | text embedding | everything else |
+   |---|---|---|---|
+   | `.env.example` | hosted endpoint | hosted | hosted |
+   | `.env.local-models.example` | **local** | **local**, or hosted | hosted |
 
-   Use the second when you need what a hosted endpoint cannot give you: no rate
-   limit, and the model's own metrics. Only the LLM moves, so a run against one
-   and a run against the other differ by the model serving the shopper and
-   nothing else — which is what makes them comparable. See
-   [Running the LLM locally](#running-the-llm-locally) below.
+   Use the local one when you need what a hosted endpoint cannot give you: no
+   rate limit, and the model's own metrics. A comment in it shows how to keep
+   text embedding hosted. See
+   [Running models locally](#running-models-locally) below.
 
    Copy a template rather than editing it. Every `.env.*` is ignored except the
-   two templates, so your filled-in copy stays out of git along with its keys. The env file is a sourceable shell file;
+   templates, so your filled-in copy stays out of git along with its keys. The env file is a sourceable shell file;
    sourcing it also sets `COMPOSE_DISABLE_ENV_FILE=1` so Docker Compose uses
    the exported shell environment instead of auto-parsing repo-root `.env`.
    `CHECKPOINT_STORE=memory` is the only supported graph-checkpoint
@@ -476,21 +476,14 @@ The exact published response is documented in
 
    The helper prints resolved endpoints without printing API keys. By default,
    `shared/configs/models.yaml` uses hosted endpoints for every model and
-   starts no local NIM containers: Nemotron 3.5 Super VL on
+   starts no local NIMs: Nemotron 3.5 Super VL on
    `inference-api.nvidia.com` for the app LLM, and NVIDIA Build for
    embeddings and guardrails. The same model reads image and video uploads
    (the `vlm` role), configured separately with `VLM_BASE_URL`, `VLM_MODEL` and
    `VLM_API_KEY`, so replacing the app LLM leaves media working. Set the role
    to `source: disabled` in `models.yaml` to turn it off.
 
-   For local NIMs, edit the desired model roles in
-   `shared/configs/models.yaml` to `source: local_nim`, then run:
-   ```bash
-   # Set LOCAL_NIM_CACHE in the sourced env profile first.
-   mkdir -p "$LOCAL_NIM_CACHE" && chmod a+w "$LOCAL_NIM_CACHE"
-   python scripts/model_config.py show --validate
-   python scripts/model_config.py deploy --build
-   ```
+   For locally deployed models, see [Running models locally](#running-models-locally).
 
    Model routing lives in `shared/configs/models.yaml`.
 
@@ -524,38 +517,43 @@ The exact published response is documented in
 
 7. **Access the application**: Open your browser to `http://localhost:3000`
 
-### Running the LLM locally
+### Running models locally
 
-The app LLM can be served from your own GPUs as a NIM instead of a hosted
-endpoint. Nothing else moves: embeddings, the VLM, guardrails, the judge and
-the challenger stay where they were.
+The app LLM, and optionally text embedding, can be served from your own GPUs as
+locally deployed models instead of hosted endpoints. `docker-compose-model-local.yaml` runs
+them with vLLM from Hugging Face checkpoints:
+
+| service | model | GPUs (default) |
+|---|---|---|
+| `local-llm` | Nemotron 3.5 Super, also reading image and video uploads | 4, `LOCAL_LLM_GPUS=0,1,2,3` |
+| `local-embedding` | Nemotron 3 Embed 1B | 1, `LOCAL_EMBED_GPU=4` |
+
+Image embedding and guardrails stay hosted.
 
 ```bash
-cp .env.local-llm.example .env.local-llm
-$EDITOR .env.local-llm            # NVIDIA_API_KEY, and LOCAL_NIM_CACHE if not $HOME/.cache/nim
-source .env.local-llm
+cp .env.local-models.example .env.local-models
+$EDITOR .env.local-models         # HF_TOKEN, NVIDIA_API_KEY
+source .env.local-models
 
-mkdir -p "$LOCAL_NIM_CACHE" && chmod a+w "$LOCAL_NIM_CACHE"
-docker compose -f docker-compose-nim-local.yaml up -d nemotron
-
-curl -s http://localhost:8000/v1/models     # ready when this answers
-
-docker compose up -d
-docker compose exec catalog-retriever python -m app.index_catalog
+mkdir -p "$HF_CACHE"
+docker compose -f docker-compose-model-local.yaml up -d --wait local-llm local-embedding
+docker compose up -d --build
 ```
 
-The first start pulls roughly 120GB into `LOCAL_NIM_CACHE` and takes a long
-while; later starts read the cache. The NIM reserves two GPUs, `device_ids`
-`'0'` and `'1'` in `docker-compose-nim-local.yaml`. Make the cache writable
-before the first start — the container runs as `${UID}`, and a first start that
-cannot write re-downloads on every restart.
+To keep text embedding on the hosted endpoint, comment out the two
+`TEXT_EMBED_*` lines in `.env.local-models` and start only `local-llm`.
+
+`--wait` returns once the services report healthy; start the app after that,
+since the catalog indexer embeds the catalog once, at startup. The first start
+downloads the chat model's ~240 GB BF16 checkpoint into `HF_CACHE` and can take
+an hour; later starts read the cache.
 
 No tracked configuration changes. The environment is read before
-`shared/configs/models.yaml`, so `LLM_BASE_URL` and `LLM_MODEL` are enough and
-`models.yaml` is left alone.
+`shared/configs/models.yaml`, so the profile's `LLM_*`, `VLM_*` and
+`TEXT_EMBED_*` are enough and `models.yaml` is left alone.
 
-**What this gets you.** The NIM serves vLLM's Prometheus metrics on its own
-port, with nothing to enable:
+**What this gets you.** vLLM serves Prometheus metrics on its own port, with
+nothing to enable:
 
 ```bash
 curl -s http://localhost:8000/metrics | grep -E '^vllm:'
@@ -565,15 +563,15 @@ Tokens in and out, time to first token, queue depth, KV-cache utilisation, and
 running and waiting sequences. `vllm:num_requests_waiting` is the one that says
 whether the model is the bottleneck rather than the application — a question a
 hosted endpoint cannot answer at all, and one the load tooling otherwise has to
-infer. Nothing scrapes these yet; the collector carries a traces pipeline only.
+infer. [`monitoring/`](monitoring/README.md) scrapes them into Grafana.
 
 **Going back to the hosted endpoint** is sourcing the other profile and
 restarting the chain server:
 
 ```bash
 source .env
-docker compose up -d --force-recreate chain-server
-docker compose -f docker-compose-nim-local.yaml stop nemotron
+docker compose up -d --force-recreate chain-server catalog-indexer catalog-retriever
+docker compose -f docker-compose-model-local.yaml stop
 ```
 
 8. **Stop the containers**:
@@ -583,9 +581,9 @@ docker compose -f docker-compose-nim-local.yaml stop nemotron
    docker compose -f docker-compose.yaml down
    ```
 
-   **Local NIM services, if `models.yaml` started any**:
+   **Locally deployed models, if you started them**:
    ```bash
-   docker compose -f docker-compose-nim-local.yaml down
+   docker compose -f docker-compose-model-local.yaml down
    ```
 
 For detailed installation instructions, see [Deployment Guide](docs/DEPLOYMENT.md).

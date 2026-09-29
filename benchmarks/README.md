@@ -13,7 +13,8 @@ interpretable. This file is only a map of what is here.
 
 ## Prerequisites
 
-The app LLM must be a **local NIM** (`docker-compose-nim-local.yaml`). A hosted
+The app LLM must be a **locally deployed model** (`local-llm` in
+`docker-compose-model-local.yaml`). A hosted
 endpoint publishes no metrics and rate-limits sustained load.
 
 Start the monitoring stack first, or the resource columns come back blank:
@@ -107,7 +108,7 @@ what a shopper waits for on a streaming interface.
 
 `loadgen.py` and `saturate.py` both resolve the served model name from
 `/v1/models` at run time instead of hardcoding it, because the name differs
-between a NIM and a hand-built vLLM server, and a stale name fails as an opaque
+between checkpoints and served-model names, and a stale name fails as an opaque
 HTTP 404.
 
 ## The one thing you must not skip

@@ -91,7 +91,7 @@ If 4x H100 is unavailable:
 
 ![Step 5: Compute Resources](images/step1.png)
 
-> **Performance Note**: The retail shopping assistant is optimized for 4x H100 GPUs as specified in the main README. This ensures smooth operation of all AI models including embeddings, LLMs, and NIMs.
+> **Performance Note**: You only need GPUs here if you intend to serve the models yourself. The default layout for locally hosted models uses five: four for the shopping model's tensor parallel group and one for embedding. Against NVIDIA-hosted endpoints, no GPU is required.
 
 ### Step 6: Review Configuration Summary
 

@@ -7,7 +7,7 @@ vantage points at once and reconciling them:
 
   app      chain-server's own /query/timing response: per-phase timings, tokens,
            and which model roles were called
-  engine   the NIM's Prometheus counters, sampled either side of the turn, which
+  engine   vLLM's Prometheus counters, sampled either side of the turn, which
            give the LLM's true prefill/decode/queue split and KV peak
   spans    Phoenix/OTel, which is the only source with per-LLM-call and
            per-tool-call granularity
@@ -35,7 +35,7 @@ import urllib.error
 import urllib.request
 
 CHAIN = os.environ.get("CHAIN_BASE", "http://localhost:8009")
-NIM = os.environ.get("NIM_BASE", "http://127.0.0.1:8000")
+ENGINE = os.environ.get("ENGINE_BASE", "http://127.0.0.1:8000")
 PHOENIX = os.environ.get("PHOENIX_BASE", "http://localhost:6006")
 
 # Counters read either side of a turn. Deltas over a single turn are exact
@@ -83,9 +83,9 @@ def _get_json(url, timeout=15):
 
 
 def read_counters():
-    """Scrape the NIM's metrics, summing across label sets per metric name."""
+    """Scrape vLLM's metrics, summing across label sets per metric name."""
     try:
-        with urllib.request.urlopen(f"{NIM}/metrics", timeout=15) as r:
+        with urllib.request.urlopen(f"{ENGINE}/metrics", timeout=15) as r:
             text = r.read().decode()
     except Exception:
         return {}
@@ -122,7 +122,7 @@ class KVSampler(threading.Thread):
             m = read_counters()
             self.peak_kv = max(self.peak_kv, m.get("vllm:kv_cache_usage_perc", 0.0))
             try:
-                with urllib.request.urlopen(f"{NIM}/metrics", timeout=10) as r:
+                with urllib.request.urlopen(f"{ENGINE}/metrics", timeout=10) as r:
                     for line in r.read().decode().splitlines():
                         if line.startswith("vllm:num_requests_running"):
                             self.peak_running = max(
@@ -261,7 +261,7 @@ def main():
     if not plan:
         sys.exit("no probes selected")
 
-    print(f"profiling {len(plan)} turns against {CHAIN} / {NIM}\n")
+    print(f"profiling {len(plan)} turns against {CHAIN} / {ENGINE}\n")
     hdr = f"{'probe':<18} {'wall':>7} {'engine':>7} {'non-LLM':>8} {'calls':>6} {'in tok':>8} {'peak KV':>8}"
     print(hdr)
     print("-" * len(hdr))
@@ -290,7 +290,7 @@ def main():
     payload = {
         "collected_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "chain_base": CHAIN,
-        "nim_base": NIM,
+        "engine_base": ENGINE,
         "turns": results,
         "spans": spans,
     }

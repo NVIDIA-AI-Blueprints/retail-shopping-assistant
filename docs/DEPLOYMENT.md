@@ -67,7 +67,7 @@ deployed models are vLLM serving Hugging Face checkpoints from
 
 3. **Accept Terms**:
    - Ensure you have access to the NVIDIA Container Registry
-   - For local NIMs, request access to the Nemotron 3.5 Super checkpoint on
+   - For locally hosted models, request access to the Nemotron 3.5 Super checkpoint on
      Hugging Face and create an `HF_TOKEN`
 
 ## 🚀 Fresh Deployment

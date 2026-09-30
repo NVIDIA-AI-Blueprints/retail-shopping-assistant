@@ -25,8 +25,8 @@ def resolve_model():
 
     A hardcoded default silently turns every request into a 404 the moment the
     endpoint is replaced -- which is exactly what happened when the hand-rolled
-    vLLM server ('nemotron-3-super') gave way to the NIM
-    ('nvidia/nemotron-3-super-120b-a12b'). SERVED_NAME still overrides for the
+    locally served 'nemotron-3-super' gave way to a hosted endpoint serving
+    'nvidia/nemotron-3-super-120b-a12b'. SERVED_NAME still overrides for the
     case of several models behind one endpoint.
     """
     override = os.environ.get("SERVED_NAME")

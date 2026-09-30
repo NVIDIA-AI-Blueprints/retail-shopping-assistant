@@ -35,7 +35,7 @@ def _write_model_config(root: Path) -> Path:
         yaml.safe_dump(
             {
                 "version": 1,
-                "local_nims": {"required_env": [], "services": {}},
+                "local_models": {"required_env": [], "services": {}},
                 "models": {
                     "app_llm": {
                         "source": "endpoint",

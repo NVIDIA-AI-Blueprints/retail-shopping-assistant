@@ -1429,7 +1429,7 @@ interface ErrorResponse {
 | 400 | Bad Request | Invalid request format |
 | 422 | Validation Error | Missing fields or unsupported catalog constraint |
 | 500 | Internal Server Error | Service unavailable |
-| 503 | Service Unavailable | NIM containers not ready |
+| 503 | Service Unavailable | Model endpoints or catalog index not ready |
 
 **Example Error Response:**
 ```json
@@ -1711,7 +1711,7 @@ print(f"Timing: {response['timings']}")
 - All timestamps are in Unix timestamp format (seconds since epoch)
 - Image data may be raw base64 or a `data:` URL; video media should include
   `mime_type: "video/mp4"` and is sent through `media[]`
-- The API supports both local and cloud-based NIM deployments
+- The API is the same whether models run on your own GPUs or on NVIDIA-hosted endpoints
   - The `vlm` model role is enabled by default for image/video media perception
     and can be set to `disabled`; image embedding search is separately controlled
     by the `image_embedding` model role and `CATALOG_IMAGE_EMBEDDING_ENABLED`,

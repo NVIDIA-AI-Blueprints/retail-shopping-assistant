@@ -45,7 +45,7 @@ use a remote deployment.
 
 ## Going further
 
-- [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md): local NIMs on your own GPUs, and production settings
+- [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md): locally hosted models on your own GPUs, and production settings
 - [docs/API.md](../docs/API.md): every endpoint
 - [docs/OBSERVABILITY.md](../docs/OBSERVABILITY.md): tracing layers and NeMo Relay
 - [tests/evaluation/README.md](../tests/evaluation/README.md): replay, Challenger and Judge

@@ -34,19 +34,25 @@
 
 ## Overview
 
-The Retail Shopping Assistant is a reference implementation of a conversational
-shopping advisor, built on open tooling. LangChain's
-[Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview)
-provides the agent harness, and open NVIDIA Nemotron models handle reasoning,
-perception, and safety.
+The Retail Shopping Assistant is a reference conversational shopping advisor
+built on open tooling: LangChain's
+[Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview) as the
+agent harness, and open NVIDIA Nemotron models for reasoning, perception and
+safety. Shoppers type, or upload a photo or a short video.
 
-Retrieval stays deterministic. The agent translates what a shopper says into
-catalog queries and advertised filters, and the catalog service performs the
-embedding search and ranking. No product fact reaches a shopper without coming
-from the catalog.
+It ships a representative catalog — 215 products across apparel, footwear,
+bags, eyewear and jewelry, with real images, prices, sizes, materials and
+colors — and that catalog declares which of its own fields become
+shopper-facing filters. Point the service at your own data and the search
+contract follows. Retrieval stays deterministic: the agent writes the query,
+and the catalog service does the embedding search and ranking.
 
-Deploy it against NVIDIA-hosted endpoints with no GPU, or serve the models on
-your own GPUs.
+It is a complete reference rather than a demo. Five notebooks carry one
+deployment the whole way: stand it up, read a single turn's traces, replay
+conversations to tell flaky from broken, then serve the model on your own GPUs
+and measure time to first token and throughput under load.
+
+Run it on NVIDIA-hosted endpoints with no GPU, or serve the models yourself.
 
 ## Key Features
 
@@ -134,30 +140,34 @@ no matching index is deliberately alive and serving no traffic.
 
 Then open **http://localhost:3000**.
 
-To rebuild the index without cycling Compose, run it directly. This is safe to
-repeat, because it checks the catalog fingerprint first and does nothing when
-the index is current:
-
-```bash
-docker compose exec catalog-retriever python -m app.index_catalog
-```
-
 ### Locally Hosted Models
 
-The shopping model and catalog embedding run on your GPUs, served by vLLM from
-Hugging Face checkpoints in `docker-compose-model-local.yaml`.
+The models run on your own GPUs, pulled from Hugging Face or NGC.
 
-| Service | Model | GPUs |
-|---------|-------|------|
-| `local-llm` | Nemotron 3.5 Super, which also reads image and video uploads | 4, `LOCAL_LLM_GPUS=0,1,2,3` |
-| `local-embedding` | Nemotron 3 Embed 1B | 1, `LOCAL_EMBED_GPU=4` |
+How many GPUs you need depends on which models you run and at what precision,
+and each model publishes its own footprint. Taking H100 80GB as the example:
+
+| Model | Role | On H100 80GB | Published footprint |
+|-------|------|--------------|---------------------|
+| Nemotron 3.5 Super | Shopping agent, photo and video | 4 GPUs at BF16 | [121B MoE, ~227 GB BF16](https://docs.nvidia.com/nemo/automodel/model-coverage/omni/nvidia/nemotron-3-5-super-vl) |
+| Nemotron 3 Embed 1B | Catalog and query embedding | shares 1 GPU | [3.6 GB at FP16](https://docs.nvidia.com/nim/nemo-retriever/text-embedding/latest/support-matrix.html) |
+| Nemotron 3.5 Content Safety | Optional moderation | shares 1 GPU | [4B, 8 GB VRAM and up](https://huggingface.co/blog/nvidia/nemotron-3-5-content-safety) |
+| Llama 3.1 NemoGuard 8B Topic Control | Optional off-topic checks | 1 GPU | [48 GB](https://docs.nvidia.com/nim/llama-3-1-nemoguard-8b-topiccontrol/latest/support-matrix.html) |
+
+`docker-compose-model-local.yaml` serves the first two, which is the five-GPU
+default layout: four for the agent's tensor parallel group
+(`LOCAL_LLM_TP=4`, `LOCAL_LLM_GPUS=0,1,2,3`) and one for embedding
+(`LOCAL_EMBED_GPU=4`). The guard models run on hosted endpoints.
+
+Those published figures assume a model has the card to itself, since vLLM
+reserves most of it for the KV cache. Putting the smaller models together on
+one GPU means capping `--gpu-memory-utilization` for each.
 
 **You need**
 
 - Docker 20.10+ with the Compose plugin, and the NVIDIA Container Toolkit
 - Python on the host, for the deploy helpers
-- **Five GPUs** in the default layout: four for the chat model's tensor
-  parallel group, one for embedding. The defaults fit an 8x H100 80 GB machine
+- **Five GPUs** for the default layout above, as on an 8x H100 80 GB machine
 - About 240 GB of disk for the chat model's BF16 checkpoint
 - A Hugging Face token with access to that checkpoint
 - An NVIDIA API key, because some model roles still use hosted endpoints
@@ -293,8 +303,10 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 - [Milvus](https://milvus.io/): Vector database for similarity search
 
 ### Models
-- [Nemotron 3.5 Super](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026): Shopping agent and media perception
-- [Nemotron 3 Embed 1B](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16): Catalog and query embedding
+- [Nemotron 3.5 Super VL](https://docs.nvidia.com/nemo/automodel/model-coverage/omni/nvidia/nemotron-3-5-super-vl): Shopping agent, and photo and video perception
+- [Nemotron 3 Embed 1B](https://build.nvidia.com/nvidia/nemotron-3-embed-1b/modelcard): Catalog and query embedding
+- [Nemotron 3.5 Content Safety](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nemotron-3.5-content-safety): Optional moderation of shopper input and assistant output
+- [Llama 3.1 NemoGuard 8B Topic Control](https://build.nvidia.com/nvidia/llama-3_1-nemoguard-8b-topic-control): Optional off-topic detection
 
 ## License
 

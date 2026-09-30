@@ -173,7 +173,7 @@ was struggling, and the tool results between them say why.
 conversation.id                  demo20-run11
 session.id                       demo20-run11
 metadata.skills                  ["/shopper/cart-management/SKILL.md"]
-metadata.tools                   ["activate_shopper_skills_tool", "add_cart_items_tool"]
+metadata.tools                   ["activate_shopper_skills_tool", "resolve_conversation_products_tool", "add_cart_items_tool"]
 metadata.tool_calls              3
 metadata.tool_calls_rejected     0
 metadata.products_shown          0

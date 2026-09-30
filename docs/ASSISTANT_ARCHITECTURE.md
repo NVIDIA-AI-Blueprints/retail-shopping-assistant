@@ -1,4 +1,4 @@
-# Shopper Agent Architecture
+# Assistant Architecture
 
 This document is the short architectural map of the serving shopper agent. It
 shows where product truth is published, how skills control model behavior, and
@@ -464,7 +464,6 @@ It is never catalog truth.
 tool. It is forced at turn start and selects static behavior instructions; it
 does not read or mutate catalog, cart, or policy state.
 
-For exact input schemas, risk classes, and failure behavior, use the
-[Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md). For skill
-selection and tuning details, use the
-[Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md).
+For exact input schemas, risk classes, and failure behavior, use
+[Tools](TOOLS.md). For skill selection and tuning details, use
+[Skills](SKILLS.md).

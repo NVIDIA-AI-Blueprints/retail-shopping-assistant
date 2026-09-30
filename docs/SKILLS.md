@@ -1,4 +1,4 @@
-# Shopper Agent Skill Registry
+# Skills
 
 This registry documents the Deep Agents skills registered for the
 shopper-serving assistant. Registration makes a skill eligible for per-turn

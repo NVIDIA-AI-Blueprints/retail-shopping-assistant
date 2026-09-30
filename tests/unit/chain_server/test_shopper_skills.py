@@ -262,7 +262,7 @@ def test_skill_bodies_reference_only_tools_they_grant() -> None:
 
 
 def test_skill_registry_matches_runtime_skill_file() -> None:
-    registry = (REPO_ROOT / "docs" / "SHOPPER_AGENT_SKILL_REGISTRY.md").read_text()
+    registry = (REPO_ROOT / "docs" / "SKILLS.md").read_text()
     skills_source = (
         REPO_ROOT / "chain_server" / "src" / "tools" / "skills.py"
     ).read_text()
@@ -275,7 +275,7 @@ def test_skill_registry_matches_runtime_skill_file() -> None:
 
 
 def test_skill_registry_lists_all_registered_skill_files() -> None:
-    registry = (REPO_ROOT / "docs" / "SHOPPER_AGENT_SKILL_REGISTRY.md").read_text()
+    registry = (REPO_ROOT / "docs" / "SKILLS.md").read_text()
 
     for name, path in REGISTERED_SKILL_PATHS.items():
         source = path.relative_to(REPO_ROOT).as_posix()

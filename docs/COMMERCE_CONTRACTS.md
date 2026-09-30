@@ -111,7 +111,7 @@ SDK adapter:
 
 The runtime Deep Agents tool names, risk classes, skill access boundaries, and
 registered-vs-planned status are tracked separately in
-[Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md). This document
+[Tools](TOOLS.md). This document
 defines the shared contract layer; the registry defines what the
 shopper-serving Deep Agent can actually call today.
 

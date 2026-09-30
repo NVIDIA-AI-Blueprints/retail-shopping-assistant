@@ -1,4 +1,4 @@
-# Shopper Agent Tool Registry
+# Tools
 
 This registry documents the internal tools available to the shopper-serving
 Deep Agent. These names are for engineers, evaluators, and agent instructions.
@@ -1004,7 +1004,7 @@ shopping dispatch rechecks the grant against the independent immutable policy.
 Unknown or ungranted calls fail closed before their handlers. Tool schemas and
 wrappers continue to enforce deterministic request and state preconditions.
 Only skills listed as registered in
-[Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md) are eligible for
+[Skills](SKILLS.md) are eligible for
 activation.
 
 | Skill | Tools granted |

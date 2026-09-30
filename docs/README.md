@@ -39,9 +39,9 @@ request and response contracts, the streaming event framing, and per-service
 endpoints.
 
 **I want to change how the agent behaves.** Read
-[Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md) for the turn flow,
-then the [Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md) and
-[Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md) for what the agent can load and
+[Assistant Architecture](ASSISTANT_ARCHITECTURE.md) for the turn flow,
+then [Skills](SKILLS.md) and
+[Tools](TOOLS.md) for what the agent can load and
 call. [AGENTS.md](../AGENTS.md) is the contributor and coding-agent guide to the
 codebase layout.
 
@@ -87,9 +87,9 @@ hardware.
 
 | Document | What it covers |
 |----------|----------------|
-| [Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md) | Published catalog, turn flow, skill-to-tool mapping, and memory boundaries |
-| [Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md) | Registered skills, runtime loading, and the markdown tuning workflow |
-| [Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md) | Registered tools, risk classes, and per-skill access boundaries |
+| [Assistant Architecture](ASSISTANT_ARCHITECTURE.md) | Published catalog, turn flow, skill-to-tool mapping, and memory boundaries |
+| [Skills](SKILLS.md) | Registered skills, runtime loading, and the markdown tuning workflow |
+| [Tools](TOOLS.md) | Registered tools, risk classes, and per-skill access boundaries |
 | [AGENTS.md](../AGENTS.md) | Service map, turn flow, file layout, and test commands for contributors |
 
 ### Learn by running

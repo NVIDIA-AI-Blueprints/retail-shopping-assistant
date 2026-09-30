@@ -5,7 +5,7 @@
 
 ![NVIDIA Logo](https://avatars.githubusercontent.com/u/178940881?s=200&v=4)
 
-**AI-powered retail shopping assistant with Deep Agents SDK orchestration**
+**A reference shopping assistant built on LangChain Deep Agents and open NVIDIA models**
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
@@ -20,11 +20,12 @@
 ## 📋 Table of Contents
 
 - [Overview](#overview)
-  - [Key Features](#key-features)
-  - [Architecture](#architecture)
+- [Key Features](#key-features)
+- [Architecture](#architecture)
 - [Get Started](#get-started)
-  - [Prerequisites](#prerequisites)
-  - [Quick Start](#quick-start)
+  - [Using NVIDIA Endpoints](#using-nvidia-endpoints)
+  - [Locally Hosted Models](#locally-hosted-models)
+- [Notebooks](#notebooks)
 - [Documentation](#documentation)
 - [Contribution Guidelines](#contribution-guidelines)
 - [Community](#community)
@@ -33,536 +34,166 @@
 
 ## Overview
 
-The Retail Shopping Assistant is an AI-powered blueprint that provides a comprehensive interface for an intelligent retail shopping advisor. The chain server uses the Deep Agents SDK as the assistant harness over deterministic shopping tools, with SSE-framed responses, image-based search, optional VLM media perception, and intelligent shopping cart management.
+The Retail Shopping Assistant is a reference implementation of a conversational
+shopping advisor, built on open tooling. LangChain's
+[Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview)
+provides the agent harness, and open NVIDIA Nemotron models handle reasoning,
+perception, and safety.
 
-### Key Features
+Retrieval stays deterministic. The agent translates what a shopper says into
+catalog queries and advertised filters, and the catalog service performs the
+embedding search and ranking. No product fact reaches a shopper without coming
+from the catalog.
 
-- 🤖 **Intelligent Product Search**: The assistant translates natural language
-  into catalog queries and advertised filters; the catalog performs only
-  deterministic embedding retrieval and ranking
-- 🛒 **Deterministic Cart Management**: Read, add, remove, update quantities,
-  and compute subtotals through typed tools
-- 🧠 **Durable Turn Transcript**: A single memory-service SQLite replica
-  starts every turn before agent work, finalizes its terminal outcome, and
-  exactly replays finalized requests from ordered shopper/assistant records;
-  rotating attempt tokens reject late finalizers after interrupted-turn recovery
-- 💭 **Durable Product Continuity**: Finalized product-card output becomes
-  ordered `candidate_set_presented` evidence in SQLite; a typed resolver can
-  recover one exact earlier product or require clarification without another
-  catalog search or model call
-- 👤 **Representative Shopper Picker**: Five immutable, database-backed
-  shoppers mirror the committed live-evaluation behavior profiles; the UI can
-  select one or Guest and inspect its type, behavior, and ZIP. The selected ID
-  is bound to the durable conversation and resolved into compact soft guidance
-- 🌦️ **Destination Weather**: An optional, off-by-default live forecast for a
-  place and dates the shopper names, used to answer conditions questions and to
-  dress an outfit for the trip
-- 📚 **Enforced Shopper Skills**: Every turn first semantically selects and
-  fully loads the smallest applicable skill set; each selected `SKILL.md`
-  declares its role and tool grants, only their grant union becomes
-  model-visible, and dispatch rechecks the grant before execution
-- 🖼️ **Visual Search**: Upload images to find similar products
-- 🎥 **Photo and Video Understanding**: Nemotron 3.5 Super VL, the same model as the app LLM, reads image and video uploads in shopping context
-- 💬 **Conversational AI**: Natural language interactions
-- 🔒 **Optional Content Safety**: Guardrail models can check shopper input and assistant output for unsafe content and off-topic requests; they ship disabled and are enabled per request or by config
-- ⚡ **SSE Response Stream**: Event-stream response framing for chat clients; token-level Deep Agents streaming is a follow-up after the harness migration
-- 📊 **Inference Visibility**: Model names, call counts, and token usage, with
-  detailed ordered agent/tool diagnostics available only when explicitly
-  enabled for a trusted operator or evaluation deployment
-- 📱 **Responsive UI**: Modern, mobile-friendly interface
+Deploy it against NVIDIA-hosted endpoints with no GPU, or serve the models on
+your own GPUs.
 
-### Architecture
+## Key Features
 
-![Shopper Deep Agent architecture](docs/images/shopper-agent-architecture.svg)
+- **Natural-language product search** — the agent plans the query, the catalog retrieves deterministically
+- **Photo and video understanding** — Nemotron 3.5 Super VL reads uploads in shopping context
+- **Deterministic cart** — typed tools, with totals computed in code rather than generated
+- **Skills with enforced tool grants** — each skill declares its tools, and the grant is rechecked at dispatch
+- **Durable conversation turns** — a turn's outcome and the products it showed survive a restart
+- **Representative shopper profiles** — five database-backed shoppers, or Guest
+- **Optional content safety and topic control** — separate guard models, off by default
+- **SSE response streaming** — products, images, text, and metrics as discrete events
+- **Per-turn observability** — which skill ran, what the model was told, and why a tool was refused
+
+## Architecture
+
+![Assistant architecture](docs/images/shopper-agent-architecture.svg)
 
 [Open the architecture diagram at full size](docs/images/shopper-agent-architecture.svg).
 
-The application follows a microservices architecture:
-- **Chain Server**: Deep Agents SDK orchestration with five registered shopper
-  skills, a required per-turn activation phase, an eleven-tool registry with
-  deterministic per-skill binding, capability-derived search schemas, bounded
-  search-schema repair, a category-aware no-I/O availability stub for known
-  product refs, a no-I/O active-promotions stub, typed same-conversation product
-  resolution, grounded response assembly, a configurable Deep Agents execution
-  deadline, a request-scoped process-local checkpointer, and an unregistered
-  provider-neutral weather client/tool boundary
-- **Catalog Retriever**: Generative-LLM-free text/image embedding search, hard
-  filtering, normalized COSINE relevance scores, and deterministic result
-  ranking
-- **Memory Retriever**: Ordered durable turns with start/finalize and exact
-  replay, bounded recent-turn reads, typed prior-skill continuity, presented-
-  product events and a compact reference index, stable cart-line IDs, atomically
-  idempotent add/remove/quantity mutations, an immutable five-row representative
-  shopper registry, atomic conversation/profile binding, and request-scoped
-  database sessions; standard Compose exposes its host port on loopback only
-- **Guardrails**: Content safety and moderation
-- **UI**: React-based frontend interface with Guest/representative-shopper
-  selection
+Five services, each owning one concern:
 
-The UI sends only the selected profile ID; Guest omits it. Durable turn start
-resolves the server-owned row and prevents one conversation from switching
-between Guest and another shopper or between two shoppers. The model receives
-one small current-turn block with `shopper_type`, exact `behavior`, and
-`saved_zipcode`. This is soft interaction/style guidance only: explicit shopper
-instructions win, and a profile cannot invent a budget, product requirement,
-cart action, product fact, skill choice, or tool permission. Changing the
-selection clears visible chat/product state and rotates the browser-scoped
-session, conversation, and cart identities.
+| Service | Owns |
+|---------|------|
+| **Chain Server** | The Deep Agents turn: skill activation, tool dispatch, grounded response assembly |
+| **Catalog Retriever** | Embedding search, hard filtering, and deterministic ranking. No generative model |
+| **Memory Retriever** | Durable turns, cart state, presented-product history, and shopper profiles |
+| **Guardrails** | Content safety and topic control, when enabled |
+| **UI** | React front end with shopper selection and per-turn detail |
 
-Weather is off by default. With `WEATHER_ENABLED=true` and `WEATHER_API_KEY`
-in the chain-server environment, the shopping agent gets
-`get_weather_forecast_tool`, a live Visual Crossing forecast granted only by the
-`destination-weather` skill. It takes a city, town or postal code the shopper
-named in the conversation and an exact date or date range within 15 days, and
-a reply that uses it carries the provider's attribution. Off, the tool is not
-registered at all, and startup, health checks, shopper turns and offline tests
-need no key and make no provider request. The key is not stored in YAML or an
-image, and this integration does not require MCP.
-
-Every turn still makes a fresh semantic skill-selection decision. The previous
-turn's selected skill names are persisted with its durable output and supplied
-to the next activation model step only as a read-only continuity signal; they
-do not force routing or authorize tools.
-If the model selects an invalid skill composition, it receives the typed reason
-and one correction attempt. A second invalid selection returns a deterministic
-clarifying question without running catalog or commerce tools. Multiple
-activation calls in one response execute none and clarify immediately.
-Conversation context still matters: a terse item-only follow-up inside an
-active outfit-building or style-led single-piece thread remains an
-`outfit-styling` task.
-`search_catalog_tool` exposes one flat, capability-derived executable search
-schema. The model cannot submit a clarification or catalog-absence result
-through that tool: it must select faithful advertised values, use one faithful
-advertised parent category for a shopper-named type that is not separately
-advertised, or ask one concise clarification directly without a tool call.
-Parent-category results are explicitly presented as closest alternatives under
-their actual catalog categories.
-When a catalog search needs repair, the runtime assigns one total repair to the
-full normalized, model-authored `requested_product_type` phrase. It does not
-reconstruct alternatives, negation, ordering, or comparisons from shopper
-prose. A schema correction or a fresh
-constraint-provenance review can consume that single budget; constraint feedback
-returned by an in-flight schema repair closes the loop for synthesis rather than
-opening another repair. Distinct advertised siblings never count as the same
-repair scope. The isolated repair receives the capability-derived typed
-`search_catalog_tool`, compact server-generated Catalog capabilities, the
-current shopper message, bounded sanitized validator feedback, and the complete
-active shopper-skill instructions. Only that search tool is available, parallel
-calls are disabled, and the repair may either submit one corrected search or
-signal that clarification is needed by returning no tool call. The server
-discards that model prose and emits the fixed clarification `Could you clarify
-the product type or requirement you want me to use?`. If another requested
-search scope already succeeded, its deterministic grounded products are kept
-before that clarification. If another shopping tool already completed, the
-existing grounding editor preserves that evidence with the fixed clarification.
-The base runtime prompt, invalid AI/tool history, and prior conversation history
-are absent. For a native
-tool-transport failure, the
-requested scope is locked only when current or recent shopper text grounds it;
-an ungrounded model-generated scope may be corrected. A rejected change to a
-grounded scope is removed before execution and appears in `agent_diagnostics`
-with the `repair_scope_changed` reason.
-Native validation feedback contains only rejected top-level field names; raw
-Pydantic `input_value` metadata and free-form `requested_product_type` text are
-never copied into the authoritative repair message. After activation, the
-server rejects a model response containing more than one shopping tool call,
-in addition to requesting `parallel_tool_calls=false`.
-When strict request validation fails while its constraint object validates
-independently, the handler keeps those capability-validated advertised
-constraints as a private immutable repair boundary and includes their exact
-finite object in validator feedback. The repaired call must preserve them; the
-strict handler rejects drift instead of overwriting model output. Free-form
-rejected arguments remain excluded. Repair middleware never restores or
-rewrites taxonomy, constraints, requested type, or search mode. It may restore
-only the structural `scope_complete` flag, which is reported by name in bounded
-`restored_fields` diagnostics.
-When validation rejects an incoherent open-role search, the same repair
-feedback carries the shopper-provenance rule: a shopper-named role must retain
-the shopper's noun or umbrella, while a genuinely open role chooses and names
-one advertised subtype.
-When native validation rejects `required_constraints`, the repair receives the
-typed search tool and compact Catalog capabilities needed to select valid
-values. The free-form query, guidance, and requested scope remain excluded from
-native validator feedback; a shopper-grounded scope is compared privately.
-Middleware does not preserve unvalidated taxonomy or constraints by rewriting
-the repaired call. Malformed or nonempty
-free-form `unadvertised_requirements` arguments are never restored. A native
-schema-invalid call containing one closes without repair. A
-schema-valid, genuinely open role may still use the
-bounded review for a proposed inferred requirement.
-
-The resolved chain-server agent stack remains `deepagents==0.6.12`,
-`langchain==1.3.11`, `langgraph==1.2.7`, and `langgraph-sdk==0.4.2`.
-`orjson==3.11.5` is pinned in every service requirement set that resolves it as
-the last upstream release limited to the project's Apache-2.0/MIT license
-policy. Redis checkpoint packages remain absent; the runtime supports only
-process-local `CHECKPOINT_STORE=memory`. Each graph thread is request-scoped
-with a collision-safe pair of conversation ID and request ID, deleted after
-successful durable finalization, and retained only when finalization fails.
-Deep Agents model-stage execution defaults to one 45-second deadline shared by
-the graph and grounding editor. A graph timeout is captured as `agent_timeout`,
-clears unsent products, finalizes the durable turn as failed, releases the
-durable conversation turn, and then deletes its request checkpoint. The
-grounding editor receives only the remaining time. Its timeout is finalized as
-failed with `grounding_timeout`: search-only turns use the existing deterministic
-catalog renderer, while every other turn returns a fixed retry/cart-check
-response instead of the unverified draft. Editor errors and empty or whitespace-
-only output follow the same fail-closed response rule with `grounding_error`.
-
-For the serving-agent flow, see
-[Shopper Agent Architecture](docs/SHOPPER_AGENT_ARCHITECTURE.md). The
-[Documentation Hub](docs/README.md) links the detailed contracts and operations
-guides.
-
-### Catalog lifecycle and capability publishing
-
-1. At startup, the catalog service loads `enriched_products.jsonl` and its
-   field-role sidecar into one validated snapshot.
-2. That snapshot supplies embedding documents, product details, filters, and
-   the live contract at `http://localhost:8010/capabilities`.
-3. On its first successful fetch, the chain server caches one process-wide
-   contract shared by all sessions. Its aggregate endpoint at
-   `http://localhost:8009/capabilities` returns the cached catalog contract with
-   the other runtime capabilities.
-4. Cached capabilities generate `search_catalog_tool`'s flat schema:
-   `semantic_query`, `shopper_guidance`, `requested_product_type`, `taxonomy`,
-   `required_constraints`, `scope_complete`, and optional `search_mode`.
-   Taxonomy values, hard-filter properties and enum values, typed numeric range
-   shape, and search-mode values come from the active contract. This typed schema
-   deliberately omits cross-field validators; the handler applies a separate
-   strict semantic model to the same payload. Invalid individual values fail at
-   the tool boundary, while cross-field failures reach capability-aware handler
-   validation and can receive one bounded repair. The agent semantically selects
-   exact advertised values; deterministic chain code validates and maps the
-   selection against the capability-owned
-   exact category/subcategory relationships and returns corrective feedback for
-   incoherent combinations. Each call covers at most one category. For a
-   genuinely open request, the model selects exactly one advertised subcategory
-   and names it in `requested_product_type`. A named shopper scope must retain
-   the shopper's noun or umbrella. A transport repair cannot change that scope
-   when it is grounded in shopper text; an ungrounded model-generated scope may
-   be corrected.
-   Every text search carries
-   `requested_product_type`: the shortest product noun or true umbrella from
-   the shopper's current turn or direct antecedent. It excludes color,
-   material, fit, occasion, weather, and style modifiers. It is provenance, not
-   taxonomy or ranking text, and is `null` only for image-only search.
-   Validation can bind the longest exact advertised suffix in a
-   modifier-bearing model phrase (`waterproof boots` to `boots`), but disables
-   that shortcut for explicit alternatives containing `and`, `or`, `/`, or
-   `&`.
-   Thus `closed shoes or boots` remains model-owned alternative or umbrella
-   reasoning rather than being collapsed to `boots`. The model owns all
-   alternative, comparison, ordering, and negation semantics. When it submits
-   multiple advertised subcategories from one category through the typed
-   taxonomy field, the valid request remains one catalog execution; its
-   candidate window expands for that selection, then rank-preserving selection
-   keeps one returned candidate per selected subcategory when available before
-   trimming to the configured result count. The runtime does not derive that
-   selection from the shopper's raw text. Each search also requires
-   `shopper_guidance`: one nonempty, product-agnostic
-   sentence authored before retrieval under the active skill to connect the
-   selected role to the shopper's goal or direct antecedent. Empty guidance is
-   valid only for image-only search.
-5. If a shopper-named type is not separately advertised but one faithful
-   advertised parent category can be selected, the model searches that category
-   once while preserving the shopper's type as semantic direction. The response
-   discloses the broader scope and keeps each result's actual category. If
-   neither a direct type nor one faithful parent can be selected, the assistant
-   asks one concise clarification directly. It makes no tool call, retrieval, or
-   catalog-absence claim. An unsupported
-   modifier does not erase an advertised product type. A directly stated
-   must-have missing from the generated schema is placed in
-   `unadvertised_requirements`, while preference, styling, occasion, weather,
-   and anchor context remain in the semantic query. A product type never belongs
-   in `unadvertised_requirements`. Every such requirement on a shopper-stated
-   product scope ranks retrieval and is returned to the shopper as unconfirmed,
-   including when the model uses a synonym rather than the shopper's exact
-   wording. It never becomes a hard filter and never suppresses the search. The bounded
-   constraint-provenance review is reserved for a proposed inferred requirement
-   on a genuinely open role when its shared repair budget remains. The review
-   freezes `requested_product_type`, taxonomy, `scope_complete`, `search_mode`, and every
-   advertised hard constraint. Within that preserved hard scope, it may correct
-   only the soft `semantic_query`, the reviewed `unadvertised_requirements`
-   lane, and its associated `shopper_guidance`; the requirement is either
-   replaced with the shopper's shortest exact wording or removed. Exact wording is kept as an
-   unenforceable requirement: it ranks the search and is disclosed. Removal also scrubs the corresponding
-   product-attribute claim from `shopper_guidance`. When a runtime semantic
-   open-role schema repair removes
-   its proposed inferred requirement, runtime replaces the submitted pre-search
-   guidance with neutral generic guidance for the selected role. Unresolved
-   provenance after that review, or constraint feedback after the scope already
-   used its schema repair, fails safe and closes the loop for synthesis. A
-   successful partial search may advance to a new role with its own single
-   repair opportunity; the configured
-   turn cap remains three searches. When a successful or zero-result search
-   consumes the final configured slot, its result records
-   `SEARCH_BUDGET_EXHAUSTED`; the next model step omits only
-   `search_catalog_tool`. This prevents a fourth search while preserving product
-   details, availability, cart work, and honest partial synthesis.
-6. The catalog validates executable requests again, generates embeddings,
-   applies hard filters, and ranks results. It performs no shopper-language
-   interpretation or chat/completion call.
-
-For a singleton exact taxonomy value, deterministic validation requires
-`requested_product_type` to match the advertised taxonomy value. The semantic
-query is independent soft ranking direction and need not repeat the taxonomy
-noun. Successful search evidence preserves it as a private ranking preference.
-For a completed successful search-only turn, the runtime allows one final
-tools-disabled synthesis under the active skill and then grounds that draft
-against tool-role evidence. The pre-retrieval `shopper_guidance` and active
-skill's static `response_guidance` support deterministic fallback when synthesis
-or editing cannot produce an answer. If the shopper's goal depends on a
-material, fit, comfort, durability, care, weather, or other functional property
-that the evidence does not confirm, final grounding states that gap and presents
-the candidates as the closest catalog or styling direction rather than as
-proven suitable. Deterministic fallback ends with the same generic disclosure.
-Before fallback guidance is serialized, a
-narrow runtime scrub replaces documented unsupported outdoor/weather guarantee
-language with neutral guidance for the selected role. This changes only response
-framing; the semantic query, taxonomy, constraints, and executed search remain
-unchanged. The scrub includes outdoor-surface or outdoor-walking claims and
-constructions such as "handle rain," "work well for outdoor surfaces," or
-"stay secure for outdoor walking," plus `wet conditions` and "works well in wet
-weather/conditions." Candidate results, filters, and the assistant draft are not
-rewritten into guidance after retrieval. Deterministic code
-separately lists every returned candidate with its name, price, category,
-and only the confirmed filters from that candidate's search. For multi-role
-results, each guidance sentence is grouped with the products from the search
-that produced it. Candidate groups deduplicate by `product_ref`, not display
-name: the same catalog product appears once, while distinct products that share
-a name remain distinct. Mixed-outcome turns retain every successful product
-group when a later scope has an unsupported requirement and append the honest
-gap. The fixed unsupported-requirement response is used only when that rejection
-is the sole current-turn business-tool outcome;
-otherwise the other outcome remains available for rendering or synthesis. If
-successful search evidence remains incomplete, the renderer adds a neutral
-offer to continue with the next requested piece or search scope.
-Separate searches are never flattened into one global filter claim. Zero-result
-evidence retains its exact taxonomy and filter scope and cannot support a claim
-about a different product type or the whole catalog.
-Operator diagnostics include bounded `catalog_scope_outcomes` for zero-result
-scopes. The grounding boundary keeps current-turn and prior-turn
-tool-role evidence separate, so earlier results can resolve references but
-cannot prove that a new search or cart mutation ran. If every current-turn
-business call is a rejected catalog search and no current product evidence
-exists, the runtime returns a fixed retry response before model-based response
-editing; prior evidence cannot be presented as results from the rejected search.
-
-Final-response extraction ignores tool messages, assistant tool-call messages,
-and internal skill-activation markers. If a completed graph contains no
-shopper-facing answer, the runtime returns a safe retry response and records the
-termination reason as `incomplete_agent_response` rather than exposing internal
-content.
-
-At turn start, the memory service returns a bounded set of prior raw
-shopper/assistant turns eligible for model context, the authoritative cart, and
-a service-issued attempt token. Blocked turns remain durable and exactly
-replayable but are excluded by both the service projection and chain prompt
-formatter; abandoned turns are also excluded by the formatter. Only the latest
-abandoned turn can reopen; reopening retains its request identity but rotates
-the attempt token, so a late finalize cannot overwrite the retry. Those recent
-turns replace the legacy rolling context blob, while the
-memory service also returns a compact index of products actually presented as
-ordered cards on earlier turns. When a needed product is not established in the
-current request, the selected discovery, styling, or cart skill may make one
-typed batch resolution call. An exact single match becomes request-local
-evidence for details, availability, or cart add; zero or multiple matches require
-clarification and never authorize a guess. Resolution is limited to the current
-conversation and does not add fuzzy matching, embeddings, cross-conversation
-memory, preference/sentiment memory, or catalog-revision revalidation.
-
-LangGraph `MemorySaver` now holds only one request's working graph state under a
-collision-safe pair of conversation ID and request ID. It is deleted only after
-durable finalization succeeds; a finalize failure preserves that checkpoint.
-The compact historical-product index is capped at 16,384 characters, and its
-typed batch resolver can run at most once per turn. Caller-supplied persona data
-is not accepted as turn context. The fixed representative shoppers use a typed,
-bounded server-owned registry and an atomic turn-start binding; only the
-resolved three-field snapshot enters the current model input. Guest turns carry
-neither that snapshot nor profile-specific prompt rules.
-
-Catalog values are never copied into agent or catalog code. After replacing the
-JSONL or sidecar, restart and verify the catalog service first, then restart and
-verify the chain server so its process-lifetime cache matches the new snapshot.
-See [Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md) for the complete flow
-and [Catalog Schema and Filters](docs/CATALOG_FILTERS.md) for the sidecar rules.
-The exact published response is documented in
-[Catalog Retriever capabilities](docs/API.md#catalog-retriever-get-capabilities).
+A turn starts a durable record before any model work, activates the smallest
+applicable skill set, dispatches only the tools those skills grant, and
+assembles a reply from tool evidence. [Assistant
+Architecture](docs/ASSISTANT_ARCHITECTURE.md) walks through it in full,
+including the catalog data foundation and the memory boundaries.
 
 ## Get Started
 
-### Prerequisites
+Two paths. They differ only in where the models run; everything else is
+identical. Start with NVIDIA endpoints unless you specifically need your own
+GPUs.
 
-- **Docker**: Version 20.10+ with Docker Compose plugin
-- **Python**: Host Python for deployment helpers. From the cloned repo, install
-  deploy-helper dependencies with:
-  ```bash
-  python -m pip install --user -r requirements-deploy.txt
-  ```
-- **NVIDIA NGC Account**: For API access ([Get API Key](https://ngc.nvidia.com/))
-- **Hardware**: 4x H100 GPUs (preferred) or 4x A100 GPUs (minimum) for local deployment, or cloud access
+### Using NVIDIA Endpoints
 
-### Quick Start
+Every model runs on a hosted endpoint. **No GPU required.**
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
-   cd retail-shopping-assistant
-   ```
+**You need**
 
-2. **Authenticate with NVIDIA Container Registry**:
-   ```bash
-   docker login nvcr.io
-   ```
-   Use `$oauthtoken` as the username and your NGC API key as the password.
+- Docker 20.10+ with the Compose plugin
+- Python on the host, for the deploy helpers
+- An NVIDIA API key from [build.nvidia.com](https://build.nvidia.com)
+- An [NGC account](https://ngc.nvidia.com/) to pull the UI base image
 
-3. **Install host deploy-helper dependencies**:
-   ```bash
-   python -m pip install --user -r requirements-deploy.txt
-   ```
-
-4. **Create and source an environment profile**:
-   ```bash
-   cp .env.example .env
-   $EDITOR .env
-   source .env
-   ```
-
-   Set `NVIDIA_API_KEY` in the file.
-
-   Two templates are provided. **Local** means a locally deployed model:
-   vLLM serving a Hugging Face checkpoint on your GPUs.
-
-   | template | app LLM and media | text embedding | everything else |
-   |---|---|---|---|
-   | `.env.example` | hosted endpoint | hosted | hosted |
-   | `.env.local-models.example` | **local** | **local**, or hosted | hosted |
-
-   Use the local one when you need what a hosted endpoint cannot give you: no
-   rate limit, and the model's own metrics. A comment in it shows how to keep
-   text embedding hosted. See
-   [Running models locally](#running-models-locally) below.
-
-   Copy a template rather than editing it. Every `.env.*` is ignored except the
-   templates, so your filled-in copy stays out of git along with its keys. The env file is a sourceable shell file;
-   sourcing it also sets `COMPOSE_DISABLE_ENV_FILE=1` so Docker Compose uses
-   the exported shell environment instead of auto-parsing repo-root `.env`.
-   `CHECKPOINT_STORE=memory` is the only supported graph-checkpoint
-   configuration. Graph checkpoints disappear on chain-server restart and are
-   not shared across replicas, and neither matters: a checkpoint is keyed on
-   `(conversation_id, request_id)`, so it belongs to one request and two turns
-   of a conversation can never share one. **No session affinity is needed** --
-   any chain-server replica can serve any turn, because everything that carries
-   across turns lives in the memory service. Revisit only if turns must survive
-   a restart mid-turn.
-
-   Compose stores the memory-service SQLite database at `/data/context.db` on
-   the `memory-data` named volume. SQLite is a single-writer file on a
-   single-mount volume, so it is the one-replica choice; PostgreSQL is selected
-   by `MEMORY_DATABASE_URL` when more than one replica is needed. See the
-   [Deployment Guide](docs/DEPLOYMENT.md).
-
-   Weather remains disabled by default. Leave `WEATHER_ENABLED=false` and
-   `WEATHER_API_KEY` empty for the current shopper experience. An operator
-   testing the dormant client directly may set the key only in the ignored
-   `.env`, process environment, or deployment secret store.
-
-5. **Validate and deploy**:
-   ```bash
-   python scripts/model_config.py show --validate
-   python scripts/model_config.py deploy --build
-   ```
-
-   The helper prints resolved endpoints without printing API keys. By default,
-   `shared/configs/models.yaml` uses hosted endpoints for every model and
-   starts no local NIMs: Nemotron 3.5 Super VL on
-   `inference-api.nvidia.com` for the app LLM, and NVIDIA Build for
-   embeddings and guardrails. The same model reads image and video uploads
-   (the `vlm` role), configured separately with `VLM_BASE_URL`, `VLM_MODEL` and
-   `VLM_API_KEY`, so replacing the app LLM leaves media working. Set the role
-   to `source: disabled` in `models.yaml` to turn it off.
-
-   For locally deployed models, see [Running models locally](#running-models-locally).
-
-   Model routing lives in `shared/configs/models.yaml`. Temperature and max
-   output tokens for each model call are set in several places;
-   [Model Sampling and Output Limits](docs/DEPLOYMENT.md#model-sampling-and-output-limits)
-   lists where to change each one.
-
-6. **Confirm the product catalog is indexed**:
-   ```bash
-   curl -s http://localhost:8010/ready
-   ```
-
-   Compose indexes for you: the `catalog-indexer` service runs once, builds the
-   index and exits, and `catalog-retriever` waits for it to succeed before it
-   starts. Bringing the stack up again re-runs it, so a change to the catalog
-   data, schema, or embedding model is picked up by `docker compose up -d`.
-
-   Serving containers do not index themselves: rebuilding an index begins by
-   dropping the collection, which is safe when one process does it and
-   destructive when two do, so it is a separate one-shot service rather than
-   something that happens on start.
-
-   To rebuild without cycling Compose, run it directly. Safe to repeat: it
-   checks the catalog fingerprint first and does nothing when the index is
-   already current.
-
-   ```bash
-   docker compose exec catalog-retriever python -m app.index_catalog
-   ```
-
-   Check `/ready` here, not `/health`. A catalog container with no matching
-   index is alive but deliberately serving no traffic, so `/health` returns 200
-   while `/ready` returns 503. Searches in that state return no products rather
-   than an error, and a shopper is told the catalog is empty.
-
-7. **Access the application**: Open your browser to `http://localhost:3000`
-
-### Running models locally
-
-The app LLM, and optionally text embedding, can be served from your own GPUs as
-locally deployed models instead of hosted endpoints. `docker-compose-model-local.yaml` runs
-them with vLLM from Hugging Face checkpoints:
-
-| service | model | GPUs (default) |
-|---|---|---|
-| `local-llm` | Nemotron 3.5 Super, also reading image and video uploads | 4, `LOCAL_LLM_GPUS=0,1,2,3` |
-| `local-embedding` | Nemotron 3 Embed 1B | 1, `LOCAL_EMBED_GPU=4` |
-
-Image embedding and guardrails stay hosted.
+**Deploy**
 
 ```bash
-cp .env.local-models.example .env.local-models
-$EDITOR .env.local-models         # HF_TOKEN, NVIDIA_API_KEY
-source .env.local-models
+git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
+cd retail-shopping-assistant
 
+docker login nvcr.io                 # username: $oauthtoken, password: NGC API key
+python -m pip install --user -r requirements-deploy.txt
+
+cp .env.example .env
+$EDITOR .env                         # set NVIDIA_API_KEY
+source .env
+
+python scripts/model_config.py show --validate
+python scripts/model_config.py deploy --build
+```
+
+`show --validate` prints the resolved endpoint for every model role without
+printing any key, and fails if a required one is missing. Copy the template
+rather than editing it: every `.env.*` is gitignored except the templates, so
+your filled-in copy stays out of git along with its keys.
+
+**Verify**
+
+```bash
+curl -s http://localhost:8010/ready   # catalog: 503 until the index is built
+```
+
+Compose indexes the catalog for you. The `catalog-indexer` service runs once,
+builds the index, and exits, and `catalog-retriever` waits for it to succeed
+before starting. Check `/ready` rather than `/health`: a catalog container with
+no matching index is deliberately alive and serving no traffic.
+
+Then open **http://localhost:3000**.
+
+To rebuild the index without cycling Compose, run it directly. This is safe to
+repeat, because it checks the catalog fingerprint first and does nothing when
+the index is current:
+
+```bash
+docker compose exec catalog-retriever python -m app.index_catalog
+```
+
+### Locally Hosted Models
+
+The shopping model and catalog embedding run on your GPUs, served by vLLM from
+Hugging Face checkpoints in `docker-compose-model-local.yaml`.
+
+| Service | Model | GPUs |
+|---------|-------|------|
+| `local-llm` | Nemotron 3.5 Super, which also reads image and video uploads | 4, `LOCAL_LLM_GPUS=0,1,2,3` |
+| `local-embedding` | Nemotron 3 Embed 1B | 1, `LOCAL_EMBED_GPU=4` |
+
+**You need**
+
+- Docker 20.10+ with the Compose plugin, and the NVIDIA Container Toolkit
+- Python on the host, for the deploy helpers
+- **Five GPUs** in the default layout: four for the chat model's tensor
+  parallel group, one for embedding. The defaults fit an 8x H100 80 GB machine
+- About 240 GB of disk for the chat model's BF16 checkpoint
+- A Hugging Face token with access to that checkpoint
+- An NVIDIA API key, because some model roles still use hosted endpoints
+- An [NGC account](https://ngc.nvidia.com/) to pull the UI base image
+
+**Deploy**
+
+```bash
+git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
+cd retail-shopping-assistant
+
+docker login nvcr.io
+python -m pip install --user -r requirements-deploy.txt
+
+cp .env.local-models.example .env.local-models
+$EDITOR .env.local-models            # set HF_TOKEN and NVIDIA_API_KEY
+source .env.local-models
 mkdir -p "$HF_CACHE"
+
 docker compose -f docker-compose-model-local.yaml up -d --wait local-llm local-embedding
+python scripts/model_config.py show --validate
 docker compose up -d --build
 ```
 
+Start the models before the app: `--wait` returns once both report healthy, and
+the catalog indexer embeds the catalog once, at startup. The first start
+downloads the checkpoint into `HF_CACHE` and can take an hour; later starts
+read the cache. Follow it with
+`docker compose -f docker-compose-model-local.yaml logs -f local-llm`.
+
 To keep text embedding on the hosted endpoint, comment out the two
 `TEXT_EMBED_*` lines in `.env.local-models` and start only `local-llm`.
+`LOCAL_LLM_GPUS`, `LOCAL_LLM_TP`, and `LOCAL_EMBED_GPU` change the placement.
 
-`--wait` returns once the services report healthy; start the app after that,
-since the catalog indexer embeds the catalog once, at startup. The first start
-downloads the chat model's ~240 GB BF16 checkpoint into `HF_CACHE` and can take
-an hour; later starts read the cache.
-
-The default layout above needs five GPUs: four for the chat model's tensor
-parallel group and one for embedding. `LOCAL_LLM_GPUS`, `LOCAL_LLM_TP` and
-`LOCAL_EMBED_GPU` change that placement. See the
-[deployment guide](docs/DEPLOYMENT.md#step-2-verify-gpu-setup) before starting
-both local roles together.
-
-No tracked configuration changes. The environment is read before
-`shared/configs/models.yaml`, so the profile's `LLM_*`, `VLM_*` and
-`TEXT_EMBED_*` are enough and `models.yaml` is left alone.
-
-**What this gets you.** vLLM serves Prometheus metrics on its own port, with
-nothing to enable:
+**What this gets you** that a hosted endpoint cannot: no rate limit, and the
+model's own metrics. vLLM serves Prometheus metrics with nothing to enable:
 
 ```bash
 curl -s http://localhost:8000/metrics | grep -E '^vllm:'
@@ -571,11 +202,10 @@ curl -s http://localhost:8000/metrics | grep -E '^vllm:'
 Tokens in and out, time to first token, queue depth, KV-cache utilisation, and
 running and waiting sequences. `vllm:num_requests_waiting` is the one that says
 whether the model is the bottleneck rather than the application — a question a
-hosted endpoint cannot answer at all, and one the load tooling otherwise has to
-infer. [`monitoring/`](monitoring/README.md) scrapes them into Grafana.
+hosted endpoint cannot answer at all.
+[`monitoring/`](monitoring/README.md) scrapes these into Grafana.
 
-**Going back to the hosted endpoint** is sourcing the other profile and
-restarting the chain server:
+**Going back to hosted** is sourcing the other profile and restarting:
 
 ```bash
 source .env
@@ -583,72 +213,55 @@ docker compose up -d --force-recreate chain-server catalog-indexer catalog-retri
 docker compose -f docker-compose-model-local.yaml stop
 ```
 
-8. **Stop the containers**:
+**Stopping**
 
-   **Application services**:
-   ```bash
-   docker compose -f docker-compose.yaml down
-   ```
+```bash
+docker compose -f docker-compose.yaml down
+docker compose -f docker-compose-model-local.yaml down   # if you started them
+```
 
-   **Locally deployed models, if you started them**:
-   ```bash
-   docker compose -f docker-compose-model-local.yaml down
-   ```
+No GPUs of your own? [NVIDIA Brev](https://developer.nvidia.com/brev) offers
+pay-as-you-go GPU instances, and [docs/BREV.md](docs/BREV.md) has a walkthrough.
 
-For detailed installation instructions, see [Deployment Guide](docs/DEPLOYMENT.md).
+## Notebooks
 
-## Deploy on NVIDIA Brev
+Five notebooks take the deployment you just made and teach what it does. They
+are the fastest way to understand this blueprint, and the best place to start
+after the UI loads.
 
-For a streamlined cloud deployment experience, you can deploy the Retail Shopping Assistant on **NVIDIA Brev** using GPU Environment Templates (Launchables):
+| Notebook | You will | Time | GPU |
+|---|---|---|---|
+| [1 · Getting Started](notebook/1_Getting_Started.ipynb) | deploy on hosted endpoints, hold a first conversation, and call each component once | ~20 min | No |
+| [2 · Observability](notebook/2_Observability.ipynb) | read a turn's traces: skills, prompts, tool calls, refusals, time and tokens | ~30 min | No |
+| [3 · Evaluation](notebook/3_Evaluation.ipynb) | replay conversations, investigate a failure, tell flaky from broken, run the Challenger and Judge | ~30 min | No |
+| [4 · Capture Traces](notebook/4_Capture_Traces.ipynb) | record every model call of 25 journeys as an AIPerf trace, for Notebook 5 to replay | ~35 min | No |
+| [5 · Performance Measurement](notebook/5_Performance_Measurement.ipynb) | serve Nemotron with vLLM and measure prefix-cache hit rate, TTFT, and throughput by concurrency | hours | Yes |
 
-**[NVIDIA Brev Deployment Guide](docs/BREV.md)** - Complete step-by-step instructions for deploying on Brev
+Notebook 2 is the one to read if you only read one: it shows you what the model
+was actually told on a given turn, which is how you tell "the model ignored the
+rule" from "the model never saw the rule".
 
-### Why Choose NVIDIA Brev?
-
-- **One-Click Deployment**: Pre-configured GPU environments with automatic setup
-- **Managed Infrastructure**: No need to manage servers or GPU clusters
-- **Secure Access**: Built-in secure tunneling for web interface access  
-- **Flexible Resources**: Choose from H100, A100, and other GPU configurations
-- **Cost-Effective**: Pay only for actual usage time
-
-The Brev deployment guide walks you through the entire process from creating a Launchable to accessing your fully functional retail shopping assistant.
+See [notebook/README.md](notebook/README.md) for prerequisites and how to start
+Jupyter.
 
 ## Documentation
 
-**[Documentation Hub](docs/README.md)** indexes everything below and suggests a
-reading path for your role. The documents most people need first:
+[Documentation Hub](docs/README.md) indexes everything and suggests a path for
+your role.
 
-- **[Deployment Guide](docs/DEPLOYMENT.md)**: Prerequisites, both deployment
-  paths, every configuration setting, monitoring, and troubleshooting
-- **[Notebooks](notebook/README.md)**: Ordered walkthroughs that deploy the
-  stack, explore its traces, evaluate it, and measure its performance
-- **[User Guide](docs/USER_GUIDE.md)**: How to use the application
-- **[API Documentation](docs/API.md)**: Complete API reference
+1. **[User Guide](docs/USER_GUIDE.md)** — using the assistant: chat, search, cart, uploads, safety, FAQ
+2. **[Assistant Architecture](docs/ASSISTANT_ARCHITECTURE.md)** — the catalog foundation, one shopper turn, and memory boundaries
+   - **[Skills](docs/SKILLS.md)** — registered skills, runtime loading, and the markdown tuning loop
+   - **[Tools](docs/TOOLS.md)** — registered tools, risk classes, and per-skill access boundaries
+3. **[Observability](docs/OBSERVABILITY.md)** — read a session turn by turn, and dig into why one turn did what it did
+4. **[Testing and Evaluation](tests/README.md)** — unit, integration, and Challenger/Judge workflows
+5. **[Performance Measurement](docs/PERFORMANCE.md)** — latency budget, saturation point, and deployment sizing
+6. **[Deployment and Configuration](docs/DEPLOYMENT.md)** — both deployment paths, and every configuration setting with its default
+7. **[API Reference](docs/API.md)** — endpoints, request and response models, and streaming frames
+8. **Your own catalog** — **[Embedding Management](docs/EMBEDDING_MANAGEMENT.md)** for the data format and reindexing, and **[Catalog Schema and Filters](docs/CATALOG_FILTERS.md)** for declaring which fields become shopper-facing filters
 
-Running and operating it:
-
-- **[Observability](docs/OBSERVABILITY.md)**: Read a shopper's session turn by
-  turn, open one turn's trace, and find what the model was told
-- **[Performance](docs/PERFORMANCE.md)**: Measure where a turn spends its time, sweep the local LLM to saturation, and size concurrent shoppers on given hardware
-- **[Deploy on NVIDIA Brev](docs/BREV.md)**: Managed cloud GPU deployment
-- **[Testing and Evaluation](tests/README.md)**: Unit, integration, and
-  Challenger/Judge workflows; multi-turn judging uses the actual generated
-  conversation plus bounded current-turn catalog evidence from successful
-  search and detail tools
-
-Using your own catalog:
-
-- **[Embedding Management](docs/EMBEDDING_MANAGEMENT.md)**: Catalog data format, fingerprinting, and reindexing
-- **[Catalog Schema and Filters](docs/CATALOG_FILTERS.md)**: JSONL field roles and data-derived filter capabilities
-- **[Catalog Architecture](docs/CATALOG_REFACTOR_PLAN.md)**: Start here for JSONL ingest, lifecycle-cached capabilities, compact agent discovery, validation, and retrieval
-
-Understanding and changing the agent:
-
-- **[Shopper Agent Architecture](docs/SHOPPER_AGENT_ARCHITECTURE.md)**: Clean map of the published catalog, turn flow, skills, tools, and memory boundaries
-- **[Shopper Agent Skill Registry](docs/SHOPPER_AGENT_SKILL_REGISTRY.md)**: Registered Deep Agents skills and markdown tuning loop
-- **[Shopper Agent Tool Registry](docs/SHOPPER_AGENT_TOOL_REGISTRY.md)**: Registered Deep Agents tools for the shopper-serving agent
-- **[Commerce Contracts](docs/COMMERCE_CONTRACTS.md)**: Internal product, cart, and commerce tool contracts
-- **[AGENTS.md](AGENTS.md)**: Service map, turn flow, file layout, and test commands for contributors
+Contributors should also read [AGENTS.md](AGENTS.md), the service map and file
+layout for this codebase.
 
 ## Contribution Guidelines
 
@@ -668,20 +281,20 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ### NVIDIA AI Blueprints
 - [NVIDIA AI Blueprints](https://github.com/NVIDIA-AI-Blueprints): Collection of AI application blueprints
-- [NVIDIA NIM](https://catalog.ngc.nvidia.com/orgs/nim): Containerized AI models
 - [NVIDIA NGC](https://ngc.nvidia.com/): AI platform and container registry
+- [build.nvidia.com](https://build.nvidia.com): Hosted model endpoints and API keys
 
 ### Technologies Used
 - [Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview): Agent harness for tool and skill orchestration
 - [LangGraph](https://github.com/langchain-ai/langgraph): Runtime used underneath Deep Agents
+- [vLLM](https://github.com/vllm-project/vllm): Inference server for locally hosted models
 - [FastAPI](https://fastapi.tiangolo.com/): Modern Python web framework
 - [React](https://reactjs.org/): JavaScript library for building user interfaces
 - [Milvus](https://milvus.io/): Vector database for similarity search
 
-### Related Projects
-- [Nemotron 3 Embed 1B](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nemotron-3-embed-1b): Embedding model for semantic search
-- [NV-CLIP](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nvclip): Visual understanding model for image retrieval
-- [Nemotron 3 Super](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nemotron-3-super-120b-a12b): Large language model
+### Models
+- [Nemotron 3.5 Super](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026): Shopping agent and media perception
+- [Nemotron 3 Embed 1B](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16): Catalog and query embedding
 
 ## License
 

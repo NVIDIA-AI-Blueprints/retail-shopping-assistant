@@ -130,6 +130,8 @@ class TurnReplayOutput(BaseModel):
     product_results: list[dict[str, Any]]
     retrieved: dict[str, str]
     agent_diagnostics: dict[str, Any]
+    guardrails_enabled: bool = False
+    guardrail_results: list[dict[str, Any]] = Field(default_factory=list, max_length=2)
     selected_skill_names: list[str] = Field(default_factory=list, max_length=5)
     #: How the products divide into the groups the shopper saw. Optional, so a
     #: turn finalized by an older runtime still records its products.

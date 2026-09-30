@@ -257,6 +257,9 @@ const Chatbox: React.FC<ChatboxProps> = ({
   const [newMessage, setNewMessage] = useState<string>("");
   const [isGuardrailsOn, setIsGuardrailsOn] = useState(config.features.guardrails.defaultState);
   const guardrailOverrideRef = useRef<boolean | undefined>(undefined);
+  const [guardrailModalities, setGuardrailModalities] = useState<Array<"text" | "image" | "video">>([
+    "text", "image"
+  ]);
   const [image, setImage] = useState("");
   const [previewImage, setPreviewImage] = useState("");
   const [video, setVideo] = useState("");
@@ -354,13 +357,16 @@ const Chatbox: React.FC<ChatboxProps> = ({
     const videoMimeTypeForFile = mimeForFile(file, mediaCapabilities.video_mime_types);
     const isImage = Boolean(imageMimeType && mediaCapabilities.image_mime_types.includes(imageMimeType));
     const isVideo = Boolean(videoMimeTypeForFile && mediaCapabilities.video_mime_types.includes(videoMimeTypeForFile));
-    const videoAllowed = mediaCapabilities.vlm_enabled && mediaCapabilities.max_videos_per_turn > 0;
+    const imageAllowed = !isGuardrailsOn || guardrailModalities.includes("image");
+    const videoAllowed = mediaCapabilities.vlm_enabled
+      && mediaCapabilities.max_videos_per_turn > 0
+      && (!isGuardrailsOn || guardrailModalities.includes("video"));
 
     if (!isImage && !isVideo) {
       toast.error(`Please select a supported image or video file. ${supportedVideoLabel(mediaCapabilities)}`);
       return;
     }
-    if (isImage && mediaCapabilities.max_images_per_turn <= 0) {
+    if (isImage && (mediaCapabilities.max_images_per_turn <= 0 || !imageAllowed)) {
       toast.error("Image upload is not available with the current configuration.");
       return;
     }
@@ -543,6 +549,14 @@ const Chatbox: React.FC<ChatboxProps> = ({
   const handleSendMessage = async (overrideText?: string) => {
     const outgoing = (overrideText ?? newMessage).trim();
     if (!outgoing && !image && !video) return;
+    if (
+      isGuardrailsOn
+      && ((image && !guardrailModalities.includes("image"))
+        || (video && !guardrailModalities.includes("video")))
+    ) {
+      toast.error("Guardrails do not support this media type.");
+      return;
+    }
 
     const userSession = getOrCreateUserSession();
     setConversationId(userSession.conversationId);
@@ -909,6 +923,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
           setMediaCapabilities(data.media_input);
         }
         if (data.guardrails) {
+          setGuardrailModalities(data.guardrails.supported_modalities);
           if (guardrailOverrideRef.current === undefined) {
             setIsGuardrailsOn(data.guardrails.default_enabled);
           }

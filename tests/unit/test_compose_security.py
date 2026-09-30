@@ -45,7 +45,7 @@ def test_guardrail_settings_have_one_source() -> None:
     environment = compose["services"]["rails"]["environment"]
 
     for name in (
-        "MULTIMODAL_SAFETY_MODALITIES",
+        "GUARDRAILS_SUPPORTED_MODALITIES",
         "MULTIMODAL_SAFETY_VIDEO_FPS",
         "GUARDRAILS_INPUT_EXECUTION_MODE",
         "GUARDRAILS_TIMEOUT_SECONDS",

@@ -117,6 +117,10 @@ class TurnReplayOutput(_MemoryModel):
     product_results: list[ProductSummary]
     retrieved: dict[str, str]
     agent_diagnostics: dict[str, JsonValue]
+    guardrails_enabled: bool = False
+    guardrail_results: list[dict[str, JsonValue]] = Field(
+        default_factory=list, max_length=2
+    )
     selected_skill_names: list[str] = Field(default_factory=list, max_length=5)
     #: How the products divide into the groups the shopper saw: one entry per
     #: search scope, naming its heading and the products it showed.
@@ -245,6 +249,7 @@ class ConversationMemoryClient:
         cart_user_id: int,
         shopper_profile_id: str | None = None,
         catalog_revision: str | None = None,
+        guardrails_enabled: bool | None = None,
     ) -> TurnStartResult:
         """Start one turn without sending raw media to the memory service."""
 
@@ -256,6 +261,7 @@ class ConversationMemoryClient:
                 shopper_text,
                 media,
                 shopper_profile_id=shopper_profile_id,
+                guardrails_enabled=guardrails_enabled,
             ),
             shopper_profile_id=shopper_profile_id,
             catalog_revision=catalog_revision,
@@ -357,8 +363,9 @@ def build_request_digest(
     media: Sequence[Mapping[str, Any]] = (),
     *,
     shopper_profile_id: str | None = None,
+    guardrails_enabled: bool | None = None,
 ) -> str:
-    """Fingerprint shopper input, selected profile, and ordered media hashes.
+    """Fingerprint shopper input, selected profile, guardrails, and media hashes.
 
     Guest requests retain the pre-profile canonical shape so finalized turns
     created before the shopper-profile migration remain exactly replayable.
@@ -378,6 +385,8 @@ def build_request_digest(
     }
     if shopper_profile_id is not None:
         digest_payload["shopper_profile_id"] = shopper_profile_id
+    if guardrails_enabled:
+        digest_payload["guardrails_enabled"] = True
     canonical = _canonical_json(digest_payload)
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 

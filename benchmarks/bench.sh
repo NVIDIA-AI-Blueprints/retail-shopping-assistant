@@ -117,7 +117,7 @@ print(d[0].get("root") or d[0]["id"] if d else "")' 2>/dev/null || true)
 
   Fetch just the tokenizer files (a few MB, not the weights):
     pip install huggingface_hub
-    hf download nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8 \\
+    hf download nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026 \\
       --include 'tokenizer*' 'config.json' --local-dir ~/nemotron-tokenizer
 
   Then re-run with:

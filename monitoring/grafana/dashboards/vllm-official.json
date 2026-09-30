@@ -2098,8 +2098,8 @@
       {
         "current": {
           "selected": false,
-          "text": "nvidia/nemotron-3-super-120b-a12b",
-          "value": "nvidia/nemotron-3-super-120b-a12b"
+          "text": "nemotron-3.5-super",
+          "value": "nemotron-3.5-super"
         },
         "datasource": {
           "type": "prometheus",
@@ -2130,7 +2130,7 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "vLLM - Nemotron 3 Super (2x H100 NVL, FP8)",
+  "title": "vLLM - Nemotron 3.5 Super (4x H100, BF16)",
   "uid": "b281712d-8bff-41ef-9f3f-71ad43c05e9b",
   "version": 8,
   "weekStart": ""

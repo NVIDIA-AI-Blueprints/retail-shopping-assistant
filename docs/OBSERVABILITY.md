@@ -82,20 +82,25 @@ python3 scripts/read_session.py
 ```
 
 ```
-  13 turns  demo13-run8
-   8 turns  demo20-run11
-   3 turns  session-demo
+  13 turns  example-session-1
+   8 turns  example-run-1
+   3 turns  example-session-2
 ```
+
+Those names are whatever `conversation_id` your client sent, so your own list
+will look nothing like this one. Every sample on this page — session names,
+turns, span attributes — is transcribed from a development instance to show
+the shape of the output, not values to expect.
 
 ### Read one
 
 ```bash
-python3 scripts/read_session.py demo20-run11
-python3 scripts/read_session.py demo20-run11 --replies   # include the answers
+python3 scripts/read_session.py example-run-1
+python3 scripts/read_session.py example-run-1 --replies   # include the answers
 ```
 
 ```
-demo20-run11 — 8 turns
+example-run-1 — 8 turns
 
 1. "show me black dresses in a size 2"
    skill  /shopper/product-discovery/SKILL.md
@@ -130,8 +135,8 @@ The most useful thing this enables. Replay the same journey twice and diff the
 shape rather than the prose:
 
 ```bash
-diff <(python3 scripts/read_session.py demo20-run11) \
-     <(python3 scripts/read_session.py demo20-run12)
+diff <(python3 scripts/read_session.py example-run-1) \
+     <(python3 scripts/read_session.py example-run-2)
 ```
 
 A turn that changed which skill it loaded, or stopped calling the resolver, is
@@ -170,10 +175,10 @@ was struggling, and the tool results between them say why.
 **"Which skill was loaded, and what did the agent do?"** — the `turn` span:
 
 ```
-conversation.id                  demo20-run11
-session.id                       demo20-run11
+conversation.id                  example-run-1
+session.id                       example-run-1
 metadata.skills                  ["/shopper/cart-management/SKILL.md"]
-metadata.tools                   ["activate_shopper_skills_tool", "add_cart_items_tool"]
+metadata.tools                   ["activate_shopper_skills_tool", "resolve_conversation_products_tool", "add_cart_items_tool"]
 metadata.tool_calls              3
 metadata.tool_calls_rejected     0
 metadata.products_shown          0
@@ -196,11 +201,51 @@ model had in front of it. This is how you tell "the model ignored the rule" from
 For `search_catalog_tool` that is the scopes it searched and the products that
 came back; for `add_cart_items_tool`, exactly what went into the cart.
 
+Reading those two together separates three failures that look identical from
+the reply alone. When a search comes back empty: arguments that match what the
+shopper asked for mean the catalog genuinely has no such product and the
+assistant was right; arguments carrying a constraint the shopper never gave
+mean the agent invented one and the empty result is its own doing; arguments
+that are right next to a result that *has* products mean the reply lost them,
+which is a grounding failure rather than a retrieval one.
+
 **"Why was a tool call refused?"** — the rejected call is in
 `metadata.diagnostics_json` with a `rejection_reason`
 (`duplicate_catalog_scope`, `skill_activation_required`, `repair_scope_changed`).
 The refusal is deliberate: those gates exist so a wrong tool call cannot become
 a wrong answer.
+
+### When guardrails ran
+
+With guardrails enabled, the turn also carries a `guardrails.decision` span per
+stage — one before the agent runs, one after it writes the reply:
+
+```
+guardrails.stage                 input
+guardrails.policy                configured
+guardrails.status                allow
+guardrails.modalities            text,image
+guardrails.latency_ms            118.4
+guardrails.failure_code          (absent unless the check failed)
+```
+
+`guardrails.status` is the one to read. `allow` and `block` are the guard
+model's verdict. **`error` is not a verdict** — it means the check could not be
+completed, and it is reported separately precisely so a provider outage never
+reads as a shopper writing something unsafe. When you see `error`,
+`guardrails.failure_code` says what went wrong, and whether the turn stopped
+depends on `GUARDRAILS_FAILURE_MODE` rather than on the decision.
+
+Note what the span does *not* carry: no shopper text, no attachment. Only the
+decision and its shape, so these spans stay safe to keep and to share.
+
+Two other places show the same turn from a different angle. `timings` on the
+turn holds `safety_input` and `safety_output`, which is the wall-clock cost of
+guardrails and the number to quote when someone asks what they cost. And
+`model_usage` gains a row per guard role that ran — `content_safety`,
+`topic_control`, `multimodal_safety` — each with its call count and a `failed`
+status when the role could not be reached. A guard role showing `failed` while
+the turn still completed means the deployment is running `GUARDRAILS_FAILURE_MODE=open`.
 
 ### Worked example: "it added the wrong product"
 
@@ -227,7 +272,7 @@ Phoenix's UI is usually faster, but a trace can be pulled whole:
 ```bash
 curl -s 'localhost:6006/v1/projects/default/spans?limit=1000' | python3 -c "
 import sys, json
-SESSION, TURN = 'demo20-run11', 2
+SESSION, TURN = 'example-run-1', 2
 rows = json.load(sys.stdin)['data']
 turns = sorted((r for r in rows
                 if r['attributes'].get('session.id') == SESSION and r['name'] == 'turn'),
@@ -281,8 +326,10 @@ diagnostics; the LangChain instrumentation came free with the framework; Relay
 was added to evaluate it. They overlap, and the overlap is mostly harmless
 because they answer different questions.
 
-The uncomfortable part is that **Relay is an agent runtime being used as a
-tracing library**, which is not what it is for.
+The fit is worth being explicit about: **Relay is a full agent runtime**, and
+here it is asked to act as a tracing library for an agent that runs on
+LangGraph. Nearly everything below follows from that mismatch rather than from
+any shortcoming in Relay.
 
 ### What Relay actually is
 
@@ -345,28 +392,27 @@ above, with Relay on in `.env.example` and off in `docker-compose.yaml`.
 
 ## What Relay gives you, and what it costs
 
-Relay is the third and optional producer. The first two — the `turn` span this
-service writes, and `openinference-instrumentation-langchain` — are always on
-and answer *what happened*. Relay answers *what the agent was thinking while it
-happened*: the prompt as sent, the completion as returned, which skill was
-selected, which subagent ran, and every tool call with its arguments and result.
+Relay is the third and optional producer. On this architecture it overlaps
+heavily with the two that are already on, so it is worth knowing what is left
+over before enabling it.
 
-The practical difference, on a turn that went wrong:
+Most of what people reach for Relay to see is already there.
+`openinference-instrumentation-langchain` carries the prompt exactly as sent,
+the arguments of every tool call, and what each tool returned — that
+is what [the four questions](#the-four-questions-and-where-each-is-answered)
+above read out of Phoenix, and what `scripts/read_session.py` and
+`notebook/trace_capture.py` consume to rebuild whole conversations offline.
+Which skill fired is on the `turn` span as `metadata.skills`.
 
-| question | without Relay | with Relay |
-|---|---|---|
-| Which tools ran, in what order | yes | yes |
-| How long each took | yes | yes |
-| **What arguments the tool was called with** | no | **yes** |
-| **What the tool returned** | no | **yes** |
-| **The exact prompt the model saw** | no | **yes** |
-| **Which skill the agent selected and why** | partly | **yes** |
+What Relay adds on top is per-call detail from the agent runtime: one span per
+LLM call named for the model, carrying token counts and finish reason, plus
+`mark:` lifecycle events. It does not add the prompt, the tool arguments, the
+tool results, or the skill; for the last of those the `turn` span stays the
+better source, for the reasons in
+[What Relay does not give you here](#what-relay-does-not-give-you-here).
 
-That is the difference between "the search returned nothing" and "the search was
-asked for `taxonomy_level_2=dresses` with `primary_color=red`, and the catalogue
-has no red dress".
-
-**What it costs.** It is not free and it is not merely additive:
+**What it costs.** Enabling it is a deliberate choice rather than a free
+addition:
 
 - It sees prompts, completions and cart contents. That is shopper data leaving
   the process; it belongs in a backend you control.
@@ -374,41 +420,15 @@ has no red dress".
   `langchain-google-genai`, and pins `deepagents<0.7.0` -- so taking it means
   not taking a deepagents 0.7 upgrade until that pin moves.
 - It adds a second OTLP exporter to the process.
+- It attaches through middleware, which sits in the execution path rather than
+  beside it. The runtime guards that seam — see below.
 
-**Leave it off for normal running.** Turn it on to study a specific problem,
-then turn it off. It is not a monitoring tool — it produces one detailed trace
-per turn, not metrics.
-
-### Worked example: a shopper says the assistant found nothing
-
-The shopper asked for red dresses under $100 and was told the shop has none.
-Is that true, or did the search go wrong?
-
-**1. Turn Relay on and reproduce the turn** — the two commands are under
-[Adding NeMo Relay](#adding-nemo-relay) below. You are ready when the log says:
-
-```
-Relay tracing enabled, exporting to http://otel-collector:4318
-```
-
-**2. Open Phoenix** at `http://localhost:6006` and find the conversation. Each
-turn is one `turn` span; Relay's events nest under it, so the whole turn reads
-top to bottom in one place.
-
-**3. Open the `search_catalog_tool` call** and read its arguments. This is the
-thing you cannot see any other way. You are looking for the difference between
-three quite different failures:
-
-- The arguments match what the shopper asked for, and the result is genuinely
-  empty → the catalogue has no red dress. The assistant was right.
-- The arguments carry a constraint the shopper never gave → the agent invented
-  one, and the empty result is its own doing.
-- The arguments are right, the result has products, and the reply says
-  otherwise → a grounding failure between the tool and the answer.
-
-**4. Turn it back off** when you have your answer. Set both back to `false`
-in your `.env`, then rebuild -- the image itself should stop carrying a library
-that can export prompts and cart contents, not merely stop using it:
+**Leave it off for normal running.** Turn it on to study the agent runtime
+itself, then turn it off. It is not a monitoring tool — it produces one
+detailed trace per turn, not metrics. Turning it off means setting both
+variables back to `false` and rebuilding, so that the image stops carrying a
+library that can export prompts and cart contents rather than merely not using
+it:
 
 ```bash
 source .env
@@ -416,26 +436,26 @@ docker compose build chain-server
 docker compose up -d chain-server
 ```
 
-### Why Relay can affect a turn at all, and what stops it
+### How Relay attaches, and why the runtime guards that seam
 
-A tracing tool should not be able to change what it is tracing. The other
-producer here cannot: `openinference-instrumentation-langchain` registers a
-**callback handler**, so LangChain tells it what happened. It is informed, never
-asked. That is why it costs one line and needs no guards.
+The two producers attach in different ways, and the difference is what the
+guard below is about.
 
-Relay attaches differently. Its DeepAgents integration hooks LangGraph
-**middleware** -- `wrap_model_call` and `wrap_tool_call` -- which are execution
-wrappers, not listeners. The agent hands the wrapper a request and takes back
-whatever the wrapper returns. So Relay receives the call, decides what the
-handler is given, and decides what the agent is told came back: three chances to
-change an outcome it is only supposed to record.
+`openinference-instrumentation-langchain` registers a **callback handler**:
+LangChain tells it what happened. It is informed rather than asked, which is
+why it costs one line and needs no guards.
 
-This is not a criticism of tracing. It follows from Relay being an agent runtime
-used as a tracing library, where middleware is the only seam available.
+Relay attaches through LangGraph **middleware** -- `wrap_model_call` and
+`wrap_tool_call` -- which are execution wrappers rather than listeners. The
+agent hands a wrapper the request and takes back whatever the wrapper returns,
+so anything on that seam sits in the path of the call: it sees the request,
+determines what the handler receives, and determines what the agent is told
+came back. That is a property of the seam itself, and it is the seam Relay's
+DeepAgents integration has available on an agent it does not run.
 
-One of those chances was taken. Relay's tool wrapper re-encoded the arguments
-and handed the tool a copy in which every unset optional had become an explicit
-null, so a search the model sent as:
+One consequence showed up in practice. Relay's tool wrapper re-encoded the
+arguments and handed the tool a copy in which every unset optional had become
+an explicit null, so a search the model sent as:
 
 ```json
 {"requested_product_type": "dress"}
@@ -452,9 +472,9 @@ own call and the turn answered *"I couldn't complete a valid catalog search"*.
 Measured on journey J01: two failures with tracing on, five passes with it off,
 on the same image, differing only by `RELAY_ENABLED`.
 
-`_relay_may_observe_but_not_decide` in `runtime/runtime.py` removes the vote
-rather than fixing the one path. Three things hold whatever Relay does,
-including raising:
+`_relay_may_observe_but_not_decide` in `runtime/runtime.py` addresses the seam
+rather than that one path, so the whole class of difference cannot recur.
+Three things hold whatever a wrapper does, including raising:
 
 - the handler is called with the request that arrived, not a copy;
 - it is called **exactly once**, so a wrapper that retries cannot double a cart
@@ -533,11 +553,11 @@ It also brings its own dependency set -- `langchain-anthropic`,
 `langchain-google-genai`, `langchain-protocol` -- which a default image has no
 use for.
 
-### Checking that Relay is doing its job
+### Checking that Relay is running
 
-Traces appearing does not mean Relay is working — the LangChain instrumentation
-produces them alone, so a broken Relay looks exactly like a working one until
-you count.
+Traces appearing does not confirm Relay is running: the LangChain
+instrumentation produces them on its own, so Relay being inactive looks the
+same as Relay working until you count its spans.
 
 **1. It started.** `docker logs chain-server | grep -i relay`
 
@@ -546,7 +566,7 @@ you count.
 | `Relay tracing enabled, exporting to …` | Subscriber registered. |
 | `nemo-relay is not installed` | Image built without `INSTALL_RELAY=true`. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT is not` | Flag on, nowhere to send. |
-| `did not preserve our middleware order`<br>`dropped … from the agent arguments` | **A new Relay release changed the agent.** Tracing is off and the shop is running on its original arguments. Do not upgrade past this without reading the wrapper. |
+| `did not preserve our middleware order`<br>`dropped … from the agent arguments` | **A newer Relay release changed the arguments in a way the guard did not expect.** Tracing is off and the shop is running on its original arguments. Re-check the wrapper before adopting that version. |
 | nothing at all | `RELAY_ENABLED` never reached the container. Check `docker compose config`. |
 
 **2. Its spans arrive.** Send a turn, wait for the batch, count by producer —
@@ -588,10 +608,10 @@ RELAY_ENABLED=true python3 -m tests.evaluation.src.replay --label relay-on --onl
 
 ### The guarantee
 
-An observability layer that can quietly change the agent is worse than no
-tracing. `add_nemo_relay_integration` is handed the arguments for
-`create_deep_agent` and returns them modified, so the runtime **checks the
-result rather than trusting it**:
+Observability should not be able to change what it observes, so the integration
+is verified rather than assumed. `add_nemo_relay_integration` is handed the
+arguments for `create_deep_agent` and returns them modified, so the runtime
+**checks the result rather than trusting it**:
 
 - every argument that went in must come back
 - no argument other than `middleware` may be replaced
@@ -613,14 +633,15 @@ it, because they are emitted where the scope stack does not follow. Relay ships
 `propagate_scope_to_thread` for that, but it would have to be applied inside
 Relay's own middleware rather than in code we own.
 
-**It cannot tell you which skill fired.** Its DeepAgents integration reports
+**It does not report which skill fired.** Its DeepAgents integration reports
 skills from a `skills=` argument to `create_deep_agent` that this service does
 not pass — skills reach the agent through the filesystem backend and a gate
 middleware. So its mark arrives with an empty list and `orphan: true`.
 `metadata.skills` on the `turn` span remains the answer.
 
-Both of these follow from the design section above: Relay is being used outside
-its own runtime.
+Both follow from the design section above: Relay's model and tool events are
+emitted outside the scope stack it would normally own, because the agent runs
+on LangGraph rather than on Relay.
 
 ---
 

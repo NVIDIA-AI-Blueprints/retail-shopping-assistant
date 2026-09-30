@@ -1,9 +1,9 @@
 # Monitoring
 
 Prometheus + Grafana for the locally deployed LLM, plus a per-container resource
-exporter. This directory is the **observability stack** only — the tools that
-generate load and take measurements live in
-[`benchmarks/`](../benchmarks/README.md).
+exporter. This directory is the **observability stack** only — measuring the
+application is
+[Notebook 5](../notebook/5_Performance_Measurement.ipynb).
 
 See [`docs/PERFORMANCE.md`](../docs/PERFORMANCE.md) for how to measure this
 application and how to read what comes back. This file covers only how the
@@ -27,8 +27,9 @@ metrics that vLLM exposes and a hosted endpoint does not.
 
 Needs nothing beyond Python 3 and Docker.
 
-To put traffic through the system so the panels have something to show, see
-[`benchmarks/`](../benchmarks/README.md) — `bench.sh load` is the quickest.
+To put traffic through the system so the panels have something to show, send a
+few turns through the app, or work through
+[Notebook 5](../notebook/5_Performance_Measurement.ipynb).
 
 ## How it is wired
 
@@ -97,8 +98,8 @@ filter can point at a name that produces no data, leaving every panel silently
 blank. Check the dropdown at the top.
 
 **`vllm:kv_cache_usage_perc` is a gauge, not a counter.** It reads 0 at idle and
-is only meaningful when sampled during load, which is why the sweep in
-`benchmarks/` polls it twice a second rather than reading it afterwards.
+is only meaningful when sampled during load, so poll it while traffic is
+running rather than reading it afterwards.
 
 **A missing exporter looks like a real zero.** If a job is `down`, the panels it
 feeds draw nothing rather than erroring. Check `./dashboard.sh status` lists all

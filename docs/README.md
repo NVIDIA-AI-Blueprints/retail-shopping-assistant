@@ -1,243 +1,154 @@
 # 📚 Documentation Hub
 
-Welcome to the Retail Shopping Assistant documentation! This hub provides comprehensive guides and references for users, developers, and administrators.
+Guides and references for the Retail Shopping Assistant, for shoppers using the
+app, developers deploying it, and contributors changing it.
 
-## 📋 Quick Navigation
+New here? Read the [project README](../README.md) for what the blueprint is and
+what it does, then come back and pick a path below.
 
-### 🚀 Getting Started
-- **[Main README](../README.md)** - Project overview and quick start
-- **[User Guide](USER_GUIDE.md)** - How to use the application
-- **[Deployment Guide](DEPLOYMENT.md)** - Installation and setup instructions
+## Choose a deployment path
 
-### 🔧 Technical Documentation
-- **[API Documentation](API.md)** - Complete API reference
-- **[Catalog Schema and Filters](CATALOG_FILTERS.md)** - Declaring JSONL field roles without static catalog values
-- **[Catalog Architecture](CATALOG_REFACTOR_PLAN.md)** - Start here for JSONL ingestion, advertised capabilities, agent discovery, and validated retrieval
-- **[Commerce Contracts](COMMERCE_CONTRACTS.md)** - Internal product, cart, and commerce tool contracts
-  - **[Observability](OBSERVABILITY.md)** - Study a shopper's session, and dig into why a turn did what it did
-  - **[Performance](PERFORMANCE.md)** - Measure where a turn spends its time, find the saturation point, and size a deployment
-- **[Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md)** - Published catalog, turn flow, skill-to-tool mapping, and memory boundaries
-- **[Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md)** - Executive request flow, memory ownership, worked example, and prioritized next steps
-- **[Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md)** - Registered Deep Agents tools for the shopper-serving agent
-- **[Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md)** - Registered Deep Agents skills and tuning loop for shopper-facing behavior
-- **[Deep Agents Migration Plan](DEEP_AGENTS_MIGRATION_PLAN.md)** - SDK migration, session isolation, tools, skills, and scaling notes
-- **[Deep Agents Cart Tool Goal](DEEP_AGENTS_CART_TOOL_GOAL.md)** - Minimal cart-tool smoke gate and constraints
-- **[Architecture Overview](../README.md#architecture)** - System design and components
-- **[Configuration Guide](../README.md#configuration)** - Settings and customization
+The blueprint runs against either NVIDIA-hosted model endpoints or models you
+host yourself. Everything else about the deployment is identical, so pick on the
+basis of whether you have GPUs.
 
-### 🛠️ Development & Operations
-- **[Troubleshooting](../README.md#troubleshooting)** - Common issues and solutions
-- **[Customization](../README.md#customization)** - Modifying the application
-- **[Contributing](../README.md#contributing)** - Development guidelines
+| Path | What it needs | Start at |
+|------|---------------|----------|
+| **NVIDIA-hosted endpoints** | An API key, no GPU | [Deployment Guide - Hosted Endpoints](DEPLOYMENT.md#-hosted-endpoints) |
+| **Self-hosted models (vLLM)** | GPUs, plus a Hugging Face token for gated checkpoints | [Deployment Guide - Locally Hosted Models](DEPLOYMENT.md#-locally-hosted-models) |
+| **Managed cloud GPU** | An NVIDIA Brev account | [Deploy on Brev](BREV.md) |
 
-## 📖 Documentation Index
+The self-hosted path is a hybrid: the language and text-embedding models move
+onto your GPUs, while image embedding and the guardrail models stay on hosted
+endpoints. [Deployment Options](DEPLOYMENT.md#%EF%B8%8F-deployment-options)
+explains which roles can move and which cannot.
 
-### For End Users
+## Where to go by role
 
-| Document | Description | Audience |
-|----------|-------------|----------|
-| [User Guide](USER_GUIDE.md) | Complete guide to using the shopping assistant | End users, customers |
-| [Main README](../README.md#usage-examples) | Quick usage examples and sample prompts | New users |
-| [FAQ](USER_GUIDE.md#faq) | Frequently asked questions | All users |
+**I want to use the assistant.** Start with the [User Guide](USER_GUIDE.md) for
+the chat interface, product search, cart, and image upload, and check the
+[FAQ](USER_GUIDE.md#-faq) if something is unclear.
 
-### For Developers
+**I want to turn on safety checks.** [Guardrails](GUARDRAILS.md) covers the
+whole feature: how it decides, what a failed check costs, what the shopper
+sees, and how to read a decision afterwards. It ships off.
 
-| Document | Description | Audience |
-|----------|-------------|----------|
-| [API Documentation](API.md) | Complete API reference with examples | Developers, integrators |
-| [Catalog Schema and Filters](CATALOG_FILTERS.md) | Configure data-derived filters with a catalog role sidecar | Developers, operators |
-| [Catalog Architecture](CATALOG_REFACTOR_PLAN.md) | Understand the end-to-end ingest, capability advertisement, agent discovery, and validated retrieval flow | Developers, architects |
-| [Commerce Contracts](COMMERCE_CONTRACTS.md) | Internal product, cart, and commerce tool contracts | Developers, architects |
-| [Observability](OBSERVABILITY.md) | Read a conversation turn by turn, open one turn's trace, and find what the model was told | Developers, operators, evaluators |
-| [Performance](PERFORMANCE.md) | Measure the latency budget of a turn, sweep the LLM to saturation, and size concurrent shoppers on given hardware | Developers, operators, architects |
-| [Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md) | Understand the published catalog, turn flow, skill-to-tool mapping, and memory boundaries | Developers, architects |
-| [Shopper Agent Leadership Note](SHOPPER_AGENT_LEADERSHIP_NOTE.md) | Understand the executive flow, state ownership, worked example, and next architecture priorities | Senior leaders, architects, product owners |
-| [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md) | Registered Deep Agents tools, risk classes, and skill access boundaries for the shopper-serving agent | Developers, architects, evaluators |
-| [Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md) | Registered Deep Agents skills, runtime loading, and markdown tuning workflow for shopper-facing behavior | Developers, architects, evaluators |
-| [Deep Agents Migration Plan](DEEP_AGENTS_MIGRATION_PLAN.md) | SDK migration, session isolation, tools, skills, and scaling notes | Developers, architects |
-| [Deep Agents Cart Tool Goal](DEEP_AGENTS_CART_TOOL_GOAL.md) | Minimal cart-tool smoke gate and constraints | Developers, evaluators |
-| [Deployment Guide](DEPLOYMENT.md) | Installation and deployment instructions | DevOps, system administrators |
-| [Architecture Overview](../README.md#architecture) | System design and component details | Architects, developers |
-| [Configuration Guide](../README.md#configuration) | Settings and customization options | Developers, administrators |
-| [Testing and Evaluation](../tests/README.md) | Unit, integration, and Challenger/Judge evaluation workflows | Developers, evaluators |
+**I want to deploy it.** Work through the [Deployment Guide](DEPLOYMENT.md) end
+to end. It owns prerequisites, both deployment paths, every configuration
+setting, and troubleshooting. Then set up
+[Observability](OBSERVABILITY.md) so you can see what a turn actually did.
 
-### For Administrators
+**I want to call it from my own client.** The [API Reference](API.md) has the
+request and response contracts, the streaming event framing, and per-service
+endpoints.
 
-| Document | Description | Audience |
-|----------|-------------|----------|
-| [Deployment Guide](DEPLOYMENT.md) | Production deployment instructions | System administrators |
-| [Troubleshooting](../README.md#troubleshooting) | Common issues and solutions | Support teams, administrators |
-| [Monitoring](../README.md#monitoring) | Health checks and monitoring | Operations teams |
-| [Security](../README.md#security) | Security considerations | Security teams |
+**I want to change how the agent behaves.** Read
+[Assistant Architecture](ASSISTANT_ARCHITECTURE.md) for the turn flow,
+then [Skills](SKILLS.md) and
+[Tools](TOOLS.md) for what the agent can load and
+call. [AGENTS.md](../AGENTS.md) is the contributor and coding-agent guide to the
+codebase layout.
 
-## 🎯 Quick Start Paths
+**I want to use my own product catalog.**
+[Catalog Architecture](CATALOG_ARCHITECTURE.md) covers the data format, the
+sidecar that declares which fields become shopper-facing filters, and the
+reindex-and-verify sequence.
 
-### I'm a New User
-1. **[User Guide](USER_GUIDE.md)** - Learn how to use the application
-2. **[Main README](../README.md)** - Understand what the application does
-3. **[FAQ](USER_GUIDE.md#faq)** - Find answers to common questions
+**I want to run it faster, or size it for load.** [Performance](PERFORMANCE.md)
+covers the latency budget of a turn, finding the saturation point, and sizing
+hardware.
 
-### I'm a Developer
-1. **[Main README](../README.md)** - Project overview and architecture
-2. **[Shopper Agent Architecture](SHOPPER_AGENT_ARCHITECTURE.md)** - Understand the serving agent boundaries
-3. **[API Documentation](API.md)** - Understand the API
-4. **[Deployment Guide](DEPLOYMENT.md)** - Set up development environment
-5. **[Testing and Evaluation](../tests/README.md)** - Run tests and evaluator workflows
-6. **[Configuration Guide](../README.md#configuration)** - Customize the application
+## Document index
 
-### I'm Deploying to Production
-1. **[Deployment Guide](DEPLOYMENT.md)** - Production deployment instructions
-2. **[Architecture Overview](../README.md#architecture)** - Understand system requirements
-3. **[Troubleshooting](../README.md#troubleshooting)** - Common deployment issues
-4. **[Monitoring](../README.md#monitoring)** - Set up monitoring and alerts
+### Deploy and operate
 
-## 🔍 Search Documentation
+| Document | What it covers |
+|----------|----------------|
+| [Deployment Guide](DEPLOYMENT.md) | Prerequisites, both deployment paths, production deployment, the full configuration reference, monitoring, troubleshooting, security, and scaling |
+| [Deploy on Brev](BREV.md) | Step-by-step deployment to a managed NVIDIA Brev GPU instance |
+| [Guardrails](GUARDRAILS.md) | The optional safety layer: the three judges, failure modes, configuration, what the shopper sees, and the service API |
+| [Observability](OBSERVABILITY.md) | Reading a shopper's session turn by turn, opening one turn's trace, and finding what the model was told |
+| [Performance](PERFORMANCE.md) | Latency budget, load methodology, vLLM saturation, and deployment sizing |
+| [Monitoring stack](../monitoring/README.md) | Prometheus and Grafana for locally hosted model metrics |
+### Build against it
 
-### By Topic
+| Document | What it covers |
+|----------|----------------|
+| [API Reference](API.md) | Endpoints, request and response models, streaming frames, guardrail reporting, and error handling |
+| [UI](../ui/README.md) | React app structure, local development, and build |
 
-#### Product Search
-- [User Guide - Product Search](USER_GUIDE.md#product-search)
-- [API - Product Search Examples](API.md#product-search)
-- [Catalog Schema and Filters](CATALOG_FILTERS.md)
-- [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md)
-- [Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md)
-- [Main README - Usage Examples](../README.md#usage-examples)
+### Use your own catalog
 
-#### Shopping Cart
-- [User Guide - Shopping Cart Management](USER_GUIDE.md#shopping-cart-management)
-- [API - Cart Operations](API.md#shopping-cart-operations)
-- [Shopper Agent Tool Registry](SHOPPER_AGENT_TOOL_REGISTRY.md)
-- [Shopper Agent Skill Registry](SHOPPER_AGENT_SKILL_REGISTRY.md)
-- [Data Models - Cart](API.md#cart)
+| Document | What it covers |
+|----------|----------------|
+| [Catalog Architecture](CATALOG_ARCHITECTURE.md) | The JSONL and sidecar format, declaring field roles so filters derive from data, advertised capabilities, validated retrieval, and replacing catalog data |
 
-#### Media Upload
-- [User Guide - Image Upload Feature](USER_GUIDE.md#image-upload-feature)
-- [API - Multi-modal Input](API.md#multi-modal-input)
-- [Troubleshooting - Image Issues](USER_GUIDE.md#image-upload-fails)
+### Understand and change the agent
 
-#### Deployment
-- [Deployment Guide - Local Deployment](DEPLOYMENT.md#local-deployment)
-- [Deployment Guide - Cloud Deployment](DEPLOYMENT.md#cloud-deployment)
-- [Deployment Guide - Production Deployment](DEPLOYMENT.md#production-deployment)
+| Document | What it covers |
+|----------|----------------|
+| [Assistant Architecture](ASSISTANT_ARCHITECTURE.md) | Published catalog, turn flow, skill-to-tool mapping, and memory boundaries |
+| [Skills](SKILLS.md) | Registered skills, runtime loading, and the markdown tuning workflow |
+| [Tools](TOOLS.md) | Registered tools, risk classes, and per-skill access boundaries |
+| [AGENTS.md](../AGENTS.md) | Service map, turn flow, file layout, and test commands for contributors |
 
-#### Configuration
-- [Main README - Configuration](../README.md#configuration)
-- [Deployment Guide - Configuration](DEPLOYMENT.md#configuration)
-- [API - Environment Variables](API.md#environment-variables)
+### Learn by running
 
-#### Troubleshooting
-- [Main README - Troubleshooting](../README.md#troubleshooting)
-- [User Guide - Troubleshooting](USER_GUIDE.md#troubleshooting)
-- [Deployment Guide - Troubleshooting](DEPLOYMENT.md#troubleshooting)
+| Document | What it covers |
+|----------|----------------|
+| [Notebooks](../notebook/README.md) | Ordered walkthroughs: deploy and explore, observability, evaluation, trace capture, and performance measurement |
+| [Testing and Evaluation](../tests/README.md) | Unit, integration, and Challenger/Judge evaluation workflows |
 
-### By Issue Type
+### Use the assistant
 
-#### Performance Issues
-- [Deployment Guide - Performance Tuning](DEPLOYMENT.md#performance-tuning)
-- [User Guide - Performance Issues](USER_GUIDE.md#performance-issues)
-- [Main README - Limitations](../README.md#limitations)
+| Document | What it covers |
+|----------|----------------|
+| [User Guide](USER_GUIDE.md) | Chat interface, product search, cart management, image upload, troubleshooting, and FAQ |
 
-#### Authentication Issues
-- [Deployment Guide - Authentication Issues](DEPLOYMENT.md#authentication-issues)
-- [API - Authentication](API.md#authentication)
-- [Main README - Prerequisites](../README.md#prerequisites)
+### Project and process
 
-#### Service Failures
-- [Deployment Guide - Service Startup Failures](DEPLOYMENT.md#service-startup-failures)
-- [Main README - Troubleshooting](../README.md#troubleshooting)
-- [Deployment Guide - Recovery Procedures](DEPLOYMENT.md#recovery-procedures)
+| Document | What it covers |
+|----------|----------------|
+| [Project README](../README.md) | Overview, architecture, prerequisites, and quick start |
+| [Contributing](../CONTRIBUTING.md) | Fork and pull request workflow, and sign-off requirements |
+| [Security](../SECURITY.md) | Reporting a security vulnerability |
+| [Changelog](../CHANGELOG.md) | Release history |
 
-## 📝 Documentation Standards
+## Configuration and levers
 
-### Writing Guidelines
+Every setting has exactly one home, and the
+[Deployment Guide](DEPLOYMENT.md) documents all of them:
 
-- **Clear and concise** - Use simple, direct language
-- **Step-by-step instructions** - Break complex processes into numbered steps
-- **Examples** - Include practical examples for all features
-- **Cross-references** - Link related documentation sections
-- **Consistent formatting** - Use consistent headers, code blocks, and tables
+- [Environment Variables](DEPLOYMENT.md#environment-variables) is the full list
+  of variables, what each one does, and its default.
+- [Configuration File](DEPLOYMENT.md#configuration-file) covers the YAML
+  defaults in `shared/configs/`.
+- [Model Routing](DEPLOYMENT.md#model-routing) covers which model serves each
+  role and how to point a role at a different endpoint or a local model.
+- [Model Sampling and Output Limits](DEPLOYMENT.md#model-sampling-and-output-limits)
+  covers temperature and token caps.
+- [Guardrails](GUARDRAILS.md) covers content safety, topic control, and
+  multimodal safety, which ship disabled.
 
-### Code Examples
+Environment variables override the shipped defaults, so you do not have to edit
+YAML to change a setting. An unset or empty variable leaves the default in
+place.
 
-- **Multiple languages** - Provide examples in relevant languages (bash, Python, TypeScript)
-- **Complete examples** - Include full, runnable code snippets
-- **Error handling** - Show proper error handling in examples
-- **Best practices** - Follow language-specific best practices
+## Troubleshooting
 
-### Visual Elements
+| Symptom | Where to look |
+|---------|---------------|
+| A deployment will not start, or a service is unhealthy | [Deployment - Troubleshooting](DEPLOYMENT.md#%EF%B8%8F-troubleshooting) |
+| The app runs but answers look wrong | [Observability](OBSERVABILITY.md) to see what the model was told |
+| Turns are slow | [Performance](PERFORMANCE.md) |
+| Something in the UI misbehaves | [User Guide - Troubleshooting](USER_GUIDE.md#%EF%B8%8F-troubleshooting) |
+| Authentication or API key errors | [Deployment - NVIDIA Account Setup](DEPLOYMENT.md#nvidia-account-setup) |
+| Search returns nothing for your own catalog | [Catalog Architecture - Replace the catalog](CATALOG_ARCHITECTURE.md#replace-the-catalog) |
 
-- **Diagrams** - Use Mermaid diagrams for architecture and flows
-- **Screenshots** - Include relevant screenshots for UI features
-- **Tables** - Use tables for structured information
-- **Icons** - Use emojis and icons for visual organization
+## Getting help
 
-## 🔄 Keeping Documentation Updated
-
-### Documentation Maintenance
-
-- **Regular reviews** - Review documentation monthly
-- **Version updates** - Update docs when features change
-- **User feedback** - Incorporate user questions and feedback
-- **Link validation** - Check and fix broken links regularly
-
-### Contributing to Documentation
-
-1. **Fork the repository**
-2. **Create a feature branch**
-3. **Make your changes**
-4. **Update related documentation**
-5. **Submit a pull request**
-
-### Documentation Structure
-
-```
-docs/
-├── README.md           # This documentation hub
-├── API.md             # API reference
-├── COMMERCE_CONTRACTS.md
-├── SHOPPER_AGENT_ARCHITECTURE.md
-├── SHOPPER_AGENT_LEADERSHIP_NOTE.md
-├── SHOPPER_AGENT_TOOL_REGISTRY.md
-├── SHOPPER_AGENT_SKILL_REGISTRY.md
-├── DEEP_AGENTS_MIGRATION_PLAN.md
-├── DEEP_AGENTS_CART_TOOL_GOAL.md
-├── DEPLOYMENT.md      # Deployment guide
-├── USER_GUIDE.md      # User guide
-└── assets/            # Images and diagrams
-```
-
-## 🆘 Getting Help
-
-### Documentation Issues
-
-If you find issues with the documentation:
-
-1. **Check for updates** - The documentation may have been updated
-2. **Search existing issues** - Look for similar issues in the repository
-3. **Create an issue** - Report documentation problems with specific details
-4. **Suggest improvements** - Propose better explanations or examples
-
-### Technical Support
-
-For technical issues not covered in the documentation:
-
-- **GitHub Issues** - Report bugs and feature requests
-- **GitHub Discussions** - Ask questions and share ideas
-- **Community** - Connect with other users and developers
-
-### Feedback
-
-We welcome feedback on the documentation:
-
-- **Clarity** - Is the documentation clear and easy to understand?
-- **Completeness** - Are all features and use cases covered?
-- **Accuracy** - Is the information correct and up-to-date?
-- **Organization** - Is the documentation well-structured and easy to navigate?
-
----
-
-**Last Updated**: July 2026
-**Version**: 1.0.0  
-**Maintainer**: NVIDIA AI Blueprints Team
-
-For the latest updates, check the [GitHub repository](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant).
+Report bugs and request features through GitHub Issues, and ask questions in
+GitHub Discussions, on the
+[project repository](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant).
+For security vulnerabilities, follow [SECURITY.md](../SECURITY.md) instead of
+filing a public issue.

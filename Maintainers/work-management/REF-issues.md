@@ -9,8 +9,8 @@ Overview of the best practices for creating and updating issues for __PROJECT_NA
 Community | Developers
 
 ### See also
-- [Contributing Code]({CONTRIBUTING.md})
-- [Pull Requests]({maintainers/work-management/prs.md})
+- [Contributing Code](../../CONTRIBUTING.md)
+- [Pull Requests](REF-prs.md)
 
 ## Create an issue
 
@@ -37,7 +37,7 @@ There may also be:
 
 If you have an issue which truly is not one of the above, you can select `Open a regular issue`. During triage, the team may ask the filer to resubmit the issue as a template if found to be incorrecly un-templated.
 
-Consider adding https://github.com/jarmak-nv/rapids-repo-template/labels/good%20first%20issue or https://github.com/jarmak-nv/rapids-repo-template/labels/help%20wanted labels to the issue if applicable.
+Consider adding https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/labels/good%20first%20issue or https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/labels/help%20wanted labels to the issue if applicable.
 
 ## Format
 

@@ -147,7 +147,6 @@ location.
 
 Start with:
 
-- `evaluation/PLAN.md`: design and first implementation slice.
 - `evaluation/eval_config.yaml`: non-secret environment variable references
   for Challenger and Judge models.
 - `evaluation/judge_rules.md`: optional qualitative scoring rubric.

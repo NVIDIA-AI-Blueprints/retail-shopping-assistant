@@ -84,11 +84,13 @@ All services communicate via HTTP REST APIs:
 
 **Purpose**: Main orchestrator using `DeepAgentsRuntime` and registered catalog,
 product-detail, and cart tools. The older planner/retriever/cart/chatter graph
-remains only as a compatibility path and is not used by the serving API.
+has been removed; `runtime/runtime.py` is the only serving path.
 
 **Key Files**:
 - `main.py`: FastAPI application with streaming endpoints
-- `deepagents_runtime.py`: Serving assistant loop, tool registry, grounding, and memory lifecycle
+- `runtime/runtime.py`: Serving assistant loop, tool registry, grounding, and memory lifecycle
+- `tools/`: Registered tool implementations, and the skill grant gate
+- `guardrails.py`: Client for the isolated guardrail service
 - `catalog_capabilities.py`: Process-lifetime catalog contract cache and compact prompt projection
 - `catalog_request.py`: Deterministic required-constraint validation
 - `catalog_execution.py`: Pure mapping from validated plans to catalog requests
@@ -445,19 +447,19 @@ python scripts/model_config.py deploy --build
 ### Critical Files for Understanding
 
 **Architecture & Orchestration**:
-- `chain_server/src/graph.py`: LangGraph definition
+- `chain_server/src/runtime/runtime.py`: Deep Agents serving loop
 - `chain_server/src/main.py`: Main API application
 - `docker-compose.yaml`: Service orchestration
 
-**Agent Implementations**:
-- `chain_server/src/planner.py`: Query routing logic
-- `chain_server/src/cart.py`: Cart management agent
-- `chain_server/src/retriever.py`: Product search agent
-- `chain_server/src/chatter.py`: Response generation
+**Tool Implementations**:
+- `chain_server/src/tools/catalog.py`: Product search tools
+- `chain_server/src/tools/cart.py`: Cart read and mutation tools
+- `chain_server/src/tools/skills.py`: Skill activation
+- `chain_server/src/tools/skill_gate.py`: Grant enforcement at dispatch
 
 **Data Models**:
 - `chain_server/src/agenttypes.py`: Core data structures
-- `chain_server/src/functions.py`: LLM function definitions
+- `chain_server/src/runtime/prompts.py`: Prompt assembly
 
 **Service Implementations**:
 - `catalog_retriever/src/main.py`: Vector search API

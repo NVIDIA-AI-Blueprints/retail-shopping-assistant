@@ -40,7 +40,7 @@ The runner:
 
 ## Unit Tests
 
-The unit suite lives under `tests/unit` and is offline. It should not require Docker, Milvus, NIMs, guardrails services, or network calls.
+The unit suite lives under `tests/unit` and is offline. It should not require Docker, Milvus, model endpoints, guardrails services, or network calls.
 
 If Python dev dependencies are missing, install them into the repo-local dev venv:
 

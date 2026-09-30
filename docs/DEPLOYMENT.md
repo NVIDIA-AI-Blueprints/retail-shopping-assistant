@@ -4,10 +4,9 @@
 
 - [Overview](#-overview)
 - [Prerequisites](#-prerequisites)
-- [Fresh Deployment](#-fresh-deployment)
+- [Hosted Endpoints](#-hosted-endpoints)
 - [Deployment Options](#%EF%B8%8F-deployment-options)
-- [Local Deployment](#-local-deployment)
-- [Cloud Deployment](#%EF%B8%8F-cloud-deployment)
+- [Locally Hosted Models](#-locally-hosted-models)
 - [Production Deployment](#-production-deployment)
 - [Configuration](#%EF%B8%8F-configuration)
   - [Model Sampling and Output Limits](#model-sampling-and-output-limits): where each model call's temperature and max tokens are set
@@ -67,12 +66,14 @@ deployed models are vLLM serving Hugging Face checkpoints from
 
 3. **Accept Terms**:
    - Ensure you have access to the NVIDIA Container Registry
-   - For local NIMs, request access to the Nemotron 3.5 Super checkpoint on
+   - For locally hosted models, request access to the Nemotron 3.5 Super checkpoint on
      Hugging Face and create an `HF_TOKEN`
 
-## 🚀 Fresh Deployment
+## 🚀 Hosted Endpoints
 
-This is the shortest path for a new environment with hosted NVIDIA endpoints.
+Every model role runs on an NVIDIA-hosted endpoint, so this needs no GPU. It is
+the shortest path for a new environment, and it is the same whether the machine
+is a laptop or a cloud VM.
 
 ```bash
 git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
@@ -92,7 +93,12 @@ python scripts/model_config.py show --validate
 python scripts/model_config.py deploy --build
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000`. To watch it come up, or to check what is running:
+
+```bash
+docker compose -f docker-compose.yaml ps
+docker compose -f docker-compose.yaml logs -f
+```
 
 The deploy helper resolves models from `shared/configs/models.yaml`, starts
 only locally deployed models referenced by roles with `source: local_model`, and then
@@ -119,9 +125,31 @@ Model routing is per role:
 | `disabled` | Capability is intentionally unavailable | none |
 
 Use `shared/configs/models.yaml` to choose the source for each role. Copy
-`.env.example` to a private env profile such as `.env`, `.env.hosted`, or
-`.env.local-nim`, edit it, then `source` the profile before running validation,
-deployment, or raw Docker Compose commands.
+`.env.example` to a private env profile such as `.env` or `.env.hosted`, or
+`.env.local-models.example` to `.env.local-models` for the self-hosted path,
+edit it, then `source` the profile before running validation, deployment, or
+raw Docker Compose commands.
+
+There are two ways to point a role at a model on this machine, and they differ
+in who starts the container:
+
+| Approach | How | Who starts vLLM |
+|----------|-----|-----------------|
+| Environment overrides | Keep `source: endpoint` and set `LLM_BASE_URL` and friends to the local container, as `.env.local-models.example` does | **You do**, with `docker compose -f docker-compose-model-local.yaml up` |
+| Declared in `models.yaml` | Set `source: local_model` and `local_service: local-llm` | `python scripts/model_config.py deploy` |
+
+The [Locally Hosted Models](#-locally-hosted-models) walkthrough below uses the first
+approach, because it self-hosts without editing a tracked file. The consequence
+is that `scripts/model_config.py deploy` prints "No locally deployed models
+required by models.yaml" and starts only the application: nothing in
+`models.yaml` asked for a local service, so there is nothing for it to start.
+That is correct behavior, not a failure. Start the models yourself first, as
+[Step 4](#step-4-start-the-models-then-the-app) does.
+
+Not every role can move to your own GPUs. Image embedding and the guardrail
+models have no local service defined, so the self-hosted path is a hybrid: the
+language, media and text-embedding roles run locally while those stay on hosted
+endpoints. A fully offline deployment is not possible today.
 
 Image embedding is off by default: catalog indexing populates the text
 collection only, and needs just the text embedding endpoint. Set
@@ -135,7 +163,7 @@ variable through without a default of their own, so an empty value means "not
 set" and the config file decides. Guardrails works the same way, with its
 default in `shared/configs/chain_server/config.yaml`.
 
-## 🏠 Local Deployment
+## 🏠 Locally Hosted Models
 
 Use this only when this machine will serve the models itself. The local setup
 mirrors the hosted default: Nemotron 3.5 Super answers the shopper and reads
@@ -240,48 +268,6 @@ curl http://localhost:8011/ready    # memory: 503 until migrations finish
 curl http://localhost:3000
 ```
 
-## ☁️ Cloud Deployment
-
-### Step 1: Environment Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
-cd retail-shopping-assistant
-
-# Authenticate with NVIDIA Container Registry
-docker login nvcr.io
-# Use oauthtoken as the username and your NGC API key as the password
-
-# Create and source an environment profile for hosted endpoints
-cp .env.example .env.hosted
-$EDITOR .env.hosted
-source .env.hosted
-```
-
-### Step 2: Validate Model Routing
-
-```bash
-python scripts/model_config.py show --validate
-```
-
-### Step 3: Deploy Application
-
-```bash
-# Start application services only
-python scripts/model_config.py deploy --build
-
-# Monitor startup
-docker compose -f docker-compose.yaml logs -f
-```
-
-### Step 4: Verify Deployment
-
-```bash
-# Check service status
-docker compose -f docker-compose.yaml ps
-```
-
 ## 🏭 Production Deployment
 
 ### Kubernetes
@@ -327,6 +313,40 @@ are for whoever writes them.
 
 ## ⚙️ Configuration
 
+### Model Endpoints and API Keys
+
+Seven model roles each have their own endpoint, model name, and key variable, so
+any one of them can be repointed without touching the others. The shipped
+defaults are in `shared/configs/models.yaml`:
+
+| Role | What it does | Default host | Key variable |
+|------|--------------|--------------|--------------|
+| `app_llm` | Answers the shopper and drives tool use | `inference-api.nvidia.com` | `LLM_API_KEY` |
+| `vlm` | Reads photo and video uploads | `inference-api.nvidia.com` | `VLM_API_KEY` |
+| `text_embedding` | Embeds the catalog and text queries | `integrate.api.nvidia.com` | `EMBED_API_KEY` |
+| `image_embedding` | Embeds images for visual search | `integrate.api.nvidia.com` | `EMBED_API_KEY` |
+| `content_safety` | Checks text and images for unsafe content | `integrate.api.nvidia.com` | `RAIL_API_KEY` |
+| `topic_control` | Checks whether a request is on topic | `integrate.api.nvidia.com` | `RAIL_API_KEY` |
+| `multimodal_safety` | Checks video, including embedded audio | `integrate.api.nvidia.com` | `MULTIMODAL_SAFETY_API_KEY` |
+
+**The two hosts issue different keys, and they are not interchangeable.** A key
+that works against `inference-api.nvidia.com` will be rejected by
+`integrate.api.nvidia.com` and vice versa. This is the most common first-deploy
+failure: the language model answers normally while catalog search or guardrails
+return authentication errors, which looks like a broken service rather than a
+key problem. `python scripts/model_config.py show --validate` reports which key
+variables are missing, though it cannot tell whether a present key is the right
+one for its host.
+
+Compose chains sensible fallbacks so a single-key deployment works: `VLM_API_KEY`
+falls back to `NVIDIA_API_KEY`, and `MULTIMODAL_SAFETY_API_KEY` falls back to
+`VLM_API_KEY` and then `NVIDIA_API_KEY`. Set the specific variables when the
+roles live on different hosts.
+
+To repoint a role, set its `*_BASE_URL` and `*_MODEL` variables; the names are
+in the table below. `NGC_API_KEY` is unrelated to inference: it authenticates
+`nvcr.io` image pulls.
+
 ### Environment Variables
 
 A default written as a `config.yaml` key lives only in
@@ -342,8 +362,12 @@ set there; a unit test fails if the two differ, so change both together.
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `NGC_API_KEY` | NVIDIA NGC API key | Yes | - |
+| `NGC_API_KEY` | NVIDIA NGC API key, for `nvcr.io` image pulls only | Only to pull images | - |
+| `NVIDIA_API_KEY` | Fallback inference key for roles whose own key variable is unset | No | - |
 | `LLM_API_KEY` | Language model API key | Yes | - |
+| `LLM_BASE_URL` / `LLM_MODEL` | Shopping agent endpoint and model | No | `models.yaml`: `app_llm` |
+| `TEXT_EMBED_BASE_URL` / `TEXT_EMBED_MODEL` | Catalog text embedding endpoint and model | No | `models.yaml`: `text_embedding` |
+| `IMAGE_EMBED_BASE_URL` / `IMAGE_EMBED_MODEL` | Visual search embedding endpoint and model | No | `models.yaml`: `image_embedding` |
 | `APP_LLM_TEMPERATURE` | Temperature for the shopping agent and grounding editor; see [Model Sampling and Output Limits](#model-sampling-and-output-limits) | No | `config.yaml`: `llm_temperature` |
 | `APP_LLM_FREQUENCY_PENALTY` | Optional frequency penalty for the same calls | No | off |
 | `LLM_MAX_OUTPUT_TOKENS` | Shopping agent output ceiling per call | No | `config.yaml`: `llm_max_output_tokens` |
@@ -366,8 +390,16 @@ set there; a unit test fails if the two differ, so change both together.
 | `GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` | For guarded text-only turns, overlap the first app-model step with input guardrails while holding every tool behind the allow decision. Reduces latency but blocked turns can still incur one app-model request. Media remains sequential | No | `config.yaml`: `guardrails_speculative_main_model_enabled` (off) |
 | `GUARDRAILS_SUPPORTED_MODALITIES` | Modalities enforced by guardrails and advertised to clients | No | `config.yaml`: `guardrails_supported_modalities` |
 | `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` | Shared deadline for the Deep Agents graph and grounding editor before the durable turn fails cleanly | No | `config.yaml`: `deepagents_execution_timeout_seconds` |
+| `DEEPAGENTS_RECURSION_LIMIT` | Maximum model-and-tool rounds in one turn before the graph stops | No | `config.yaml`: `deepagents_recursion_limit` |
+| `GROUNDING_EDITOR_RESERVE_SECONDS` | Slice of the turn deadline held back so the grounding editor can still run after the agent loop | No | `config.yaml`: `grounding_editor_reserve_seconds` |
+| `GROUNDING_REWRITE_ENABLED` | Let the grounding editor rewrite a reply that drifted from tool evidence | No | `config.yaml`: `grounding_rewrite_enabled` |
+| `GROUNDING_REWRITE_MAX_EVIDENCE_CHARS` | Ceiling on the evidence passed to that editor | No | `config.yaml`: `grounding_rewrite_max_evidence_chars` |
 | `EXPOSE_AGENT_DIAGNOSTICS` | Expose detailed agent/tool traces in query responses; enable only behind a trusted operator or evaluation surface | No | `config.yaml`: `expose_agent_diagnostics` (off) |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
+| `CATALOG_RETRIEVER_URL` / `MEMORY_RETRIEVER_URL` | Where the chain server reaches the retrieval services | No | `config.yaml`: `retriever_port`, `memory_port` |
+| `CATALOG_IMAGE_EMBEDDING_ENABLED` | Build image embeddings and the image collection at index time, enabling visual search | No | `catalog_retriever/config.yaml`: `image_embedding_enabled` (off) |
+| `CATALOG_DATA_SOURCE` / `CATALOG_SCHEMA_SOURCE` | Catalog JSONL and schema sidecar paths; see [Catalog Architecture](CATALOG_ARCHITECTURE.md#replace-the-catalog) | No | `catalog_retriever/config.yaml`: `data_source`, `schema_source` |
+| `CATALOG_DB_PORT` | Milvus URI the catalog service connects to | No | `catalog_retriever/config.yaml`: `db_port` |
 | `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-plus-hard-constraint scope executions in one assistant turn; a repeated scope is stopped even when semantic wording changes | No | `config.yaml`: `max_catalog_searches_per_turn` |
 | `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `config.yaml`: `max_product_detail_reads_per_turn` |
 | `CHECKPOINT_STORE` | Deep Agents conversation checkpoint store; currently supports only `memory` | No | `memory` |
@@ -378,21 +410,37 @@ set there; a unit test fails if the two differ, so change both together.
 | `MEMORY_RECENT_TURNS` | Maximum prior context-eligible raw turns returned at the next durable turn start | No | `DEFAULT_RECENT_TURNS_LIMIT` in `memory_retriever/src/conversations.py` |
 | `WEATHER_ENABLED` | Registers the forecast tool with the shopper agent (needs `WEATHER_API_KEY`) | No | `config.yaml`: `weather.enabled` (off) |
 | `WEATHER_API_KEY` | Visual Crossing server-side credential, read indirectly from the variable named by chain-server weather config | Only when directly constructing an enabled weather client | empty |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Where traces are exported; unset disables export. See [Observability](OBSERVABILITY.md) | No | unset |
+| `OTEL_SERVICE_NAME` | Service name traces are attributed to | No | `chain-server` |
+| `RELAY_ENABLED` | Route model calls through NeMo Relay for richer LLM spans | No | `config.yaml`: `relay_enabled` (off) |
+| `RELAY_OTLP_ENDPOINT` | Where the in-container Relay sends its spans | No | `http://127.0.0.1:4318` |
+| `INSTALL_RELAY` | Build argument that installs the Relay dependency into the chain-server image; required before `RELAY_ENABLED` can work | No | `false` |
+| `SHUTDOWN_GRACE_SECONDS` | Time the chain server and memory service drain in-flight turns before exiting | No | image default |
+| `CHAIN_SERVER_RELOAD` | Reload the chain server on source changes; development only | No | off |
+| `MEMORY_DB_USER` / `MEMORY_DB_PASSWORD` / `MEMORY_DB_NAME` | PostgreSQL credentials under the `postgres` Compose profile. **Change these before any shared deployment**; the defaults are `memory` for all three | No | `memory` |
 | `HF_TOKEN` | Hugging Face token with access to the local LLM checkpoint | Local only | - |
 | `HF_CACHE` | Hugging Face cache the locally deployed models download into | Local only | `~/.cache/huggingface` |
+| `LOCAL_LLM_HF_MODEL` | Checkpoint the local vLLM server loads | Local only | `nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026` |
+| `LOCAL_LLM_GPUS` | Comma-separated GPU ids for the local LLM; supply as many as `LOCAL_LLM_TP` | Local only | `0,1,2,3` |
+| `LOCAL_LLM_TP` | Tensor parallel size for the local LLM | Local only | `4` |
+| `LOCAL_LLM_VLLM_IMAGE` | vLLM image serving the local LLM | Local only | `vllm/vllm-openai:v0.30.0` |
+| `LOCAL_EMBED_GPU` | GPU id for the local embedding model | Local only | `4` |
+| `LOCAL_EMBED_VLLM_IMAGE` | vLLM image serving local embeddings | Local only | `vllm/vllm-openai:v0.24.0` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
+| `SHARED_CONFIG_ROOT` | Directory the services read `shared/configs/` from | No | `/app/shared/configs` |
 
 ### Weather Tool
 
-The chain server includes a provider-neutral daily weather client and
+The chain server ships a provider-neutral daily weather client and
 `get_weather_forecast_tool`, with Visual Crossing as the first adapter. It is
-off by default. Enabled, the tool is registered with the shopping agent and
-granted only by the `destination-weather` skill; it forecasts a place the
-shopper named, for dates within the 15-day horizon, at most twice per turn.
-Disabled, it is not registered at all, and startup, health checks, shopper
-turns, and offline tests perform no provider request and require no weather key.
-It has no FastAPI route and no UI of its own.
+**off by default**: disabled, it is not registered at all, and startup, health
+checks, shopper turns, and offline tests make no provider request and need no
+weather key.
+
+Enabled, the tool is granted only by the `destination-weather` skill, forecasts
+a place the shopper named within a 15-day horizon, and runs at most twice per
+turn. It has no FastAPI route and no UI of its own.
 
 The complete non-secret configuration is in
 `shared/configs/chain_server/config.yaml`:
@@ -408,36 +456,23 @@ weather:
   max_range_days: 15
 ```
 
-To enable it, set `WEATHER_ENABLED=true` and provide
-`WEATHER_API_KEY` through an ignored `.env`, the process environment, or the
-deployment secret manager. Compose passes those two variables only to
-`chain-server`; it does not bake a value into an image or expose it to catalog,
-memory, guardrail, UI, or locally deployed model services. The config stores only the
-variable name, never the secret value. Enabling the client without the named
-key fails closed, and no MCP server is required. The local process runner
-enforces the same boundary by removing both weather variables from memory,
-guardrail, catalog, and React process environments while retaining them for the
-chain server.
+To turn it on, set `WEATHER_ENABLED=true` and supply `WEATHER_API_KEY` through
+an ignored `.env`, the process environment, or a secret manager. The config
+stores only the variable *name*, never the value, and enabling the client
+without that key fails closed. Compose passes both variables to `chain-server`
+alone — never to the catalog, memory, guardrail, UI, or local model services —
+and the local process runner enforces the same boundary.
 
-An optional direct provider smoke makes at most one request per invocation:
+`python scripts/weather_smoke.py` makes at most one provider request, for
+checking credentials. It needs `WEATHER_ENABLED`, `WEATHER_API_KEY`, and
+`WEATHER_SMOKE_ZIP` set, and optionally `WEATHER_SMOKE_DATE` or a
+`WEATHER_SMOKE_START_DATE`/`WEATHER_SMOKE_END_DATE` pair. It deliberately
+prints no location, dates, forecast, key, or URL — only outcome category,
+schema validity, and latency. Nothing runs it automatically.
 
-```bash
-python scripts/weather_smoke.py
-```
-
-Before running it, set `WEATHER_ENABLED=true`, `WEATHER_API_KEY`, and
-`WEATHER_SMOKE_ZIP` in the private process environment. Optionally set either
-`WEATHER_SMOKE_DATE` or the complete
-`WEATHER_SMOKE_START_DATE`/`WEATHER_SMOKE_END_DATE` pair. The command prints
-only provider/config label, request mode, window length, outcome category,
-schema validity, and latency. It never prints the ZIP, dates, location,
-forecast, key, URL, provider body, or raw exception. It is not run by startup,
-CI, health checks, or shopper traffic.
-
-The adapter emits normalized daily forecast evidence and attribution metadata
-but persists nothing. Before a later slice displays or stores this evidence,
-operators must confirm the selected Visual Crossing plan's attribution,
-storage, sharing, and uncertainty requirements in the
+The adapter normalizes forecast evidence and persists nothing. Before any later
+work displays or stores it, confirm your Visual Crossing plan's attribution,
+storage, sharing, and uncertainty requirements in its
 [pricing terms](https://www.visualcrossing.com/weather-data-editions/) and
 [service terms](https://www.visualcrossing.com/weather-service-terms/).
 
@@ -561,38 +596,26 @@ The active runtime gets available product filters from the catalog retriever
 after the catalog data is loaded. Do not maintain product categories in
 `shared/configs/chain_server/config.yaml`.
 
-The authoritative guide for this workflow is
-[Catalog Schema and Filters](CATALOG_FILTERS.md). The short version is: the
-JSONL sidecar declares field types and uses, while all values, ranges, coverage,
-and taxonomy scopes are discovered from the ingested rows.
+The sidecar declares field types and uses; every value, range, coverage figure
+and taxonomy scope is discovered from the rows.
 
-#### How to Update Filters
-
-1. **Update Product Data**: Add products or values to the JSONL configured by
-   `shared/configs/catalog_retriever/config.yaml`.
-2. **Declare New Field Meaning**: Only for an entirely new field, add its type
-   and `filter`, `semantic`, and/or `detail` uses to the adjacent schema
-   sidecar. Never add enum values or category applicability rules.
-3. **Restart/Reindex Catalog**: Restart the catalog retriever so it loads the
-   new data and synchronizes its indexes.
-4. **Verify Live Capabilities**: Wait for catalog health, then check
-   `http://localhost:8010/capabilities`.
-5. **Restart Chain Server**: Restart it so it drops the prior
-   process-lifetime cached contract.
-6. **Verify Cached Capabilities**: Check the chain-server aggregate at
-   `http://localhost:8009/capabilities` before serving traffic.
-
-#### Catalog Retriever Configuration
+The deployment-side part is two paths in
+`shared/configs/catalog_retriever/config.yaml`:
 
 ```yaml
-# shared/configs/catalog_retriever/config.yaml
 data_source: "/app/shared/data/enriched_products.jsonl"
 schema_source: "/app/shared/data/enriched_products.schema.yaml"
 ```
 
-The service fingerprint automatically rebuilds indexes when data, sidecar,
-embedding models, image-search state, referenced local image bytes, or the
-semantic template changes.
+Changing either of those, or the embedding model, changes the service
+fingerprint, so the index must be rebuilt by the `catalog-indexer` service. A
+serving container never indexes itself; until the indexer has run it answers
+`/ready` with 503.
+
+For the field-role rules, see
+[Catalog Architecture](CATALOG_ARCHITECTURE.md#the-sidecar). For the
+reindex-and-verify sequence, see
+[Replace the catalog](CATALOG_ARCHITECTURE.md#replace-the-catalog).
 
 ### Model Routing
 
@@ -623,46 +646,24 @@ It can be set to `disabled` when media perception should be off. Image
 embedding search remains controlled separately by the `image_embedding` role
 and `CATALOG_IMAGE_EMBEDDING_ENABLED`.
 
-#### Standard Deployment Flow
+#### Applying a Routing Change
+
+Whichever path you deployed with, these are the two commands to rerun after
+editing `models.yaml`:
 
 ```bash
-python -m pip install --user -r requirements-deploy.txt
-cp .env.example .env
-$EDITOR .env
-source .env
-
 python scripts/model_config.py show --validate
 python scripts/model_config.py deploy --build
 ```
 
-`show --validate` prints the resolved model routing without printing key values.
-It fails if a required API-key variable or endpoint variable is missing.
+`show --validate` prints the resolved routing for every role without printing
+any key value, and fails if a required API-key or endpoint variable is missing.
+`deploy` starts only the local services that roles actually reference, then the
+app stack.
 
-For locally deployed models, source the local profile, which sets the roles' `*_BASE_URL`
-and `*_MODEL` to the local services, and start them before the app, as in
-[Local Deployment](#-local-deployment):
-
-```bash
-source .env.local-models
-docker compose -f docker-compose-model-local.yaml up -d --wait local-llm local-embedding
-python scripts/model_config.py show --validate
-docker compose -f docker-compose.yaml up -d --build
-```
-
-To have `deploy` start them instead, set those roles in
-`shared/configs/models.yaml` to `source: local_model` with `local_service:
-local-llm` or `local-embedding`. Keep the profile sourced: a role's own
-`base_url` and `model` take precedence over the service's.
-
-For a single remote model host in local app-code mode:
-
-```bash
-python skills/retail-local-runner/scripts/local_runner.py configure --nim-host http://HOST
-python skills/retail-local-runner/scripts/local_runner.py start
-```
-
-The local runner writes ignored `.local-run/model-endpoints.env` with the
-derived per-role base URLs.
+Keep the env profile sourced while you do it. A role's own `base_url` and
+`model` win over the local service's, so an unsourced profile quietly routes
+somewhere you did not intend.
 
 #### Adding or Changing Models
 
@@ -690,30 +691,11 @@ models:
     api_key_env: null
 ```
 
-For VLM media perception through a hosted endpoint:
-
-```yaml
-models:
-  vlm:
-    source: endpoint
-    provider: openai_compatible
-    base_url_env: VLM_BASE_URL
-    model_env: VLM_MODEL
-    api_key_env: VLM_API_KEY
-```
-
-Then deploy with:
-
-```bash
-export LLM_BASE_URL=https://your-endpoint/v1
-export LLM_MODEL=your-model-name
-export LLM_API_KEY=...
-python scripts/model_config.py show --validate
-python scripts/model_config.py deploy --build
-```
-
-For locally deployed roles, reference a `local_service` in `models.yaml`. The
-deploy helper starts only those services.
+Every role takes one of those two shapes. Only the variable prefix changes —
+`LLM_`, `VLM_`, `EMBED_`, and so on — so pointing media perception at its own
+hosted endpoint means the same `endpoint` block with `VLM_BASE_URL`,
+`VLM_MODEL`, and `VLM_API_KEY`. Set the variables in the profile you source,
+then rerun the two commands above.
 
 #### Model Sampling and Output Limits
 
@@ -756,28 +738,12 @@ than 1024 tokens.
 
 #### Guardrail Defaults
 
-Guardrails span two services, so a default lives with whichever one reads it.
-`.env.example` and `docker-compose.yaml` only pass these through, empty by
-default, so neither restates a value.
+Guardrails ships disabled and spans two services, so each default lives with
+whichever one reads it. [Guardrails](GUARDRAILS.md) owns that layout, along
+with what a failed check costs and what the shopper is told.
 
-- **Chain server**, which decides whether a turn is guarded and what a failed
-  check costs: edit the `guardrails_` keys in
-  `shared/configs/chain_server/config.yaml`. Compose mounts `shared/`, so
-  restarting `chain-server` picks the change up without a rebuild.
-
-- **Guardrail service**, which decides how the judges run: edit the defaults in
-  `guardrails/src/rails.py`, then rebuild with
-  `docker compose up -d --build rails`. This covers modality coverage, video
-  sampling rate, and whether the input rails run in parallel.
-
-- **Which model each judge calls:** edit the `content_safety`, `topic_control`
-  and `multimodal_safety` roles in `shared/configs/models.yaml`.
-
-`GUARDRAILS_TIMEOUT_SECONDS` is the one setting both services read, so changing
-it for every deployment means editing both places.
-
-To change any of this for one deployment only, set the environment variable in
-the env profile you source; it wins over these defaults.
+The `GUARDRAILS_*` and `RAIL_API_KEY` variables above override those defaults
+for one deployment, as everywhere else here.
 
 ## 📊 Monitoring
 

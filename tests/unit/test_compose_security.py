@@ -85,7 +85,7 @@ def test_weather_environment_template_contains_no_secret() -> None:
 
 
 def test_private_environment_profiles_are_gitignored() -> None:
-    for profile in (".env", ".env.local", ".env.hosted", ".env.local-nim"):
+    for profile in (".env", ".env.local", ".env.hosted", ".env.local-models"):
         result = subprocess.run(
             ["git", "check-ignore", "--quiet", "--no-index", profile],
             cwd=REPO_ROOT,

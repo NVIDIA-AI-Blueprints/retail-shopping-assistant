@@ -39,4 +39,4 @@ List any steps you have taken:
 
 
 -----
-By submitting this issue, you agree to follow our [code of conduct](https://docs.rapids.ai/resources/conduct/) and our [contributing guidelines](https://github.com/jarmak-nv/rapids-repo-template/blob/main/CONTRIBUTING.md).
+By submitting this issue, you agree to follow our [contributing guidelines](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/blob/main/CONTRIBUTING.md).

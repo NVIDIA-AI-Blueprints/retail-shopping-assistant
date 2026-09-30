@@ -17,9 +17,9 @@
 # unchanged -- `docker compose up` still gives one chain-server on 8009, which
 # is what every script and document expects.
 #
-# Replicas get ephemeral host ports. `benchmarks/journey_load.py` finds them, so
-# there is nothing to configure; `docker compose port chain-server 8009 --index 2`
-# is how to find one by hand.
+# Replicas get ephemeral host ports, so a load balancer or test harness has to
+# discover them; `docker compose port chain-server 8009 --index 2` is how to
+# find one by hand.
 #
 # A chain-server holds no state between turns, so replicas need no
 # coordination and no affinity.

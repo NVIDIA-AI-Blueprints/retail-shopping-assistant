@@ -3580,7 +3580,7 @@ class TestDeepAgentsRuntimeRefs:
         registry_path = (
             Path(__file__).resolve().parents[3]
             / "docs"
-            / "SHOPPER_AGENT_TOOL_REGISTRY.md"
+            / "TOOLS.md"
         )
         registry = registry_path.read_text()
         registered_lines = [

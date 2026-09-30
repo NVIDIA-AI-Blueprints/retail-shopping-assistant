@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-A Retriever class that uses two NVIDIA NIM models to retriever relevant products from a database.
+A Retriever class that uses NVIDIA embedding models to retrieve relevant products from a database.
 The first model uses image embeddings to retrieve the most relevant products.
 The second model uses text embeddings to retrieve relevant products.
 Performs both of these in parallel and then re-ranks the results from bothmodels.

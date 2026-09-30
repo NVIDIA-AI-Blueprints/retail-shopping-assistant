@@ -8,10 +8,10 @@
 # Stack is Prometheus + Grafana running vLLM's official dashboard, adapted from
 #   https://github.com/vllm-project/vllm/blob/v0.17.1/examples/online_serving/prometheus_grafana/
 #
-# This script manages the stack. To generate load or take measurements, see
-# ../benchmarks/bench.sh -- kept separate because standing up a scraper and
-# driving traffic through the system are different jobs, and conflating them
-# made it easy to benchmark a deployment nobody had verified.
+# This script manages the stack. To take measurements, see
+# ../notebook/5_Performance_Measurement.ipynb -- kept separate because standing
+# up a scraper and driving traffic through the system are different jobs, and
+# conflating them made it easy to benchmark a deployment nobody had verified.
 #
 # Usage: ./dashboard.sh {up|down|status|urls|logs}
 
@@ -103,7 +103,8 @@ if d: print(d[0]["uid"])
   # An idle dashboard looks exactly like a broken one, so say so here rather
   # than letting someone conclude the stack is broken when it is merely bored.
   printf '\n%sNo traffic yet, so every panel reads zero.%s Drive some:\n' "$BOLD" "$RST"
-  printf '  ../benchmarks/bench.sh load 8 32\n'
+  printf '  send a few turns through the app, or run\n'
+  printf '  ../notebook/5_Performance_Measurement.ipynb\n'
 }
 
 stage_down() {
@@ -162,11 +163,10 @@ case "${1:-up}" in
   urls)   stage_urls ;;
   logs)   shift || true; stage_logs "$@" ;;
   top|load|sweep)
-    die "'$1' moved to ../benchmarks/bench.sh
+    die "'$1' is no longer part of this repository.
 
-  This script manages the monitoring stack. Load generation and measurement
-  live next door:
-    ../benchmarks/bench.sh $1 ${2:-}" ;;
+  This script manages the monitoring stack. For measuring performance, see
+    ../notebook/5_Performance_Measurement.ipynb" ;;
   *)      die "usage: $0 {up|down|status|urls|logs}
 
   up             start Prometheus + Grafana + exporters, wait until scraping
@@ -175,5 +175,5 @@ case "${1:-up}" in
   urls           dashboard URLs and the SSH tunnel command
   logs [n]       container logs
 
-  To generate load or take measurements, see ../benchmarks/bench.sh" ;;
+  To measure performance, see ../notebook/5_Performance_Measurement.ipynb" ;;
 esac

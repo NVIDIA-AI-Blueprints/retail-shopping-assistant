@@ -56,24 +56,6 @@ drops, and the run looks like the best you have ever recorded. Confirm replies
 contain real products before believing any number. This is the single most
 expensive mistake available here.
 
-**The tool-call parser can silently drop calls.** `pythonic` cannot read this
-model's XML-form tool calls, so vLLM returns them as plain assistant text with
-no `tool_calls` and the agent answers without ever searching. Every number
-measured in that state describes a much cheaper application that never used its
-tools. Use `qwen3_coder`, and check a turn really called something:
-
-```bash
-curl -s http://localhost:8009/query/timing -X POST -H 'Content-Type: application/json' \
-  -d '{"user_id":1,"query":"Show me black dresses under $100","session_id":"tool-1"}' \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('agent_diagnostics',{}).get('tool_calls'))"
-```
-
-That needs `EXPOSE_AGENT_DIAGNOSTICS=true`, or the breakdown comes back empty.
-
-**Prefix caching is not on unless you asked.** Unset does not mean default-on;
-vLLM disables it for hybrid attention models. Confirm with
-`curl -s localhost:8000/metrics | grep -o 'enable_prefix_caching="[^"]*"'`.
-
 **`vllm:num_requests_waiting` is the one series that answers "model or code?"**
 Everything else describes the engine's work; waiting sequences separate a
 saturated model from a slow application. A hosted endpoint cannot answer that

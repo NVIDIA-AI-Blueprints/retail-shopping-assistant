@@ -10,8 +10,8 @@ Sessions; this prints it, which is what you want when comparing two runs or
 pasting a turn into a bug report.
 
     python3 scripts/read_session.py                    # list the sessions
-    python3 scripts/read_session.py demo20-run11       # read one
-    python3 scripts/read_session.py demo20-run11 --replies
+    python3 scripts/read_session.py example-run-1      # read one
+    python3 scripts/read_session.py example-run-1 --replies
 
 Reads the ``turn`` span for what the agent did and the ``LangGraph`` span for
 what was said. NeMo Relay's spans are deliberately not read here: only its

@@ -82,20 +82,25 @@ python3 scripts/read_session.py
 ```
 
 ```
-  13 turns  demo13-run8
-   8 turns  demo20-run11
-   3 turns  session-demo
+  13 turns  example-session-1
+   8 turns  example-run-1
+   3 turns  example-session-2
 ```
+
+Those names are whatever `conversation_id` your client sent, so your own list
+will look nothing like this one. Every sample on this page — session names,
+turns, span attributes — is transcribed from a development instance to show
+the shape of the output, not values to expect.
 
 ### Read one
 
 ```bash
-python3 scripts/read_session.py demo20-run11
-python3 scripts/read_session.py demo20-run11 --replies   # include the answers
+python3 scripts/read_session.py example-run-1
+python3 scripts/read_session.py example-run-1 --replies   # include the answers
 ```
 
 ```
-demo20-run11 — 8 turns
+example-run-1 — 8 turns
 
 1. "show me black dresses in a size 2"
    skill  /shopper/product-discovery/SKILL.md
@@ -130,8 +135,8 @@ The most useful thing this enables. Replay the same journey twice and diff the
 shape rather than the prose:
 
 ```bash
-diff <(python3 scripts/read_session.py demo20-run11) \
-     <(python3 scripts/read_session.py demo20-run12)
+diff <(python3 scripts/read_session.py example-run-1) \
+     <(python3 scripts/read_session.py example-run-2)
 ```
 
 A turn that changed which skill it loaded, or stopped calling the resolver, is
@@ -170,8 +175,8 @@ was struggling, and the tool results between them say why.
 **"Which skill was loaded, and what did the agent do?"** — the `turn` span:
 
 ```
-conversation.id                  demo20-run11
-session.id                       demo20-run11
+conversation.id                  example-run-1
+session.id                       example-run-1
 metadata.skills                  ["/shopper/cart-management/SKILL.md"]
 metadata.tools                   ["activate_shopper_skills_tool", "resolve_conversation_products_tool", "add_cart_items_tool"]
 metadata.tool_calls              3
@@ -267,7 +272,7 @@ Phoenix's UI is usually faster, but a trace can be pulled whole:
 ```bash
 curl -s 'localhost:6006/v1/projects/default/spans?limit=1000' | python3 -c "
 import sys, json
-SESSION, TURN = 'demo20-run11', 2
+SESSION, TURN = 'example-run-1', 2
 rows = json.load(sys.stdin)['data']
 turns = sorted((r for r in rows
                 if r['attributes'].get('session.id') == SESSION and r['name'] == 'turn'),

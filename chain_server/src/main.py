@@ -159,6 +159,7 @@ class QueryResponse(BaseModel):
     timings: dict[str, float] = {}
     token_usage: dict[str, int] = Field(default_factory=dict)
     model_usage: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    guardrail_report: dict[str, Any] = Field(default_factory=dict)
     agent_diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -169,6 +170,7 @@ _MODEL_LABELS = {
     "image_embedding": "Image embedding",
     "content_safety": "Content safety",
     "topic_control": "Topic control",
+    "multimodal_safety": "Multimodal safety",
 }
 
 
@@ -286,6 +288,7 @@ async def process_query_timing(request: QueryRequest):
             timings=out_state_dict["timings"],
             token_usage=out_state_dict.get("token_usage", {}),
             model_usage=out_state_dict.get("model_usage", {}),
+            guardrail_report=out_state_dict.get("guardrail_report", {}),
             agent_diagnostics=out_state_dict.get("agent_diagnostics", {}),
         )
         response.timings["total"] = total_time
@@ -349,6 +352,16 @@ async def capabilities():
             "vlm_enabled": config.vlm_enabled,
         },
         "models": _model_capabilities(),
+        "guardrails": {
+            "default_enabled": config.guardrails_enabled,
+            "failure_mode": config.guardrails_failure_mode,
+            "speculative_main_model_enabled": (
+                config.guardrails_speculative_main_model_enabled
+            ),
+            "speculative_main_model_scope": "text_only",
+            "supported_modalities": config.guardrails_supported_modalities,
+            "request_override_supported": True,
+        },
         "catalog": catalog.model_dump(),
     }
 

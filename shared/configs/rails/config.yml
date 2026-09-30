@@ -23,6 +23,7 @@ bot_messages:
 
 rails:
   input:
+    parallel: true
     flows:
       - content safety check input $model=content_safety
       - topic safety check input $model=topic_control
@@ -34,7 +35,6 @@ rails:
       context_size: 50
 
 tracing:
-  enabled: True
-  adapters:
-    - name: FileSystem
-      filepath: './traces/traces.jsonl'
+  # Application-level OpenTelemetry records decision metadata only. NeMo's
+  # filesystem tracer is disabled so shopper bodies never land in trace files.
+  enabled: False

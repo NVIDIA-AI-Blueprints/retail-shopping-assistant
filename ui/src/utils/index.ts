@@ -223,9 +223,7 @@ export const createApiRequest = (
   userSession: UserSession,
   query: string,
   image: string = '',
-  // Opt-in, matching the chain server and the UI toggle's own start state. A
-  // caller that omits it gets guardrails off rather than silently on.
-  guardrails: boolean = false,
+  guardrails?: boolean,
   media: MediaAttachment[] = [],
   shopperProfileId: string | null = null
 ): ApiRequest => {
@@ -235,11 +233,13 @@ export const createApiRequest = (
     conversation_id: userSession.conversationId,
     cart_id: userSession.cartId,
     query,
-    guardrails,
     image,
     media,
     image_bool: !!image,
   };
+  if (guardrails !== undefined) {
+    payload.guardrails = guardrails;
+  }
   if (shopperProfileId !== null) {
     payload.shopper_profile_id = shopperProfileId;
   }
@@ -374,4 +374,3 @@ export const formatFileSize = (bytes: number): string => {
   
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
-

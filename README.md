@@ -551,6 +551,12 @@ since the catalog indexer embeds the catalog once, at startup. The first start
 downloads the chat model's ~240 GB BF16 checkpoint into `HF_CACHE` and can take
 an hour; later starts read the cache.
 
+The complete four-GPU profile keeps Nemotron 3 Super on GPUs 0-1, places Omni
+and Content Safety under explicit memory caps on GPU 2, and places Topic Control
+with the smaller embedding NIMs on GPU 3. See the
+[deployment guide](docs/DEPLOYMENT.md#step-2-verify-gpu-setup) before starting
+all local roles together.
+
 No tracked configuration changes. The environment is read before
 `shared/configs/models.yaml`, so the profile's `LLM_*`, `VLM_*` and
 `TEXT_EMBED_*` are enough and `models.yaml` is left alone.

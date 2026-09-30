@@ -29,6 +29,10 @@ explains which roles can move and which cannot.
 the chat interface, product search, cart, and image upload, and check the
 [FAQ](USER_GUIDE.md#-faq) if something is unclear.
 
+**I want to turn on safety checks.** [Guardrails](GUARDRAILS.md) covers the
+whole feature: how it decides, what a failed check costs, what the shopper
+sees, and how to read a decision afterwards. It ships off.
+
 **I want to deploy it.** Work through the [Deployment Guide](DEPLOYMENT.md) end
 to end. It owns prerequisites, both deployment paths, every configuration
 setting, and troubleshooting. Then set up
@@ -62,6 +66,7 @@ hardware.
 |----------|----------------|
 | [Deployment Guide](DEPLOYMENT.md) | Prerequisites, both deployment paths, production deployment, the full configuration reference, monitoring, troubleshooting, security, and scaling |
 | [Deploy on Brev](BREV.md) | Step-by-step deployment to a managed NVIDIA Brev GPU instance |
+| [Guardrails](GUARDRAILS.md) | The optional safety layer: the three judges, failure modes, configuration, what the shopper sees, and the service API |
 | [Observability](OBSERVABILITY.md) | Reading a shopper's session turn by turn, opening one turn's trace, and finding what the model was told |
 | [Performance](PERFORMANCE.md) | Latency budget, load methodology, vLLM saturation, and deployment sizing |
 | [Monitoring stack](../monitoring/README.md) | Prometheus and Grafana for locally hosted model metrics |
@@ -98,7 +103,7 @@ hardware.
 
 | Document | What it covers |
 |----------|----------------|
-| [User Guide](USER_GUIDE.md) | Chat interface, product search, cart management, image upload, best practices, troubleshooting, and FAQ |
+| [User Guide](USER_GUIDE.md) | Chat interface, product search, cart management, image upload, troubleshooting, and FAQ |
 
 ### Project and process
 
@@ -122,8 +127,8 @@ Every setting has exactly one home, and the
   role and how to point a role at a different endpoint or a local model.
 - [Model Sampling and Output Limits](DEPLOYMENT.md#model-sampling-and-output-limits)
   covers temperature and token caps.
-- [Guardrail Defaults](DEPLOYMENT.md#guardrail-defaults) covers content safety
-  and topic control, which ship disabled.
+- [Guardrails](GUARDRAILS.md) covers content safety, topic control, and
+  multimodal safety, which ship disabled.
 
 Environment variables override the shipped defaults, so you do not have to edit
 YAML to change a setting. An unset or empty variable leaves the default in

@@ -246,7 +246,7 @@ Jupyter.
 [Documentation Hub](docs/README.md) indexes everything and suggests a path for
 your role.
 
-1. **[User Guide](docs/USER_GUIDE.md)** — using the assistant: chat, search, cart, uploads, safety, FAQ
+1. **[User Guide](docs/USER_GUIDE.md)** — using the assistant: chat, search, cart, uploads, FAQ
 2. **[Assistant Architecture](docs/ASSISTANT_ARCHITECTURE.md)** — the catalog foundation, one shopper turn, and memory boundaries
    - **[Skills](docs/SKILLS.md)** — registered skills, runtime loading, and the markdown tuning loop
    - **[Tools](docs/TOOLS.md)** — registered tools, risk classes, and per-skill access boundaries
@@ -256,6 +256,7 @@ your role.
 6. **[Deployment and Configuration](docs/DEPLOYMENT.md)** — both deployment paths, and every configuration setting with its default
 7. **[API Reference](docs/API.md)** — endpoints, request and response models, and streaming frames
 8. **[Catalog Architecture](docs/CATALOG_ARCHITECTURE.md)** — the data format, declaring which fields become shopper-facing filters, and reindexing onto your own catalog
+9. **[Guardrails](docs/GUARDRAILS.md)** — the optional safety layer: how it decides, what a failed check costs, and how to turn it on
 
 Contributors should also read [AGENTS.md](AGENTS.md), the service map and file
 layout for this codebase.

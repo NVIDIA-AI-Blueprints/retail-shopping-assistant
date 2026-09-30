@@ -777,7 +777,7 @@ turns are not cut off before the SSE response is emitted.
     "failure_mode": "closed",
     "speculative_main_model_enabled": false,
     "speculative_main_model_scope": "text_only",
-    "supported_modalities": ["text", "image", "video"],
+    "supported_modalities": ["text", "image"],
     "request_override_supported": true
   },
   "catalog": {

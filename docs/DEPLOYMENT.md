@@ -738,36 +738,12 @@ than 1024 tokens.
 
 #### Guardrail Defaults
 
-Guardrails span two services, so a default lives with whichever one reads it.
-`.env.example` and `docker-compose.yaml` only pass these through, empty by
-default, so neither restates a value.
+Guardrails ships disabled and spans two services, so each default lives with
+whichever one reads it. [Guardrails](GUARDRAILS.md) owns that layout, along
+with what a failed check costs and what the shopper is told.
 
-- **Chain server**, which decides whether a turn is guarded and what a failed
-  check costs: edit the `guardrails_` keys in
-  `shared/configs/chain_server/config.yaml`. Compose mounts `shared/`, so
-  restarting `chain-server` picks the change up without a rebuild.
-
-- **Guardrail service**, which decides how the judges run: edit the defaults in
-  `guardrails/src/rails.py`, then rebuild with
-  `docker compose up -d --build rails`. This covers modality coverage, video
-  sampling rate, and whether the input rails run in parallel.
-
-- **Which model each judge calls:** edit the `content_safety`, `topic_control`
-  and `multimodal_safety` roles in `shared/configs/models.yaml`.
-
-- **What the shopper is told** when a turn is stopped: `unsafe_message` and
-  `guardrails_unavailable_message` in `shared/configs/chain_server/config.yaml`.
-  These have no environment variable, because a shopper-facing sentence belongs
-  in reviewed configuration rather than a deployment variable. The first is used
-  for a refusal, the second when a check could not run; it asks the shopper to
-  check their cart, because a cart change may already have committed before the
-  check failed.
-
-`GUARDRAILS_TIMEOUT_SECONDS` is the one setting both services read, so changing
-it for every deployment means editing both places.
-
-To change any of this for one deployment only, set the environment variable in
-the env profile you source; it wins over these defaults.
+The `GUARDRAILS_*` and `RAIL_API_KEY` variables above override those defaults
+for one deployment, as everywhere else here.
 
 ## 📊 Monitoring
 

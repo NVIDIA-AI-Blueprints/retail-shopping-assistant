@@ -180,13 +180,16 @@ the sidecar; do not parse prose in catalog code.
    rejects IDs whose whitespace would be normalized, slash-containing IDs, and
    dot-only path segments.
 2. Update the sidecar only when field meaning changes.
-3. Restart the catalog retriever.
-4. Watch startup logs until all enabled indexes are synchronized.
-5. Verify `http://localhost:8010/capabilities` and a targeted text/image query.
-6. Restart the chain server so it drops its cached capability contract.
-7. Verify `http://localhost:8009/capabilities` before serving traffic.
+3. Run the indexer. `docker compose up -d catalog-retriever` starts
+   `catalog-indexer` first and waits for it to succeed. A serving container
+   never indexes itself, so restarting it alone leaves `/ready` at 503.
+4. Wait for `http://localhost:8010/ready`, then verify
+   `http://localhost:8010/capabilities` and a targeted text/image query.
+5. Restart the chain server so it drops its cached capability contract.
+6. Verify `http://localhost:8009/capabilities` before serving traffic.
 
-The service calculates an internal fingerprint from data, sidecar, embedding
-models, image-search state, referenced local image bytes, and the semantic
-template. Matching indexes are reused; changed inputs trigger a full rebuild.
-Manual Milvus volume deletion is not required for normal catalog refreshes.
+The fingerprint is calculated from data, sidecar, embedding models,
+image-search state, referenced local image bytes, and the semantic template. A
+matching index is reused and the indexer exits without doing anything; changed
+inputs make it rebuild. Manual Milvus volume deletion is not required for
+normal catalog refreshes.

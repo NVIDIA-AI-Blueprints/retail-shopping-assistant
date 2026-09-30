@@ -215,18 +215,34 @@ removed.
 
 An internal fingerprint covers the JSONL, the sidecar's indexing-relevant
 parts, the embedding model names, image-search state, and the semantic-template
-version. Matching indexes are reused on restart; a mismatch rebuilds. Changing
-the embedding model — including switching between hosted endpoints and locally
-served models — changes the fingerprint and forces a rebuild, which is what
+version. Changing the embedding model — including switching between hosted
+endpoints and locally served models — changes the fingerprint, which is what
 keeps vectors and model in sync. Prose-only sidecar edits deliberately do not,
 since re-embedding the catalog because someone improved a description would
 discourage describing anything.
 
+**Indexing and serving are separate processes, deliberately.** A rebuild starts
+by dropping the collection, so two doing it at once is destructive and
+undetectably so: the fingerprint is written row by row, so a collection
+half-filled by one process while another drops it carries the right fingerprint
+on every row it has. Only `python -m app.index_catalog` rebuilds. A serving
+container never indexes and has no code path that could — when the fingerprint
+does not match, it answers `/ready` with 503 and serves nothing.
+
 1. Replace the JSONL, and the sidecar only if field meaning changed.
-2. Restart the catalog retriever.
-3. Wait for indexing and health, then inspect `http://localhost:8010/capabilities`.
+2. Run the indexer. `docker compose up -d catalog-retriever` runs the
+   `catalog-indexer` service first and waits for it; to reindex without
+   cycling the service, use
+   `docker compose exec catalog-retriever python -m app.index_catalog`.
+3. Wait for `http://localhost:8010/ready`, then inspect
+   `http://localhost:8010/capabilities`. Check `/ready`, not `/health`: a
+   container with an unbuilt index is alive and deliberately serving nothing.
 4. Restart the chain server so it drops its cached contract.
 5. Confirm the chain-side contract at `http://localhost:8009/capabilities`.
+
+Re-running the indexer is safe. It makes the same fingerprint check first and
+does nothing when the index is current, so it can sit unconditionally in a
+deployment pipeline.
 
 Hot reload, an ingestion API, LLM schema inference, versioned collection
 aliases, inventory, and variants are out of scope.

@@ -609,7 +609,9 @@ schema_source: "/app/shared/data/enriched_products.schema.yaml"
 ```
 
 Changing either of those, or the embedding model, changes the service
-fingerprint and rebuilds the indexes on the next restart.
+fingerprint, so the index must be rebuilt by the `catalog-indexer` service. A
+serving container never indexes itself; until the indexer has run it answers
+`/ready` with 503.
 
 For the field-role rules, see
 [Catalog Schema and Filters](CATALOG_FILTERS.md). For the restart-and-verify

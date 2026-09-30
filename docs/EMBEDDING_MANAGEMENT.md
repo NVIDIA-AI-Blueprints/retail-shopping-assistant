@@ -205,6 +205,13 @@ filtering, thresholding, and final deterministic trimming to `k`.
 ## Recovery
 
 Manual collection or volume removal is reserved for database corruption or
-operational recovery. If needed, stop the catalog service, drop
-`shopping_advisor_text_db` and `shopping_advisor_image_db`, then restart. The
-service rebuilds them from the validated snapshot.
+operational recovery. If needed, stop the catalog service and drop
+`shopping_advisor_text_db` and `shopping_advisor_image_db`.
+
+Restarting alone will not bring it back: as above, a serving container never
+indexes. It will load the snapshot, find no matching index, and answer `/ready`
+with 503 indefinitely. Run the indexer to refill the collections:
+
+```bash
+docker compose up -d catalog-indexer
+```

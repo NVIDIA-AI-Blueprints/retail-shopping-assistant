@@ -65,8 +65,6 @@ hardware.
 | [Observability](OBSERVABILITY.md) | Reading a shopper's session turn by turn, opening one turn's trace, and finding what the model was told |
 | [Performance](PERFORMANCE.md) | Latency budget, load methodology, vLLM saturation, and deployment sizing |
 | [Monitoring stack](../monitoring/README.md) | Prometheus and Grafana for locally hosted model metrics |
-| [Load tooling](../benchmarks/README.md) | Driving load against a deployment |
-
 ### Build against it
 
 | Document | What it covers |

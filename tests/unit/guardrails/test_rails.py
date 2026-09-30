@@ -71,7 +71,7 @@ def test_a_named_setting_still_wins(rails_module, monkeypatch):
 
 
 @pytest.mark.parametrize("value", ["", None])
-def test_empty_modalities_cover_image_and_video_rather_than_nothing(
+def test_empty_modalities_cover_image_rather_than_nothing(
     rails_module, monkeypatch, value
 ):
     """An unset list must not read as an empty one.
@@ -81,9 +81,9 @@ def test_empty_modalities_cover_image_and_video_rather_than_nothing(
     """
 
     if value is None:
-        monkeypatch.delenv("MULTIMODAL_SAFETY_MODALITIES", raising=False)
+        monkeypatch.delenv("GUARDRAILS_SUPPORTED_MODALITIES", raising=False)
     else:
-        monkeypatch.setenv("MULTIMODAL_SAFETY_MODALITIES", value)
+        monkeypatch.setenv("GUARDRAILS_SUPPORTED_MODALITIES", value)
     monkeypatch.setattr(
         rails_module, "resolve_guardrail_model_config", lambda _role: SimpleNamespace(
             model="judge", base_url="http://judge", api_key="k"
@@ -95,7 +95,7 @@ def test_empty_modalities_cover_image_and_video_rather_than_nothing(
         "/nonexistent", image_safety=object()
     )
 
-    assert evaluator._supported_modalities == {"image", "video"}
+    assert evaluator._supported_modalities == {"image"}
 
 
 @pytest.mark.asyncio
@@ -504,6 +504,38 @@ async def test_dedicated_topic_block_wins_if_image_policy_errors(rails_module):
 
     assert decision.status == "block"
     assert decision.violated_categories == ["non_retail"]
+
+
+@pytest.mark.asyncio
+async def test_image_topic_errors_when_image_policy_fails(rails_module):
+    class TopicCompletions:
+        async def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="on-topic"))]
+            )
+
+    class ContentCompletions:
+        async def create(self, **_kwargs):
+            raise RuntimeError("image policy unavailable")
+
+    evaluator = object.__new__(rails_module.NemotronSafetyEvaluator)
+    evaluator._topic_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=TopicCompletions())
+    )
+    evaluator._topic_model = "nvidia/llama-3.1-nemoguard-8b-topic-control"
+    evaluator._content_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=ContentCompletions())
+    )
+    evaluator._content_model = "nvidia/nemotron-3.5-content-safety"
+    evaluator._topic_policy = "Only discuss retail shopping."
+
+    decision = await evaluator.check_topic(
+        "find this look",
+        "data:image/png;base64,AAAA",
+    )
+
+    assert decision.status == "error"
+    assert decision.diagnostic_code == "retail_topic_check_failed"
 
 
 @pytest.mark.asyncio

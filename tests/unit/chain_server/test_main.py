@@ -1116,6 +1116,7 @@ class TestDeepAgentsRuntimeScopes:
                 "media": [],
                 "cart_user_id": 222,
                 "shopper_profile_id": "shopper_morgan",
+                "guardrails_enabled": False,
             }
         ]
         assert state.previous_selected_skill_names == []
@@ -1255,6 +1256,8 @@ class TestDeepAgentsRuntimeScopes:
             ],
             retrieved={"Blue Bag": "/images/blue-bag.jpg"},
             agent_diagnostics={"final_termination_reason": "completed"},
+            guardrails_enabled=True,
+            guardrail_results=[{"stage": "input", "status": "allow"}],
         )
         memory = _ConversationMemoryStub(
             TurnStartResult(
@@ -1276,13 +1279,14 @@ class TestDeepAgentsRuntimeScopes:
         monkeypatch.setattr(runtime, "_execute_turn", fail_execute)
 
         output = await runtime._run_turn(
-            State(user_id=111, query="same request", guardrails=False),
+            State(user_id=111, query="same request", guardrails=True),
             identity,
         )
 
         assert output.response == "Here is the saved result."
         assert output.product_results[0]["product_id"] == "bag-a"
         assert output.retrieved == {"Blue Bag": "/images/blue-bag.jpg"}
+        assert output.guardrail_results == [{"stage": "input", "status": "allow"}]
         assert memory.finalize_calls == []
 
     @pytest.mark.asyncio

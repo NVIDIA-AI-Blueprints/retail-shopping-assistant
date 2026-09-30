@@ -153,21 +153,20 @@ class NemotronSafetyEvaluator:
                     for result in (dedicated_result, custom_result):
                         if isinstance(result, asyncio.CancelledError):
                             raise result
-                    # Either check can carry the verdict alone: both read the
-                    # shopper text, and the custom one reads the image too.
-                    # Only the pair failing leaves the topic genuinely unread,
-                    # which is the same fallback the text-only branch makes.
-                    decisions = [
-                        result
-                        for result in (dedicated_result, custom_result)
-                        if isinstance(result, PolicyDecision)
-                    ]
-                    if not decisions:
+                    if not isinstance(custom_result, PolicyDecision):
+                        if (
+                            isinstance(dedicated_result, PolicyDecision)
+                            and dedicated_result.status == "block"
+                        ):
+                            return dedicated_result
                         return PolicyDecision(
                             "error",
                             "retail_topic",
                             diagnostic_code="retail_topic_check_failed",
                         )
+                    decisions = [custom_result]
+                    if isinstance(dedicated_result, PolicyDecision):
+                        decisions.append(dedicated_result)
                     return aggregate_decisions(decisions)
                 try:
                     return await dedicated
@@ -424,9 +423,10 @@ class MultimodalSafetyEvaluator:
         self._supported_modalities = {
             item.strip().lower()
             for item in (
-                os.environ.get("MULTIMODAL_SAFETY_MODALITIES") or "image,video"
+                os.environ.get("GUARDRAILS_SUPPORTED_MODALITIES")
+                or "text,image"
             ).split(",")
-            if item.strip()
+            if item.strip().lower() in {"image", "video"}
         }
         self._video_fps = _positive_float_env("MULTIMODAL_SAFETY_VIDEO_FPS", 2.0)
 

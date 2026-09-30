@@ -145,6 +145,12 @@ def test_request_digest_uses_exact_query_and_ordered_media_hashes() -> None:
         media,
         shopper_profile_id="shopper_casey",
     )
+    assert digest != build_request_digest(
+        "show me this", media, guardrails_enabled=True
+    )
+    assert digest == build_request_digest(
+        "show me this", media, guardrails_enabled=False
+    )
     assert "AAAA" not in digest
 
 
@@ -385,6 +391,8 @@ def test_finalize_turn_posts_the_typed_event_contract() -> None:
         ],
         retrieved={"Cobalt Bag": "/images/bag-1.png"},
         agent_diagnostics={"final_termination_reason": "completed"},
+        guardrails_enabled=True,
+        guardrail_results=[{"stage": "input", "status": "allow"}],
         selected_skill_names=["outfit-styling"],
     )
 
@@ -418,6 +426,10 @@ def test_finalize_turn_posts_the_typed_event_contract() -> None:
     assert call["json"]["attempt_id"] == "attempt-2"
     assert call["json"]["output"]["retrieved"] == {"Cobalt Bag": "/images/bag-1.png"}
     assert call["json"]["output"]["selected_skill_names"] == ["outfit-styling"]
+    assert call["json"]["output"]["guardrails_enabled"] is True
+    assert call["json"]["output"]["guardrail_results"] == [
+        {"stage": "input", "status": "allow"}
+    ]
 
 
 def test_context_formatter_preserves_separate_speaker_lines() -> None:

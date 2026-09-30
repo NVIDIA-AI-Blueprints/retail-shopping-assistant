@@ -2310,6 +2310,7 @@ Rules:
                 media=state.media,
                 cart_user_id=identity.cart_user_id,
                 shopper_profile_id=identity.shopper_profile_id,
+                guardrails_enabled=state.guardrails,
             )
             if (identity.shopper_profile_id is None) != (
                 turn.shopper_context is None
@@ -2418,6 +2419,8 @@ Rules:
             "That earlier request did not complete. Please retry with a new request."
         )
         if turn.output is not None:
+            state.guardrails = turn.output.guardrails_enabled
+            state.guardrail_results = list(turn.output.guardrail_results)
             state.product_results = [
                 product.model_dump(mode="json")
                 for product in turn.output.product_results
@@ -2468,6 +2471,8 @@ Rules:
                 retrieved=(state.retrieved if present_products else {}),
                 product_groups=(state.product_groups if present_products else []),
                 agent_diagnostics=state.agent_diagnostics,
+                guardrails_enabled=state.guardrails,
+                guardrail_results=state.guardrail_results,
                 selected_skill_names=state.selected_skill_names,
             )
             receipt = self._conversation_memory.finalize_turn(

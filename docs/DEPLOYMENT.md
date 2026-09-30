@@ -433,14 +433,15 @@ set there; a unit test fails if the two differ, so change both together.
 
 ### Weather Tool
 
-The chain server includes a provider-neutral daily weather client and
+The chain server ships a provider-neutral daily weather client and
 `get_weather_forecast_tool`, with Visual Crossing as the first adapter. It is
-off by default. Enabled, the tool is registered with the shopping agent and
-granted only by the `destination-weather` skill; it forecasts a place the
-shopper named, for dates within the 15-day horizon, at most twice per turn.
-Disabled, it is not registered at all, and startup, health checks, shopper
-turns, and offline tests perform no provider request and require no weather key.
-It has no FastAPI route and no UI of its own.
+**off by default**: disabled, it is not registered at all, and startup, health
+checks, shopper turns, and offline tests make no provider request and need no
+weather key.
+
+Enabled, the tool is granted only by the `destination-weather` skill, forecasts
+a place the shopper named within a 15-day horizon, and runs at most twice per
+turn. It has no FastAPI route and no UI of its own.
 
 The complete non-secret configuration is in
 `shared/configs/chain_server/config.yaml`:
@@ -456,36 +457,23 @@ weather:
   max_range_days: 15
 ```
 
-To enable it, set `WEATHER_ENABLED=true` and provide
-`WEATHER_API_KEY` through an ignored `.env`, the process environment, or the
-deployment secret manager. Compose passes those two variables only to
-`chain-server`; it does not bake a value into an image or expose it to catalog,
-memory, guardrail, UI, or locally deployed model services. The config stores only the
-variable name, never the secret value. Enabling the client without the named
-key fails closed, and no MCP server is required. The local process runner
-enforces the same boundary by removing both weather variables from memory,
-guardrail, catalog, and React process environments while retaining them for the
-chain server.
+To turn it on, set `WEATHER_ENABLED=true` and supply `WEATHER_API_KEY` through
+an ignored `.env`, the process environment, or a secret manager. The config
+stores only the variable *name*, never the value, and enabling the client
+without that key fails closed. Compose passes both variables to `chain-server`
+alone — never to the catalog, memory, guardrail, UI, or local model services —
+and the local process runner enforces the same boundary.
 
-An optional direct provider smoke makes at most one request per invocation:
+`python scripts/weather_smoke.py` makes at most one provider request, for
+checking credentials. It needs `WEATHER_ENABLED`, `WEATHER_API_KEY`, and
+`WEATHER_SMOKE_ZIP` set, and optionally `WEATHER_SMOKE_DATE` or a
+`WEATHER_SMOKE_START_DATE`/`WEATHER_SMOKE_END_DATE` pair. It deliberately
+prints no location, dates, forecast, key, or URL — only outcome category,
+schema validity, and latency. Nothing runs it automatically.
 
-```bash
-python scripts/weather_smoke.py
-```
-
-Before running it, set `WEATHER_ENABLED=true`, `WEATHER_API_KEY`, and
-`WEATHER_SMOKE_ZIP` in the private process environment. Optionally set either
-`WEATHER_SMOKE_DATE` or the complete
-`WEATHER_SMOKE_START_DATE`/`WEATHER_SMOKE_END_DATE` pair. The command prints
-only provider/config label, request mode, window length, outcome category,
-schema validity, and latency. It never prints the ZIP, dates, location,
-forecast, key, URL, provider body, or raw exception. It is not run by startup,
-CI, health checks, or shopper traffic.
-
-The adapter emits normalized daily forecast evidence and attribution metadata
-but persists nothing. Before a later slice displays or stores this evidence,
-operators must confirm the selected Visual Crossing plan's attribution,
-storage, sharing, and uncertainty requirements in the
+The adapter normalizes forecast evidence and persists nothing. Before any later
+work displays or stores it, confirm your Visual Crossing plan's attribution,
+storage, sharing, and uncertainty requirements in its
 [pricing terms](https://www.visualcrossing.com/weather-data-editions/) and
 [service terms](https://www.visualcrossing.com/weather-service-terms/).
 
@@ -609,38 +597,24 @@ The active runtime gets available product filters from the catalog retriever
 after the catalog data is loaded. Do not maintain product categories in
 `shared/configs/chain_server/config.yaml`.
 
-The authoritative guide for this workflow is
-[Catalog Schema and Filters](CATALOG_FILTERS.md). The short version is: the
-JSONL sidecar declares field types and uses, while all values, ranges, coverage,
-and taxonomy scopes are discovered from the ingested rows.
+The sidecar declares field types and uses; every value, range, coverage figure
+and taxonomy scope is discovered from the rows.
 
-#### How to Update Filters
-
-1. **Update Product Data**: Add products or values to the JSONL configured by
-   `shared/configs/catalog_retriever/config.yaml`.
-2. **Declare New Field Meaning**: Only for an entirely new field, add its type
-   and `filter`, `semantic`, and/or `detail` uses to the adjacent schema
-   sidecar. Never add enum values or category applicability rules.
-3. **Restart/Reindex Catalog**: Restart the catalog retriever so it loads the
-   new data and synchronizes its indexes.
-4. **Verify Live Capabilities**: Wait for catalog health, then check
-   `http://localhost:8010/capabilities`.
-5. **Restart Chain Server**: Restart it so it drops the prior
-   process-lifetime cached contract.
-6. **Verify Cached Capabilities**: Check the chain-server aggregate at
-   `http://localhost:8009/capabilities` before serving traffic.
-
-#### Catalog Retriever Configuration
+The deployment-side part is two paths in
+`shared/configs/catalog_retriever/config.yaml`:
 
 ```yaml
-# shared/configs/catalog_retriever/config.yaml
 data_source: "/app/shared/data/enriched_products.jsonl"
 schema_source: "/app/shared/data/enriched_products.schema.yaml"
 ```
 
-The service fingerprint automatically rebuilds indexes when data, sidecar,
-embedding models, image-search state, referenced local image bytes, or the
-semantic template changes.
+Changing either of those, or the embedding model, changes the service
+fingerprint and rebuilds the indexes on the next restart.
+
+For the field-role rules, see
+[Catalog Schema and Filters](CATALOG_FILTERS.md). For the restart-and-verify
+sequence, see
+[Replacing the catalog](CATALOG_ARCHITECTURE.md#replacing-the-catalog).
 
 ### Model Routing
 
@@ -671,46 +645,24 @@ It can be set to `disabled` when media perception should be off. Image
 embedding search remains controlled separately by the `image_embedding` role
 and `CATALOG_IMAGE_EMBEDDING_ENABLED`.
 
-#### Standard Deployment Flow
+#### Applying a Routing Change
+
+Whichever path you deployed with, these are the two commands to rerun after
+editing `models.yaml`:
 
 ```bash
-python -m pip install --user -r requirements-deploy.txt
-cp .env.example .env
-$EDITOR .env
-source .env
-
 python scripts/model_config.py show --validate
 python scripts/model_config.py deploy --build
 ```
 
-`show --validate` prints the resolved model routing without printing key values.
-It fails if a required API-key variable or endpoint variable is missing.
+`show --validate` prints the resolved routing for every role without printing
+any key value, and fails if a required API-key or endpoint variable is missing.
+`deploy` starts only the local services that roles actually reference, then the
+app stack.
 
-For locally deployed models, source the local profile, which sets the roles' `*_BASE_URL`
-and `*_MODEL` to the local services, and start them before the app, as in
-[Locally Hosted Models](#-locally-hosted-models):
-
-```bash
-source .env.local-models
-docker compose -f docker-compose-model-local.yaml up -d --wait local-llm local-embedding
-python scripts/model_config.py show --validate
-docker compose -f docker-compose.yaml up -d --build
-```
-
-To have `deploy` start them instead, set those roles in
-`shared/configs/models.yaml` to `source: local_model` with `local_service:
-local-llm` or `local-embedding`. Keep the profile sourced: a role's own
-`base_url` and `model` take precedence over the service's.
-
-For a single remote model host in local app-code mode:
-
-```bash
-python skills/retail-local-runner/scripts/local_runner.py configure --nim-host http://HOST
-python skills/retail-local-runner/scripts/local_runner.py start
-```
-
-The local runner writes ignored `.local-run/model-endpoints.env` with the
-derived per-role base URLs.
+Keep the env profile sourced while you do it. A role's own `base_url` and
+`model` win over the local service's, so an unsourced profile quietly routes
+somewhere you did not intend.
 
 #### Adding or Changing Models
 
@@ -738,30 +690,11 @@ models:
     api_key_env: null
 ```
 
-For VLM media perception through a hosted endpoint:
-
-```yaml
-models:
-  vlm:
-    source: endpoint
-    provider: openai_compatible
-    base_url_env: VLM_BASE_URL
-    model_env: VLM_MODEL
-    api_key_env: VLM_API_KEY
-```
-
-Then deploy with:
-
-```bash
-export LLM_BASE_URL=https://your-endpoint/v1
-export LLM_MODEL=your-model-name
-export LLM_API_KEY=...
-python scripts/model_config.py show --validate
-python scripts/model_config.py deploy --build
-```
-
-For locally deployed roles, reference a `local_service` in `models.yaml`. The
-deploy helper starts only those services.
+Every role takes one of those two shapes. Only the variable prefix changes —
+`LLM_`, `VLM_`, `EMBED_`, and so on — so pointing media perception at its own
+hosted endpoint means the same `endpoint` block with `VLM_BASE_URL`,
+`VLM_MODEL`, and `VLM_API_KEY`. Set the variables in the profile you source,
+then rerun the two commands above.
 
 #### Model Sampling and Output Limits
 

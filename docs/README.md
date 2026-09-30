@@ -72,7 +72,6 @@ hardware.
 | Document | What it covers |
 |----------|----------------|
 | [API Reference](API.md) | Endpoints, request and response models, streaming frames, guardrail reporting, and error handling |
-| [Commerce Contracts](COMMERCE_CONTRACTS.md) | Internal product, cart, and commerce tool contracts |
 | [UI](../ui/README.md) | React app structure, local development, and build |
 
 ### Use your own catalog

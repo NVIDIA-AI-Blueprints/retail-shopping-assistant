@@ -132,6 +132,10 @@ and this table as orientation.
 tool. It is forced at turn start and selects instructions; it reads and mutates
 nothing.
 
+These contracts are app-owned and deliberately independent of ACP, UCP, and any
+future commerce protocol. Support for one belongs in a thin adapter around
+these tools, not as extra fields inside the product and cart models.
+
 [Tools](TOOLS.md) has each tool's input schema, risk class, and failure
 behavior, and is likewise test-checked against the code.
 

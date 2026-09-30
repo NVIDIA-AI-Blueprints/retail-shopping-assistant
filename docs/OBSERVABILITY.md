@@ -196,6 +196,14 @@ model had in front of it. This is how you tell "the model ignored the rule" from
 For `search_catalog_tool` that is the scopes it searched and the products that
 came back; for `add_cart_items_tool`, exactly what went into the cart.
 
+Reading those two together separates three failures that look identical from
+the reply alone. When a search comes back empty: arguments that match what the
+shopper asked for mean the catalog genuinely has no such product and the
+assistant was right; arguments carrying a constraint the shopper never gave
+mean the agent invented one and the empty result is its own doing; arguments
+that are right next to a result that *has* products mean the reply lost them,
+which is a grounding failure rather than a retrieval one.
+
 **"Why was a tool call refused?"** — the rejected call is in
 `metadata.diagnostics_json` with a `rejection_reason`
 (`duplicate_catalog_scope`, `skill_activation_required`, `repair_scope_changed`).
@@ -377,26 +385,23 @@ above, with Relay on in `.env.example` and off in `docker-compose.yaml`.
 
 ## What Relay gives you, and what it costs
 
-Relay is the third and optional producer. The first two — the `turn` span this
-service writes, and `openinference-instrumentation-langchain` — are always on
-and answer *what happened*. Relay answers *what the agent was thinking while it
-happened*: the prompt as sent, the completion as returned, which skill was
-selected, which subagent ran, and every tool call with its arguments and result.
+Relay is the third and optional producer, and the honest summary is that on
+this architecture it adds less than its own material would suggest.
 
-The practical difference, on a turn that went wrong:
+The two default producers already answer the questions people reach for Relay
+to answer. `openinference-instrumentation-langchain` carries the prompt exactly
+as sent, the arguments of every tool call, and what each tool returned — that
+is what [the four questions](#the-four-questions-and-where-each-is-answered)
+above read out of Phoenix, and what `scripts/read_session.py` and
+`notebook/trace_capture.py` consume to rebuild whole conversations offline.
+Which skill fired is on the `turn` span as `metadata.skills`.
 
-| question | without Relay | with Relay |
-|---|---|---|
-| Which tools ran, in what order | yes | yes |
-| How long each took | yes | yes |
-| **What arguments the tool was called with** | no | **yes** |
-| **What the tool returned** | no | **yes** |
-| **The exact prompt the model saw** | no | **yes** |
-| **Which skill the agent selected and why** | partly | **yes** |
-
-That is the difference between "the search returned nothing" and "the search was
-asked for `taxonomy_level_2=dresses` with `primary_color=red`, and the catalogue
-has no red dress".
+What Relay genuinely adds here is per-call detail from the agent runtime: one
+span per LLM call named for the model, carrying token counts and finish reason,
+plus `mark:` lifecycle events. It does not add the prompt, the tool arguments,
+the tool results, or the skill — and on the last two counts it is actively
+worse, for reasons in
+[What Relay does not give you here](#what-relay-does-not-give-you-here).
 
 **What it costs.** It is not free and it is not merely additive:
 
@@ -406,41 +411,15 @@ has no red dress".
   `langchain-google-genai`, and pins `deepagents<0.7.0` -- so taking it means
   not taking a deepagents 0.7 upgrade until that pin moves.
 - It adds a second OTLP exporter to the process.
+- Its middleware seam can change the turn it is tracing, which has happened
+  once — see below.
 
-**Leave it off for normal running.** Turn it on to study a specific problem,
-then turn it off. It is not a monitoring tool — it produces one detailed trace
-per turn, not metrics.
-
-### Worked example: a shopper says the assistant found nothing
-
-The shopper asked for red dresses under $100 and was told the shop has none.
-Is that true, or did the search go wrong?
-
-**1. Turn Relay on and reproduce the turn** — the two commands are under
-[Adding NeMo Relay](#adding-nemo-relay) below. You are ready when the log says:
-
-```
-Relay tracing enabled, exporting to http://otel-collector:4318
-```
-
-**2. Open Phoenix** at `http://localhost:6006` and find the conversation. Each
-turn is one `turn` span; Relay's events nest under it, so the whole turn reads
-top to bottom in one place.
-
-**3. Open the `search_catalog_tool` call** and read its arguments. This is the
-thing you cannot see any other way. You are looking for the difference between
-three quite different failures:
-
-- The arguments match what the shopper asked for, and the result is genuinely
-  empty → the catalogue has no red dress. The assistant was right.
-- The arguments carry a constraint the shopper never gave → the agent invented
-  one, and the empty result is its own doing.
-- The arguments are right, the result has products, and the reply says
-  otherwise → a grounding failure between the tool and the answer.
-
-**4. Turn it back off** when you have your answer. Set both back to `false`
-in your `.env`, then rebuild -- the image itself should stop carrying a library
-that can export prompts and cart contents, not merely stop using it:
+**Leave it off for normal running.** Turn it on to study the agent runtime
+itself, then turn it off. It is not a monitoring tool — it produces one
+detailed trace per turn, not metrics. Turning it off means setting both
+variables back to `false` and rebuilding, so that the image stops carrying a
+library that can export prompts and cart contents rather than merely not using
+it:
 
 ```bash
 source .env

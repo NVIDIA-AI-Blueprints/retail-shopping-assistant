@@ -20,19 +20,21 @@ controlled by the activation and loop-control phases described below.
 
 ## Current Runtime Boundary
 
-The active Deep Agents runtime registers eleven app-owned shopper commerce tools
-plus one internal activation control tool. Every turn begins in an activation
+The active Deep Agents runtime registers twelve app-owned shopper commerce
+tools, the optional weather tool when it is enabled, and one internal
+activation control tool. Every turn begins in an activation
 phase where the model sees only `activate_shopper_skills_tool`, its use is
 forced, and parallel tool calls are disabled. After the model semantically
 selects the smallest skill set for the complete current intent, the runtime
 validates those names and deterministically injects the full selected
 `SKILL.md` contents. Only then does the next model step receive the union of
-those skills' declared `tools_granted` from the eleven-tool registry. Every
+those skills' declared `tools_granted` from that registry. Every
 app-owned shopping dispatch independently rechecks the selected skill, grant
 union, and immutable policy before invoking its handler.
 
-For primary shopper procedure selection, `product-discovery` and
-`outfit-styling` are mutually exclusive. `budget-shopping` is a modifier and is
+For primary shopper procedure selection, `product-discovery`, `outfit-styling`
+and `catalog-questions` share the `product_procedure` exclusive group, so
+exactly one of the three is active. `budget-shopping` is a modifier and is
 selected only when the shopper states a budget. Cart or policy skills may still
 join the applicable procedure for a genuine multi-intent turn; standalone cart
 and policy turns do not require a product primary. A terse item-only follow-up
@@ -1009,12 +1011,13 @@ activation.
 
 | Skill | Tools granted |
 | --- | --- |
-| `product-discovery` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `check_active_promotions_tool`, `resolve_conversation_products_tool` |
+| `product-discovery` | `describe_catalog_tool`, `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `check_active_promotions_tool`, `resolve_conversation_products_tool` |
 | `outfit-styling` | `search_catalog_tool`, `get_product_details_tool`, `check_product_availability_tool`, `check_active_promotions_tool`, `resolve_conversation_products_tool` |
-| `budget-shopping` | None (`tools_granted: []`) |
-| `cart-management` | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool`, `resolve_conversation_products_tool` |
 | `catalog-questions` | `describe_catalog_tool`, `search_catalog_tool`, `get_product_details_tool` |
+| `budget-shopping` | None (`tools_granted: []`) |
+| `cart-management` | `get_cart_tool`, `view_cart_total_tool`, `add_cart_items_tool`, `remove_cart_item_tool`, `update_cart_items_tool`, `resolve_conversation_products_tool`, `search_catalog_tool` |
 | `store-policy-answers` | `get_store_policy_tool` |
+| `destination-weather` | `get_weather_forecast_tool` |
 
 Multi-intent turns should select and inject every needed skill during the one
 activation step. For example, a request to "find shoes and a bag for this
@@ -1032,7 +1035,7 @@ but they are not registered tools in the active Deep Agents runtime:
 | Capability | Current status |
 | --- | --- |
 | `load_customer_persona_tool` | Planned. No registered runtime tool. |
-| `get_weather_forecast_tool` | Implemented as a disabled-by-default direct-construction wrapper, but deliberately absent from the runtime registry, immutable policy, skill grants, prompts, context, FastAPI, and UI. |
+| `get_weather_forecast_tool` | Off by default, so absent from the registry in a default deployment. With `WEATHER_ENABLED=true` it is registered, and the immutable policy grants it to `destination-weather` and no other skill. |
 | Cross-catalog durable product identity | Planned; requires an upstream stable ID guarantee. |
 | Live inventory, variant, and size availability lookup | Not implemented; the registered no-I/O stub reports deterministic availability for known conversation product refs. |
 | Live promotions lookup | Not implemented; the registered no-I/O stub reports that no active promotion is configured through the assistant. |

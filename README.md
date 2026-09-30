@@ -255,7 +255,7 @@ your role.
 5. **[Performance Measurement](docs/PERFORMANCE.md)** — latency budget, saturation point, and deployment sizing
 6. **[Deployment and Configuration](docs/DEPLOYMENT.md)** — both deployment paths, and every configuration setting with its default
 7. **[API Reference](docs/API.md)** — endpoints, request and response models, and streaming frames
-8. **Your own catalog** — **[Embedding Management](docs/EMBEDDING_MANAGEMENT.md)** for the data format and reindexing, and **[Catalog Schema and Filters](docs/CATALOG_FILTERS.md)** for declaring which fields become shopper-facing filters
+8. **[Catalog Architecture](docs/CATALOG_ARCHITECTURE.md)** — the data format, declaring which fields become shopper-facing filters, and reindexing onto your own catalog
 
 Contributors should also read [AGENTS.md](AGENTS.md), the service map and file
 layout for this codebase.

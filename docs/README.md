@@ -45,10 +45,10 @@ then [Skills](SKILLS.md) and
 call. [AGENTS.md](../AGENTS.md) is the contributor and coding-agent guide to the
 codebase layout.
 
-**I want to use my own product catalog.** Start with
-[Embedding Management](EMBEDDING_MANAGEMENT.md) for the data format and
-reindexing, then [Catalog Schema and Filters](CATALOG_FILTERS.md) for declaring
-which fields become shopper-facing filters.
+**I want to use my own product catalog.**
+[Catalog Architecture](CATALOG_ARCHITECTURE.md) covers the data format, the
+sidecar that declares which fields become shopper-facing filters, and the
+reindex-and-verify sequence.
 
 **I want to run it faster, or size it for load.** [Performance](PERFORMANCE.md)
 covers the latency budget of a turn, finding the saturation point, and sizing
@@ -76,9 +76,7 @@ hardware.
 
 | Document | What it covers |
 |----------|----------------|
-| [Embedding Management](EMBEDDING_MANAGEMENT.md) | Catalog JSONL and schema format, fingerprinting, reindexing, and replacing catalog data |
-| [Catalog Schema and Filters](CATALOG_FILTERS.md) | Declaring JSONL field roles so filters derive from data rather than hardcoded values |
-| [Catalog Architecture](CATALOG_ARCHITECTURE.md) | End-to-end ingestion, advertised capabilities, agent discovery, and validated retrieval |
+| [Catalog Architecture](CATALOG_ARCHITECTURE.md) | The JSONL and sidecar format, declaring field roles so filters derive from data, advertised capabilities, validated retrieval, and replacing catalog data |
 
 ### Understand and change the agent
 
@@ -140,7 +138,7 @@ place.
 | Turns are slow | [Performance](PERFORMANCE.md) |
 | Something in the UI misbehaves | [User Guide - Troubleshooting](USER_GUIDE.md#%EF%B8%8F-troubleshooting) |
 | Authentication or API key errors | [Deployment - NVIDIA Account Setup](DEPLOYMENT.md#nvidia-account-setup) |
-| Search returns nothing for your own catalog | [Embedding Management](EMBEDDING_MANAGEMENT.md) |
+| Search returns nothing for your own catalog | [Catalog Architecture - Replace the catalog](CATALOG_ARCHITECTURE.md#replace-the-catalog) |
 
 ## Getting help
 

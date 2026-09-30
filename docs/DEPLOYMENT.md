@@ -399,7 +399,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
 | `CATALOG_RETRIEVER_URL` / `MEMORY_RETRIEVER_URL` | Where the chain server reaches the retrieval services | No | `config.yaml`: `retriever_port`, `memory_port` |
 | `CATALOG_IMAGE_EMBEDDING_ENABLED` | Build image embeddings and the image collection at index time, enabling visual search | No | `catalog_retriever/config.yaml`: `image_embedding_enabled` (off) |
-| `CATALOG_DATA_SOURCE` / `CATALOG_SCHEMA_SOURCE` | Catalog JSONL and schema sidecar paths; see [Embedding Management](EMBEDDING_MANAGEMENT.md) | No | `catalog_retriever/config.yaml`: `data_source`, `schema_source` |
+| `CATALOG_DATA_SOURCE` / `CATALOG_SCHEMA_SOURCE` | Catalog JSONL and schema sidecar paths; see [Catalog Architecture](CATALOG_ARCHITECTURE.md#replace-the-catalog) | No | `catalog_retriever/config.yaml`: `data_source`, `schema_source` |
 | `CATALOG_DB_PORT` | Milvus URI the catalog service connects to | No | `catalog_retriever/config.yaml`: `db_port` |
 | `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-plus-hard-constraint scope executions in one assistant turn; a repeated scope is stopped even when semantic wording changes | No | `config.yaml`: `max_catalog_searches_per_turn` |
 | `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `config.yaml`: `max_product_detail_reads_per_turn` |
@@ -614,9 +614,9 @@ serving container never indexes itself; until the indexer has run it answers
 `/ready` with 503.
 
 For the field-role rules, see
-[Catalog Schema and Filters](CATALOG_FILTERS.md). For the restart-and-verify
-sequence, see
-[Replacing the catalog](CATALOG_ARCHITECTURE.md#replacing-the-catalog).
+[Catalog Architecture](CATALOG_ARCHITECTURE.md#the-sidecar). For the
+reindex-and-verify sequence, see
+[Replace the catalog](CATALOG_ARCHITECTURE.md#replace-the-catalog).
 
 ### Model Routing
 

@@ -59,7 +59,8 @@ filterability from product text or hard-coded category lists.
 
 Field roles come from `shared/data/enriched_products.schema.yaml`. Enum/list
 values, numeric ranges, taxonomy nodes, and field coverage are discovered from
-the configured JSONL. See [Catalog Schema and Filters](CATALOG_FILTERS.md).
+the configured JSONL. See
+[Catalog Architecture](CATALOG_ARCHITECTURE.md#the-sidecar).
 
 The chain server caches the first successfully fetched full contract for its
 process lifetime and uses that object for deterministic request validation.

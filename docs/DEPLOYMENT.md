@@ -4,10 +4,9 @@
 
 - [Overview](#-overview)
 - [Prerequisites](#-prerequisites)
-- [Fresh Deployment](#-fresh-deployment)
+- [Hosted Endpoints](#-hosted-endpoints)
 - [Deployment Options](#%EF%B8%8F-deployment-options)
-- [Local Deployment](#-local-deployment)
-- [Cloud Deployment](#%EF%B8%8F-cloud-deployment)
+- [Locally Hosted Models](#-locally-hosted-models)
 - [Production Deployment](#-production-deployment)
 - [Configuration](#%EF%B8%8F-configuration)
   - [Model Sampling and Output Limits](#model-sampling-and-output-limits): where each model call's temperature and max tokens are set
@@ -70,9 +69,11 @@ deployed models are vLLM serving Hugging Face checkpoints from
    - For locally hosted models, request access to the Nemotron 3.5 Super checkpoint on
      Hugging Face and create an `HF_TOKEN`
 
-## 🚀 Fresh Deployment
+## 🚀 Hosted Endpoints
 
-This is the shortest path for a new environment with hosted NVIDIA endpoints.
+Every model role runs on an NVIDIA-hosted endpoint, so this needs no GPU. It is
+the shortest path for a new environment, and it is the same whether the machine
+is a laptop or a cloud VM.
 
 ```bash
 git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
@@ -92,7 +93,12 @@ python scripts/model_config.py show --validate
 python scripts/model_config.py deploy --build
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000`. To watch it come up, or to check what is running:
+
+```bash
+docker compose -f docker-compose.yaml ps
+docker compose -f docker-compose.yaml logs -f
+```
 
 The deploy helper resolves models from `shared/configs/models.yaml`, starts
 only locally deployed models referenced by roles with `source: local_model`, and then
@@ -132,7 +138,7 @@ in who starts the container:
 | Environment overrides | Keep `source: endpoint` and set `LLM_BASE_URL` and friends to the local container, as `.env.local-models.example` does | **You do**, with `docker compose -f docker-compose-model-local.yaml up` |
 | Declared in `models.yaml` | Set `source: local_model` and `local_service: local-llm` | `python scripts/model_config.py deploy` |
 
-The [Local Deployment](#-local-deployment) walkthrough below uses the first
+The [Locally Hosted Models](#-locally-hosted-models) walkthrough below uses the first
 approach, because it self-hosts without editing a tracked file. The consequence
 is that `scripts/model_config.py deploy` prints "No locally deployed models
 required by models.yaml" and starts only the application: nothing in
@@ -157,7 +163,7 @@ variable through without a default of their own, so an empty value means "not
 set" and the config file decides. Guardrails works the same way, with its
 default in `shared/configs/chain_server/config.yaml`.
 
-## 🏠 Local Deployment
+## 🏠 Locally Hosted Models
 
 Use this only when this machine will serve the models itself. The local setup
 mirrors the hosted default: Nemotron 3.5 Super answers the shopper and reads
@@ -260,48 +266,6 @@ curl http://localhost:8009/ready    # chain server
 curl http://localhost:8010/ready    # catalog: 503 until the index is built
 curl http://localhost:8011/ready    # memory: 503 until migrations finish
 curl http://localhost:3000
-```
-
-## ☁️ Cloud Deployment
-
-### Step 1: Environment Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
-cd retail-shopping-assistant
-
-# Authenticate with NVIDIA Container Registry
-docker login nvcr.io
-# Use oauthtoken as the username and your NGC API key as the password
-
-# Create and source an environment profile for hosted endpoints
-cp .env.example .env.hosted
-$EDITOR .env.hosted
-source .env.hosted
-```
-
-### Step 2: Validate Model Routing
-
-```bash
-python scripts/model_config.py show --validate
-```
-
-### Step 3: Deploy Application
-
-```bash
-# Start application services only
-python scripts/model_config.py deploy --build
-
-# Monitor startup
-docker compose -f docker-compose.yaml logs -f
-```
-
-### Step 4: Verify Deployment
-
-```bash
-# Check service status
-docker compose -f docker-compose.yaml ps
 ```
 
 ## 🏭 Production Deployment
@@ -724,7 +688,7 @@ It fails if a required API-key variable or endpoint variable is missing.
 
 For locally deployed models, source the local profile, which sets the roles' `*_BASE_URL`
 and `*_MODEL` to the local services, and start them before the app, as in
-[Local Deployment](#-local-deployment):
+[Locally Hosted Models](#-locally-hosted-models):
 
 ```bash
 source .env.local-models

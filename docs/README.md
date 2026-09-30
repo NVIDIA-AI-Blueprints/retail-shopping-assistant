@@ -14,8 +14,8 @@ basis of whether you have GPUs.
 
 | Path | What it needs | Start at |
 |------|---------------|----------|
-| **NVIDIA-hosted endpoints** | An API key, no GPU | [Deployment Guide - Fresh Deployment](DEPLOYMENT.md#-fresh-deployment) |
-| **Self-hosted models (vLLM)** | GPUs, plus a Hugging Face token for gated checkpoints | [Deployment Guide - Local Deployment](DEPLOYMENT.md#-local-deployment) |
+| **NVIDIA-hosted endpoints** | An API key, no GPU | [Deployment Guide - Hosted Endpoints](DEPLOYMENT.md#-hosted-endpoints) |
+| **Self-hosted models (vLLM)** | GPUs, plus a Hugging Face token for gated checkpoints | [Deployment Guide - Locally Hosted Models](DEPLOYMENT.md#-locally-hosted-models) |
 | **Managed cloud GPU** | An NVIDIA Brev account | [Deploy on Brev](BREV.md) |
 
 The self-hosted path is a hybrid: the language and text-embedding models move
@@ -81,7 +81,7 @@ hardware.
 |----------|----------------|
 | [Embedding Management](EMBEDDING_MANAGEMENT.md) | Catalog JSONL and schema format, fingerprinting, reindexing, and replacing catalog data |
 | [Catalog Schema and Filters](CATALOG_FILTERS.md) | Declaring JSONL field roles so filters derive from data rather than hardcoded values |
-| [Catalog Architecture](CATALOG_REFACTOR_PLAN.md) | End-to-end ingestion, advertised capabilities, agent discovery, and validated retrieval |
+| [Catalog Architecture](CATALOG_ARCHITECTURE.md) | End-to-end ingestion, advertised capabilities, agent discovery, and validated retrieval |
 
 ### Understand and change the agent
 

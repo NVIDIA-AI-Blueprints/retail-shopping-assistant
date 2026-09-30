@@ -35,7 +35,7 @@ http://localhost:8009       # direct chain-server development endpoint
 ```
 
 The catalog retriever is an internal service at `http://localhost:8010`. See
-[Catalog Architecture](CATALOG_REFACTOR_PLAN.md) for the ingest, capability,
+[Catalog Architecture](CATALOG_ARCHITECTURE.md) for the ingest, capability,
 agent-discovery, and validation flow.
 
 The memory retriever is an internal single-replica service at
@@ -781,7 +781,7 @@ turns are not cut off before the SSE response is emitted.
   },
   "catalog": {
     "catalog_id": "fashion_products",
-    "product_count": 205,
+    "product_count": 215,
     "retrieval_modes": ["text", "image", "hybrid"],
     "image_search_enabled": true,
     "filters": {
@@ -810,7 +810,7 @@ turns are not cut off before the SSE response is emitted.
         "taxonomy": false,
         "operators": [],
         "source_fields": ["care"],
-        "coverage": {"present": 24, "total": 205},
+        "coverage": {"present": 24, "total": 215},
         "values": [],
         "min_value": null,
         "max_value": null
@@ -839,7 +839,7 @@ catalog retriever derives them from the loaded JSONL.
 ```json
 {
   "catalog_id": "fashion_products",
-  "product_count": 205,
+  "product_count": 215,
   "retrieval_modes": ["text", "image", "hybrid"],
   "image_search_enabled": true,
   "filters": {
@@ -867,7 +867,7 @@ catalog retriever derives them from the loaded JSONL.
       "taxonomy": false,
       "operators": [],
       "source_fields": ["care"],
-      "coverage": {"present": 24, "total": 205},
+      "coverage": {"present": 24, "total": 215},
       "values": []
     }
   },
@@ -984,7 +984,7 @@ require clarification or a fresh search.
   "categories": [],
   "filters": {"subcategory": ["tote_bags"], "price": {"max": 60}},
   "k": 4,
-  "candidate_k": 205
+  "candidate_k": 215
 }
 ```
 
@@ -1032,7 +1032,7 @@ also ambiguous and returns HTTP 422.
   ],
   "diagnostics": {
     "requested_top_k": 4,
-    "candidate_k": 205,
+    "candidate_k": 215,
     "after_filter_count": 1,
     "returned_count": 1
   },

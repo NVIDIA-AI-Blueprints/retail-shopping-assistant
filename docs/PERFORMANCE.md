@@ -603,6 +603,13 @@ is much easier to miss.
 nothing unless sampled during load. The sweep polls it twice a second for that
 reason.
 
+**`vllm:num_requests_waiting` answers "is it the model or my code?"** Tokens in
+and out, time to first token, queue depth and KV-cache utilisation all describe
+the engine's work, but waiting sequences are the one series that separates a
+saturated model from a slow application. A hosted endpoint cannot answer that
+question at all, which is the strongest reason to serve the model yourself while
+tuning.
+
 **Panel windows hide bursts.** A 5-minute average includes the idle time either
 side of a burst, so a short burst at a high rate can display as a small fraction
 of it. Both figures are correct; check what window a panel averages before

@@ -40,9 +40,8 @@ built on open tooling: LangChain's
 agent harness, and open NVIDIA Nemotron models for reasoning, perception and
 safety. Shoppers type, or upload a photo or a short video.
 
-It ships a representative catalog — 215 products across apparel, footwear,
-bags, eyewear and jewelry, with real images, prices, sizes, materials and
-colors — and that catalog declares which of its own fields become
+It ships a representative catalog — apparel, footwear, bags, eyewear and
+jewelry, with real images, prices, sizes, materials and colors — and that catalog declares which of its own fields become
 shopper-facing filters. Point the service at your own data and the search
 contract follows. Retrieval stays deterministic: the agent writes the query,
 and the catalog service does the embedding search and ranking.
@@ -209,19 +208,7 @@ model's own metrics. vLLM serves Prometheus metrics with nothing to enable:
 curl -s http://localhost:8000/metrics | grep -E '^vllm:'
 ```
 
-Tokens in and out, time to first token, queue depth, KV-cache utilisation, and
-running and waiting sequences. `vllm:num_requests_waiting` is the one that says
-whether the model is the bottleneck rather than the application — a question a
-hosted endpoint cannot answer at all.
-[`monitoring/`](monitoring/README.md) scrapes these into Grafana.
-
-**Going back to hosted** is sourcing the other profile and restarting:
-
-```bash
-source .env
-docker compose up -d --force-recreate chain-server catalog-indexer catalog-retriever
-docker compose -f docker-compose-model-local.yaml stop
-```
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md) covers reading them.
 
 **Stopping**
 

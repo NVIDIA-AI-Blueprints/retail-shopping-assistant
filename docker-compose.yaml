@@ -220,7 +220,7 @@ services:
       # Pass-through, no defaults here: guardrails/src/rails.py holds them, and
       # it reads an empty value as unset. Restating them would give each one two
       # sources that can drift apart unnoticed.
-      - MULTIMODAL_SAFETY_MODALITIES=${MULTIMODAL_SAFETY_MODALITIES:-}
+      - GUARDRAILS_SUPPORTED_MODALITIES=${GUARDRAILS_SUPPORTED_MODALITIES:-}
       - MULTIMODAL_SAFETY_VIDEO_FPS=${MULTIMODAL_SAFETY_VIDEO_FPS:-}
       - GUARDRAILS_INPUT_EXECUTION_MODE=${GUARDRAILS_INPUT_EXECUTION_MODE:-}
       - GUARDRAILS_TIMEOUT_SECONDS=${GUARDRAILS_TIMEOUT_SECONDS:-}

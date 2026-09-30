@@ -358,14 +358,13 @@ set there; a unit test fails if the two differ, so change both together.
 | `MULTIMODAL_SAFETY_API_KEY` | Key for the independently routed video safety judge; Compose falls back to the VLM/NVIDIA key | When the video safety endpoint requires authentication | `VLM_API_KEY` |
 | `MULTIMODAL_SAFETY_BASE_URL` | OpenAI-compatible endpoint for the video safety judge | No | `models.yaml`: `multimodal_safety` |
 | `MULTIMODAL_SAFETY_MODEL` | Video safety model override, independent of perception | No | `models.yaml`: `multimodal_safety` |
-| `MULTIMODAL_SAFETY_MODALITIES` | Media modalities covered by configured judges; unsupported video fails closed | No | `rails.py` (image,video) |
 | `MULTIMODAL_SAFETY_VIDEO_FPS` | Temporal sampling rate sent to Nemotron Omni. The complete video object and embedded audio are submitted, but the model evaluates sampled frames | No | `rails.py` (2.0) |
 | `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the content and topic input rails in `parallel` or `sequential` mode | No | `rails.py` (parallel) |
 | `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Guardrails is opt-in: set this to enable it | No | `config.yaml`: `guardrails_enabled` (off) |
 | `GUARDRAILS_FAILURE_MODE` | Required-check error/timeout behavior: `open` bypasses and `closed` stops the turn. Explicit unsafe decisions always block in either mode | No | `config.yaml`: `guardrails_failure_mode` (closed) |
 | `GUARDRAILS_TIMEOUT_SECONDS` | Timeout for each isolated guardrail service decision. Both services read it: the chain server bounds its call, the guardrail service bounds the judges behind it | No | `config.yaml`: `guardrails_timeout_seconds`, and `rails.py` (15.0) |
 | `GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` | For guarded text-only turns, overlap the first app-model step with input guardrails while holding every tool behind the allow decision. Reduces latency but blocked turns can still incur one app-model request. Media remains sequential | No | `config.yaml`: `guardrails_speculative_main_model_enabled` (off) |
-| `GUARDRAILS_SUPPORTED_MODALITIES` | Modalities advertised to clients as covered by configured guardrails | No | `config.yaml`: `guardrails_supported_modalities` |
+| `GUARDRAILS_SUPPORTED_MODALITIES` | Modalities enforced by guardrails and advertised to clients | No | `config.yaml`: `guardrails_supported_modalities` |
 | `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` | Shared deadline for the Deep Agents graph and grounding editor before the durable turn fails cleanly | No | `config.yaml`: `deepagents_execution_timeout_seconds` |
 | `EXPOSE_AGENT_DIAGNOSTICS` | Expose detailed agent/tool traces in query responses; enable only behind a trusted operator or evaluation surface | No | `config.yaml`: `expose_agent_diagnostics` (off) |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
@@ -550,7 +549,7 @@ guardrails_enabled: false
 guardrails_failure_mode: closed
 guardrails_timeout_seconds: 15.0
 guardrails_speculative_main_model_enabled: false
-guardrails_supported_modalities: [text, image, video]
+guardrails_supported_modalities: [text, image]
 ```
 
 The legacy routing and chatter prompt keys remain in that file for compatibility

@@ -231,7 +231,7 @@ class ChainServerConfig(BaseModel):
         ),
     )
     guardrails_supported_modalities: list[Literal["text", "image", "video"]] = Field(
-        default_factory=lambda: ["text", "image", "video"],
+        default_factory=lambda: ["text", "image"],
         description="Modalities covered by required configured safety judges.",
     )
     unsafe_message: str = Field(..., description="Message to display for unsafe content")

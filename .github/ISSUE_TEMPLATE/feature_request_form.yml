@@ -100,7 +100,7 @@ body:
   - type: checkboxes
     id: terms
     attributes:
-      label: Code of Conduct
+      label: Contributing Guidelines
       description: By submitting this issue, you agree to follow our [Contributing Guidelines](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/blob/main/CONTRIBUTING.md)
       options:
         - label: I agree to follow the Retail Shopping Assistant contributing guidelines

@@ -263,12 +263,13 @@ layout for this codebase.
 
 ## Contribution Guidelines
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on:
+We welcome contributions. [Contributing](CONTRIBUTING.md) covers the fork and
+pull-request workflow, the sign-off we require on every commit, and the
+Developer Certificate of Origin. [Code of Conduct](CODE_OF_CONDUCT.md) applies
+to everyone taking part.
 
-- Development setup and environment configuration
-- Coding standards and best practices
-- Testing guidelines and examples
-- Pull request process and code review guidelines
+For development setup see [Deployment](docs/DEPLOYMENT.md), and for running the
+suites see [Testing and Evaluation](tests/README.md).
 
 ## Community
 

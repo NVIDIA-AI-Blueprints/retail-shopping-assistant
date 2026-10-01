@@ -944,6 +944,27 @@ def test_the_same_request_twice_is_not_run_a_second_time() -> None:
     assert _rejection_codes(second) == []
 
 
+def test_a_repair_that_only_supplies_shopper_guidance_runs() -> None:
+    """The 2026-10-01 J03 turn 1: "show me some heels" showed no heels.
+
+    The model sent empty `shopper_guidance`, which was rejected for exactly
+    that, then sent the same scope with the guidance filled in. That retry
+    fixed the one thing the rejection named, and was refused as unchanged.
+    """
+
+    ctx = _context("show me tote bags")
+
+    first = search_catalog(ctx, [_scope(shopper_guidance="")])
+    assert _rejection_codes(first) == [
+        SearchRejection.CAPABILITIES_SCHEMA_MISMATCH
+    ]
+
+    repaired = search_catalog(ctx, [_scope()])
+    text = repaired[0] if isinstance(repaired, tuple) else repaired
+    assert "SEARCH_NOT_REPAIRED" not in text
+    assert _rejection_codes(repaired) == []
+
+
 def test_a_repair_that_changed_something_is_judged_on_its_merits() -> None:
     """The backstop ends identical retries, not repair itself."""
 

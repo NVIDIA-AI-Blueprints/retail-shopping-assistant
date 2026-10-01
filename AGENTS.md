@@ -158,7 +158,7 @@ python skills/retail-local-runner/scripts/local_runner.py stop
 ```
 
 The local runner:
-- Starts app services as local processes and uses Docker only for Milvus infra (`etcd`, `minio`, `milvus`).
+- Starts app services as local processes and uses Docker only for Milvus infra (`etcd`, `seaweedfs`, `milvus`).
 - Uses `shared/configs/models.yaml` plus environment overrides.
 - `configure --nim-host http://HOST` writes ignored `.local-run/model-endpoints.env` with remote model URLs.
 - Retains `WEATHER_ENABLED` and `WEATHER_API_KEY` only for the chain-server

@@ -358,14 +358,21 @@ def _retired_gate_reached(gate: str, detail: str) -> None:
 
 
 def _scope_as_sent(attempt: _Attempt) -> str:
-    """Fingerprint this scope, so an unchanged retry can be recognised."""
+    """Fingerprint this scope, so an unchanged retry can be recognised.
+
+    Every field the model sends belongs here: leave one out, and a retry that
+    repairs only that field reads as unchanged and is refused.
+    """
 
     return json.dumps(
         {
             "semantic_query": attempt.semantic_query,
+            "shopper_guidance": attempt.shopper_guidance,
             "requested_product_type": attempt.requested_product_type,
             "taxonomy": attempt.taxonomy,
             "required_constraints": attempt.required_constraints,
+            "scope_complete": attempt.scope_complete,
+            "search_mode": attempt.search_mode,
         },
         sort_keys=True,
         default=str,

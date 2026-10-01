@@ -101,9 +101,11 @@ services:
       - IMAGE_EMBED_MODEL=${IMAGE_EMBED_MODEL:-}
       - CATALOG_DATA_SOURCE=${CATALOG_DATA_SOURCE:-}
       - CATALOG_SCHEMA_SOURCE=${CATALOG_SCHEMA_SOURCE:-}
-      # Pass-through, no default here: shared/configs/catalog_retriever/config.yaml
-      # declares it. Empty means unset, so config wins.
+      # Pass-through, no defaults here: shared/configs/catalog_retriever/config.yaml
+      # declares them. Empty means unset, so config wins.
       - CATALOG_IMAGE_EMBEDDING_ENABLED=${CATALOG_IMAGE_EMBEDDING_ENABLED:-}
+      - CATALOG_VECTOR_INDEX_TYPE=${CATALOG_VECTOR_INDEX_TYPE:-}
+      - CATALOG_GPU_SEARCH=${CATALOG_GPU_SEARCH:-}
     volumes:
       - ./shared:/app/shared
     depends_on:
@@ -127,9 +129,11 @@ services:
       - IMAGE_EMBED_MODEL=${IMAGE_EMBED_MODEL:-}
       - CATALOG_DATA_SOURCE=${CATALOG_DATA_SOURCE:-}
       - CATALOG_SCHEMA_SOURCE=${CATALOG_SCHEMA_SOURCE:-}
-      # Pass-through, no default here: shared/configs/catalog_retriever/config.yaml
-      # declares it. Empty means unset, so config wins.
+      # Pass-through, no defaults here: shared/configs/catalog_retriever/config.yaml
+      # declares them. Empty means unset, so config wins.
       - CATALOG_IMAGE_EMBEDDING_ENABLED=${CATALOG_IMAGE_EMBEDDING_ENABLED:-}
+      - CATALOG_VECTOR_INDEX_TYPE=${CATALOG_VECTOR_INDEX_TYPE:-}
+      - CATALOG_GPU_SEARCH=${CATALOG_GPU_SEARCH:-}
     volumes:
       - ./shared:/app/shared
     depends_on:

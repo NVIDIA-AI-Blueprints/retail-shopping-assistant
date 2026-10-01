@@ -15,9 +15,11 @@ from shared.model_config import resolve_model_config, validate_model_config
 try:
     from app.catalog import build_product_detail, load_catalog
     from app.retriever import CatalogFilterError, Retriever, RetrieverConfig
+    from app.vector_index import VectorIndexSettings
 except ModuleNotFoundError:
     from .catalog import build_product_detail, load_catalog
     from .retriever import CatalogFilterError, Retriever, RetrieverConfig
+    from .vector_index import VectorIndexSettings
 
 # Set up logging
 logging.basicConfig(
@@ -68,6 +70,19 @@ def env_flag(name: str, *, default: bool) -> bool:
         return False
     raise ValueError(f"{name} must be true or false.")
 
+
+def load_vector_index(configured: dict[str, Any] | None) -> VectorIndexSettings:
+    """Read the vector index from config.yaml, with environment overrides."""
+
+    settings = dict(configured or {})
+    index_type = os.environ.get("CATALOG_VECTOR_INDEX_TYPE", "").strip()
+    if index_type:
+        settings["type"] = index_type.upper()
+    settings["gpu_search"] = env_flag(
+        "CATALOG_GPU_SEARCH", default=bool(settings.get("gpu_search", False))
+    )
+    return VectorIndexSettings(**settings)
+
 shared_config_root = os.environ.get("SHARED_CONFIG_ROOT", "/app/shared/configs")
 data = load_config(os.path.join(shared_config_root, "catalog_retriever", "config.yaml"))
 data.update(
@@ -104,6 +119,7 @@ data.update(
         "image_api_key_env": image_embedding.api_key_env if image_enabled else None,
     }
 )
+vector_index = load_vector_index(data.get("vector_index"))
 snapshot = load_catalog(
     data["data_source"],
     data["schema_source"],
@@ -111,6 +127,7 @@ snapshot = load_catalog(
     image_enabled=image_enabled,
     text_model_name=text_embedding.model,
     image_model_name=image_embedding.model if image_enabled and image_embedding else None,
+    vector_index_signature=vector_index.signature,
     shared_root=os.environ.get("SHARED_ROOT", "/app/shared"),
 )
 capabilities = snapshot.capabilities
@@ -140,6 +157,7 @@ config = RetrieverConfig(
     price_field=snapshot.schema.record.price,
     taxonomy_fields=snapshot.schema.taxonomy.fields,
     detail_fields=snapshot.schema.detail_fields,
+    vector_index=vector_index,
 )
 
 logging.info("CATALOG RETRIEVER | startup | config.yaml ingested.")

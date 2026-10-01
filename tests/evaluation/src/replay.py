@@ -24,6 +24,7 @@ import hashlib
 import json
 import subprocess
 import time
+import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,9 +39,11 @@ EVAL_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_ROOT = EVAL_ROOT / "datasets" / "val"
 RESULTS_ROOT = EVAL_ROOT / "results" / "val"
 
-#: Distinct per scenario and repeat. The cart is keyed on user_id, so two
+#: Distinct per run, scenario and repeat. The cart is keyed on user_id, so two
 #: conversations sharing one would write to the same cart and every cart
 #: assertion in both would be meaningless while still reporting pass or fail.
+#: The memory service keeps carts and dialogue across runs, so a second run
+#: under a reused label would otherwise resume the first one's cart and turns.
 _USER_ID_BASE = 700_000_000
 
 #: The ceiling for --parallel. One turn is mostly model round trips, so beyond
@@ -99,16 +102,25 @@ class TurnResult:
     calls: list[dict[str, Any]] = field(default_factory=list)
 
 
-def scenario_identity(label: str, scenario_id: str, repeat: int) -> dict[str, Any]:
-    """Derive ids that are stable across runs and distinct within one."""
+def scenario_identity(
+    label: str, run_id: str, scenario_id: str, repeat: int
+) -> dict[str, Any]:
+    """Derive ids that are distinct within a run and never shared with another.
 
-    seed = f"{label}|{scenario_id}|{repeat}".encode()
+    The label names the results folder and may be reused; `run_id` is fresh
+    for every invocation, so a reused label still starts every scenario with an
+    empty cart and no remembered dialogue. The conversation id keeps the
+    `<label>-` prefix and the `-<scenario>-<repeat>` suffix that trace capture
+    matches on.
+    """
+
+    seed = f"{label}|{run_id}|{scenario_id}|{repeat}".encode()
     digest = int(hashlib.sha256(seed).hexdigest()[:12], 16)
     # No cart_id: the runtime keys the cart on it when present, and on the
     # user id otherwise. Leaving it out means the cart can be read back by the
     # same id the turn was sent with -- and user_id is already unique per
     # scenario and repeat, so nothing is shared.
-    conversation = f"{label}-{scenario_id}-{repeat}"
+    conversation = f"{label}-{run_id}-{scenario_id}-{repeat}"
     return {
         "user_id": _USER_ID_BASE + digest % 90_000_000,
         "session_id": conversation,
@@ -725,9 +737,10 @@ def run_scenario(
     scenario: Mapping[str, Any],
     assistant: Assistant,
     label: str,
+    run_id: str,
     repeat: int,
 ) -> dict[str, Any]:
-    identity = scenario_identity(label, scenario["id"], repeat)
+    identity = scenario_identity(label, run_id, scenario["id"], repeat)
     turns: list[TurnResult] = []
     previous_cart: list[dict[str, Any]] = []
     error: str | None = None
@@ -1011,8 +1024,12 @@ def main() -> None:
         for scenario in scenarios
         for repeat in range(args.repeat)
     ]
+    run_id = uuid.uuid4().hex[:8]
     identities = {
-        json.dumps(scenario_identity(args.label, scenario["id"], repeat), sort_keys=True)
+        json.dumps(
+            scenario_identity(args.label, run_id, scenario["id"], repeat),
+            sort_keys=True,
+        )
         for scenario, repeat in jobs
     }
     if len(identities) != len(jobs):
@@ -1034,7 +1051,7 @@ def main() -> None:
 
     def execute(job: tuple[Mapping[str, Any], int]) -> dict[str, Any]:
         scenario, repeat = job
-        result = run_scenario(scenario, assistant, args.label, repeat)
+        result = run_scenario(scenario, assistant, args.label, run_id, repeat)
         stem = f"{result['id']}-{repeat}"
         (out / "raw" / f"{stem}.json").write_text(
             json.dumps(result, indent=1, default=str)

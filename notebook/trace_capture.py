@@ -290,7 +290,7 @@ def kind(line: dict) -> str:
 
 
 def journey_of(session_id: str) -> str:
-    """`J01` from `trace-02401c23-J01_wedding_abroad-0`."""
+    """`J01` from `trace-02401c23-0a1b2c3d-J01_wedding_abroad-0`."""
 
     return re.search(r"-(J\d+)_", session_id)[1]
 

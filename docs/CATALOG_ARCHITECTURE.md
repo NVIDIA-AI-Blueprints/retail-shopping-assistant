@@ -230,6 +230,11 @@ similarity-sorted; Milvus COSINE scores are normalized from `[-1, 1]` to
 `[0, 1]` before the configured threshold applies. The default candidate window
 covers the whole active snapshot before hard filters and the final trim to `k`.
 
+The index is `AUTOINDEX` with COSINE by default. An opt-in `GPU_CAGRA` index
+uses IP on unit-length vectors, which gives the same scores, and caps the
+candidate window at 1024; [Vector Search at Catalog Scale](VECTOR_SEARCH.md)
+covers when to use it and how to size it.
+
 Filtering is generic: AND across different fields, OR across values within one
 field, any-overlap for `enum_list`, and bounds for numbers.
 

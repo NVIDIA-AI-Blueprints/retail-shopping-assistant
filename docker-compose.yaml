@@ -101,9 +101,11 @@ services:
       - IMAGE_EMBED_MODEL=${IMAGE_EMBED_MODEL:-}
       - CATALOG_DATA_SOURCE=${CATALOG_DATA_SOURCE:-}
       - CATALOG_SCHEMA_SOURCE=${CATALOG_SCHEMA_SOURCE:-}
-      # Pass-through, no default here: shared/configs/catalog_retriever/config.yaml
-      # declares it. Empty means unset, so config wins.
+      # Pass-through, no defaults here: shared/configs/catalog_retriever/config.yaml
+      # declares them. Empty means unset, so config wins.
       - CATALOG_IMAGE_EMBEDDING_ENABLED=${CATALOG_IMAGE_EMBEDDING_ENABLED:-}
+      - CATALOG_VECTOR_INDEX_TYPE=${CATALOG_VECTOR_INDEX_TYPE:-}
+      - CATALOG_GPU_SEARCH=${CATALOG_GPU_SEARCH:-}
     volumes:
       - ./shared:/app/shared
     depends_on:
@@ -127,9 +129,11 @@ services:
       - IMAGE_EMBED_MODEL=${IMAGE_EMBED_MODEL:-}
       - CATALOG_DATA_SOURCE=${CATALOG_DATA_SOURCE:-}
       - CATALOG_SCHEMA_SOURCE=${CATALOG_SCHEMA_SOURCE:-}
-      # Pass-through, no default here: shared/configs/catalog_retriever/config.yaml
-      # declares it. Empty means unset, so config wins.
+      # Pass-through, no defaults here: shared/configs/catalog_retriever/config.yaml
+      # declares them. Empty means unset, so config wins.
       - CATALOG_IMAGE_EMBEDDING_ENABLED=${CATALOG_IMAGE_EMBEDDING_ENABLED:-}
+      - CATALOG_VECTOR_INDEX_TYPE=${CATALOG_VECTOR_INDEX_TYPE:-}
+      - CATALOG_GPU_SEARCH=${CATALOG_GPU_SEARCH:-}
     volumes:
       - ./shared:/app/shared
     depends_on:
@@ -248,7 +252,7 @@ services:
   # etcd
   etcd:
     container_name: milvus-etcd
-    image: quay.io/coreos/etcd:v3.5.5
+    image: quay.io/coreos/etcd:v3.6.5
     # Deliberately not published to the host. milvus-standalone reaches this
     # over the shopping-network as http://etcd:2379, so nothing outside the
     # network needs it -- and 2379 is etcd's well-known port, so publishing it
@@ -275,31 +279,37 @@ services:
     networks:
       - shopping-network
 
-  # Minio
-  minio:
-    container_name: milvus-minio
-    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+  # SeaweedFS - Milvus's S3-compatible object store, holding its segments and
+  # index files. Not published to the host: only Milvus talks to it, over the
+  # shopping-network. Credentials live in seaweedfs-s3.json and must match
+  # MINIO_ACCESS_KEY_ID / MINIO_SECRET_ACCESS_KEY on milvus.
+  seaweedfs:
+    container_name: milvus-seaweedfs
+    image: chrislusf/seaweedfs:3.73
     volumes:
-      - ./catalog_retriever/volumes/minio:/minio_data
-    command: minio server /minio_data --console-address ":9001"
+      - ./catalog_retriever/volumes/seaweedfs:/data
+      - ./seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
+    command:
+      - server
+      - -dir=/data
+      - -s3
+      - -s3.port=9010
+      - -s3.config=/etc/seaweedfs/s3.json
+      - -master.volumeSizeLimitMB=1024
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 20s
-      retries: 3
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 9010"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     networks:
       - shopping-network
 
-  # Milvus - bridge mode, talking to etcd and minio via service names
+  # Milvus - bridge mode, talking to etcd and seaweedfs via service names.
+  # CPU image by default. GPU indexing and search need the -gpu image and a
+  # GPU reservation; see docs/VECTOR_SEARCH.md.
   milvus:
     container_name: milvus-standalone
-    image: milvusdb/milvus:v2.4.13-hotfix
+    image: milvusdb/milvus:${MILVUS_VERSION:-v2.6.5}
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
@@ -307,22 +317,22 @@ services:
       - "19530:19530"
       - "9091:9091"
     environment:
-      ETCD_ENDPOINTS: http://etcd:2379
-      MINIO_ADDRESS: minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      COMMON_STORAGETYPE: local
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: seaweedfs:9010
+      MINIO_ACCESS_KEY_ID: seaweedfsadmin
+      MINIO_SECRET_ACCESS_KEY: seaweedfsadmin
     volumes:
       - ./catalog_retriever/volumes/milvus:/var/lib/milvus
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 10s
+      start_period: 90s
       timeout: 10s
       retries: 10
     depends_on:
       etcd:
         condition: service_healthy
-      minio:
+      seaweedfs:
         condition: service_healthy
     networks:
       - shopping-network

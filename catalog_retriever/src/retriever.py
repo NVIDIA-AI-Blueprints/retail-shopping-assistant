@@ -30,6 +30,7 @@ from shared.commerce_contracts import CatalogFilterCapability
 
 from .catalog import CatalogSnapshot
 from .utils import image_path_to_base64, image_url_to_base64, is_path, is_url, resize_base64_image
+from .vector_index import VectorIndexSettings
 
 # Set up logging
 logging.basicConfig(
@@ -62,6 +63,7 @@ class RetrieverConfig(BaseModel):
     price_field: str
     taxonomy_fields: list[str]
     detail_fields: list[str] = Field(default_factory=list)
+    vector_index: VectorIndexSettings = Field(default_factory=VectorIndexSettings)
 
 
 class CatalogFilterError(ValueError):
@@ -157,7 +159,7 @@ class Milvus:
         collection_name: str,
         connection_args: dict[str, Any],
         auto_id: bool = True,
-        index_params: dict[str, Any] | None = None,
+        vector_index: VectorIndexSettings | None = None,
     ) -> None:
         if not auto_id:
             raise ValueError("Catalog retriever Milvus adapter requires auto_id=True")
@@ -165,11 +167,7 @@ class Milvus:
         self.embedding_function = embedding_function
         self.collection_name = collection_name
         self.connection_args = connection_args
-        self.index_params = index_params or {"metric_type": "COSINE"}
-        self.search_params = {
-            "metric_type": self.index_params.get("metric_type", "COSINE"),
-            "params": self.index_params.get("params", {}),
-        }
+        self.vector_index = vector_index or VectorIndexSettings()
         self.alias = self._connection_alias(collection_name, connection_args)
         connections.connect(alias=self.alias, **connection_args)
         self.col = self._load_collection_if_exists()
@@ -223,11 +221,7 @@ class Milvus:
         self.col = Collection(self.collection_name, schema=schema, using=self.alias)
         self.col.create_index(
             field_name=self.VECTOR_FIELD,
-            index_params={
-                "metric_type": self.search_params["metric_type"],
-                "index_type": "AUTOINDEX",
-                "params": {},
-            },
+            index_params=self.vector_index.index_params(),
         )
         self.col.load()
         return self.col
@@ -240,9 +234,8 @@ class Milvus:
             return None
         return value
 
-    @classmethod
-    def _vector(cls, embedding: list[float]) -> list[float]:
-        return [float(value) for value in embedding]
+    def _vector(self, embedding: list[float]) -> list[float]:
+        return self.vector_index.prepare(embedding)
 
     def add_embeddings(
         self,
@@ -319,7 +312,7 @@ class Milvus:
         search_result = self.col.search(
             data=[query_vector],
             anns_field=self.VECTOR_FIELD,
-            param=self.search_params,
+            param=self.vector_index.search_params(k),
             limit=k,
             output_fields=["*"],
             **({"expr": expr} if expr else {}),
@@ -332,7 +325,8 @@ class Milvus:
             fields.pop(self.VECTOR_FIELD, None)
             fields[self.PK_FIELD] = hit.id
             document = SimpleNamespace(page_content=page_content, metadata=fields)
-            # Match langchain-milvus's COSINE relevance-score contract.
+            # Match langchain-milvus's COSINE relevance-score contract. IP on
+            # unit vectors (the GPU index) has the same [-1, 1] range.
             relevance_score = (float(hit.score) + 1.0) / 2.0
             results.append((document, relevance_score))
         return results
@@ -367,6 +361,7 @@ class Retriever:
         self.price_field = config.price_field
         self.taxonomy_fields = config.taxonomy_fields
         self.detail_fields = list(config.detail_fields)
+        self.vector_index = config.vector_index
 
         text_key = os.environ.get(self.text_api_key_env, "") if self.text_api_key_env else ""
         image_key = os.environ.get(self.image_api_key_env, "") if self.image_api_key_env else ""
@@ -401,7 +396,7 @@ class Retriever:
             collection_name=self.text_collection,
             connection_args={"uri": f"{self.db_port}"},
             auto_id=True,
-            index_params={"metric_type": "COSINE"},
+            vector_index=self.vector_index,
         )
         self.image_db = None
         if self.image_enabled and self.image_embeddings_obj is not None:
@@ -410,7 +405,7 @@ class Retriever:
                 collection_name=self.image_collection,
                 connection_args={"uri": f"{self.db_port}"},
                 auto_id=True,
-                index_params={"metric_type": "COSINE"},
+                vector_index=self.vector_index,
             )
 
         logging.info("CATALOG RETRIEVER | Retriever.__init__() | Milvus collections initialized.")
@@ -773,6 +768,11 @@ class Retriever:
         Asynchronously retrieve relevant items from both text and image databases.
         """
         candidate_limit = max(k, candidate_k or self.catalog_size or (k * 5))
+        if self.vector_index.max_limit is not None:
+            # Past this Milvus rejects the search outright. A larger catalog
+            # then ranks within the top max_limit, not the whole snapshot;
+            # docs/VECTOR_SEARCH.md lists what that costs.
+            candidate_limit = min(candidate_limit, self.vector_index.max_limit)
         diagnostics: dict[str, Any] = {
             "requested_top_k": k,
             "candidate_k": candidate_limit,

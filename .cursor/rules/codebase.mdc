@@ -75,8 +75,8 @@ All services communicate via HTTP REST APIs:
 - **Port 8011**: Memory Retriever  
 - **Port 8012**: Guardrails
 - **Port 19530**: Milvus Database
-- **Port 9000/9001**: Minio (object storage)
-- **Port 2379**: etcd (coordination)
+- **SeaweedFS** (object storage for Milvus): S3 on 9010, internal to the Compose network only
+- **etcd** (coordination): 2379, internal to the Compose network only
 
 ## Core Components
 
@@ -412,7 +412,7 @@ The system uses multi-container Docker deployment:
 **Infrastructure**:
 - `milvus`: Vector database
 - `etcd`: Coordination service
-- `minio`: Object storage
+- `seaweedfs`: Object storage for Milvus segments and indexes
 
 ### Environment Variables
 

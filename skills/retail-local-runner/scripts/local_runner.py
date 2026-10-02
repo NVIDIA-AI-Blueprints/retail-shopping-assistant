@@ -36,7 +36,7 @@ INTEGRATION_REQUIREMENTS = REPO_ROOT / "tests" / "requirements.txt"
 UI_PUBLIC_IMAGES = REPO_ROOT / "ui" / "public" / "images"
 SHARED_IMAGES = REPO_ROOT / "shared" / "images"
 
-INFRA_SERVICES = ("etcd", "minio", "milvus")
+INFRA_SERVICES = ("etcd", "seaweedfs", "milvus")
 MILVUS_GRPC_PORT = 19530
 MILVUS_HEALTH_URL = "http://localhost:9091/healthz"
 
@@ -513,7 +513,7 @@ def start_infra() -> None:
 
 
 def stop_infra() -> None:
-    run(["docker", "compose", "-f", "docker-compose.yaml", "stop", "milvus", "minio", "etcd"])
+    run(["docker", "compose", "-f", "docker-compose.yaml", "stop", "milvus", "seaweedfs", "etcd"])
 
 
 def install_dev(args: argparse.Namespace) -> None:

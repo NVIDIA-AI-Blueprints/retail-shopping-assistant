@@ -52,7 +52,8 @@ codebase layout.
 **I want to use my own product catalog.**
 [Catalog Architecture](CATALOG_ARCHITECTURE.md) covers the data format, the
 sidecar that declares which fields become shopper-facing filters, and the
-reindex-and-verify sequence.
+reindex-and-verify sequence. For a large catalog, or to index and search on a
+GPU, read [Vector Search at Catalog Scale](VECTOR_SEARCH.md).
 
 **I want to run it faster, or size it for load.** [Performance](PERFORMANCE.md)
 covers the latency budget of a turn, finding the saturation point, and sizing
@@ -82,6 +83,7 @@ hardware.
 | Document | What it covers |
 |----------|----------------|
 | [Catalog Architecture](CATALOG_ARCHITECTURE.md) | The JSONL and sidecar format, declaring field roles so filters derive from data, advertised capabilities, validated retrieval, and replacing catalog data |
+| [Vector Search at Catalog Scale](VECTOR_SEARCH.md) | The Milvus and SeaweedFS stack, choosing a CPU or GPU index, sizing, GPU search limits, and indexing a large catalog |
 
 ### Understand and change the agent
 

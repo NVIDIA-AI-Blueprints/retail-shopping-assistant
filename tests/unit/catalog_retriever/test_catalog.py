@@ -235,6 +235,29 @@ def test_fingerprint_changes_with_data_schema_or_embedding_model(tmp_path) -> No
     assert first.fingerprint != third.fingerprint
 
 
+def test_fingerprint_changes_with_the_vector_index(tmp_path) -> None:
+    from catalog_retriever.src.vector_index import VectorIndexSettings
+
+    data_path, schema_path = _write_source(tmp_path, [_product()])
+
+    def fingerprint(settings: VectorIndexSettings) -> str:
+        return load_catalog(
+            str(data_path),
+            str(schema_path),
+            image_enabled=False,
+            text_model_name="text-a",
+            vector_index_signature=settings.signature,
+        ).fingerprint
+
+    cpu = fingerprint(VectorIndexSettings())
+    gpu_build = fingerprint(VectorIndexSettings(type="GPU_CAGRA"))
+    gpu_search = fingerprint(VectorIndexSettings(type="GPU_CAGRA", gpu_search=True))
+
+    assert len({cpu, gpu_build, gpu_search}) == 3
+    # ef is a search setting; the built index does not depend on it.
+    assert fingerprint(VectorIndexSettings(ef=400)) == cpu
+
+
 def test_fingerprint_changes_when_local_image_bytes_change(tmp_path) -> None:
     image_dir = tmp_path / "images"
     image_dir.mkdir()

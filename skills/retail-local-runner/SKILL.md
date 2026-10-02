@@ -61,7 +61,7 @@ python skills/retail-local-runner/scripts/local_runner.py stop
 The stop command only kills PID files tracked under `.local-run/pids/` and stops local Milvus infra containers from `docker-compose.yaml`:
 
 - `milvus`
-- `minio`
+- `seaweedfs`
 - `etcd`
 
 It must not stop or modify the remote model host running `docker-compose-model-local.yaml`. If ports are still occupied after `stop`, use `status` and `lsof` to report the untracked owner instead of killing unrelated processes.
@@ -114,7 +114,7 @@ The runner starts these local app processes:
 Only Milvus infra remains containerized:
 
 ```bash
-docker compose -f docker-compose.yaml up -d etcd minio milvus
+docker compose -f docker-compose.yaml up -d etcd seaweedfs milvus
 ```
 
 If another local Milvus is already healthy at `localhost:19530` with health on `http://localhost:9091/healthz`, the runner reuses that local endpoint instead of creating conflicting Docker containers. `stop` still only stops this repo's tracked app processes and this repo's Compose infra; it does not stop Milvus containers owned by another project.

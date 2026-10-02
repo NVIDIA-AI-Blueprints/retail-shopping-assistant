@@ -23,6 +23,7 @@ from catalog_retriever.src.retriever import (
     Retriever,
     RetrieverConfig,
 )
+from catalog_retriever.src.vector_index import GPU_CAGRA_MAX_LIMIT, VectorIndexSettings
 from shared.commerce_contracts import CatalogFilterCapability
 
 # --------------------------------------------------------------------------->
@@ -207,7 +208,6 @@ class TestMilvusAdapter:
             collection_name="products",
             connection_args={"uri": "http://milvus:19530"},
             auto_id=True,
-            index_params={"metric_type": "COSINE"},
         )
         db.add_embeddings(
             texts=["Red Dress | bright | dress,day"],
@@ -932,6 +932,31 @@ class TestRetrieve:
                 "k"
             ]
             == 205
+        )
+
+    async def test_gpu_index_caps_the_candidate_window_at_its_search_limit(
+        self, retriever: Retriever
+    ) -> None:
+        retriever.catalog_size = 5000
+        retriever.vector_index = VectorIndexSettings(type="GPU_CAGRA")
+        retriever.text_db.similarity_search_with_relevance_scores = MagicMock(
+            return_value=[(_doc("Silk Dress"), 0.9)]
+        )
+
+        output = await retriever.retrieve(
+            query=["dress"],
+            categories=[],
+            k=4,
+            image_bool=False,
+            verbose=False,
+        )
+
+        assert output.diagnostics["candidate_k"] == GPU_CAGRA_MAX_LIMIT
+        assert (
+            retriever.text_db.similarity_search_with_relevance_scores.call_args.kwargs[
+                "k"
+            ]
+            == GPU_CAGRA_MAX_LIMIT
         )
 
     async def test_text_only_category_match_filters(self, retriever: Retriever) -> None:

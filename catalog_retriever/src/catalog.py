@@ -201,6 +201,7 @@ def load_catalog(
     image_enabled: bool = True,
     text_model_name: str = "",
     image_model_name: str | None = None,
+    vector_index_signature: str = "",
     shared_root: str | None = None,
 ) -> CatalogSnapshot:
     """Load and fully validate a JSONL catalog and its role sidecar."""
@@ -224,6 +225,7 @@ def load_catalog(
         image_model_name=image_model_name,
         image_enabled=image_enabled,
         image_assets_digest=image_assets_digest,
+        vector_index_signature=vector_index_signature,
     )
     search_documents = tuple(
         build_search_document(product, schema) for product in products
@@ -492,6 +494,7 @@ def _catalog_fingerprint(
     image_model_name: str | None,
     image_enabled: bool,
     image_assets_digest: bytes,
+    vector_index_signature: str,
 ) -> str:
     digest = sha256()
     for label, payload in (
@@ -505,6 +508,7 @@ def _catalog_fingerprint(
         (b"image_enabled", str(image_enabled).encode("ascii")),
         (b"image_assets", image_assets_digest),
         (b"template", SEARCH_DOCUMENT_TEMPLATE_VERSION.encode("ascii")),
+        (b"vector_index", vector_index_signature.encode("utf-8")),
     ):
         digest.update(label + b"\0" + payload + b"\0")
     return digest.hexdigest()

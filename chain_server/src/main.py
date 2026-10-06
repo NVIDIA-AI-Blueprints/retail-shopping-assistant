@@ -201,7 +201,7 @@ async def process_query_stream(request: QueryRequest):
     and chat-like experiences.
     """
     try:
-        logger.info(f"chain-server | /query/stream | Processing streaming query for user {request.user_id}: {request.query}")
+        logger.info(f"chain-server | /query/stream | Processing streaming query for user {request.user_id}")
 
         media = _normalized_media(request)
         _validate_media(media)
@@ -250,7 +250,7 @@ async def process_query_timing(request: QueryRequest):
     This endpoint is useful for performance analysis and debugging.
     """
     try:
-        logger.info(f"chain-server | /query/timing | Processing timing query for user {request.user_id}: {request.query}")
+        logger.info(f"chain-server | /query/timing | Processing timing query for user {request.user_id}")
 
         media = _normalized_media(request)
         _validate_media(media)
@@ -276,7 +276,7 @@ async def process_query_timing(request: QueryRequest):
         )
         end_time = time.monotonic()
 
-        logger.info(f"chain-server | /query/timing | Collected state: {out_state_dict}")
+        logger.info(f"chain-server | /query/timing | Collected state keys: {sorted(out_state_dict)}")
 
         total_time = end_time - start_time
 

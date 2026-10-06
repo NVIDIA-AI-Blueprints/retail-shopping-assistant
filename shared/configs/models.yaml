@@ -40,15 +40,6 @@ models:
     model: "nvidia/nemotron-3-embed-1b"
     api_key_env: EMBED_API_KEY
 
-  image_embedding:
-    source: endpoint
-    provider: openai_compatible
-    base_url_env: IMAGE_EMBED_BASE_URL
-    base_url: "https://integrate.api.nvidia.com/v1"
-    model_env: IMAGE_EMBED_MODEL
-    model: "nvidia/nvclip"
-    api_key_env: EMBED_API_KEY
-
   # Media perception for photo and video uploads. The same model as app_llm by
   # default, since it reads images and video; VLM_* points it elsewhere.
   vlm:

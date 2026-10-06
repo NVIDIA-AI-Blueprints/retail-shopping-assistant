@@ -19,7 +19,6 @@
 - [Nemotron 3 Nano Omni 30B A3B Reasoning](https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning) ([NVIDIA Community Models License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/))
 - [Nemotron 3.5 Content Safety](https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nemotron-3.5-content-safety) ([NVIDIA Community Models License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/))
 - [Nemotron 3.5 Super VL](https://build.nvidia.com/nvidia/nemotron-3.5-super-vl-preview) ([NVIDIA Community Models License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/))
-- [NV-CLIP](https://build.nvidia.com/nvidia/nvclip) ([NVIDIA Community Models License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/))
 
 ### Containers
 

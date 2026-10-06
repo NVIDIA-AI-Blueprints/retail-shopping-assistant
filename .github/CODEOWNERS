@@ -15,3 +15,6 @@ conda/             @<org>/ops-codeowners
 **/Dockerfile      @<org>/ops-codeowners
 **/.dockerignore   @<org>/ops-codeowners
 docker/            @<org>/ops-codeowners
+
+# default owner
+*  rkharwar@nvidia.com

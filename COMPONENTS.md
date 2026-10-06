@@ -34,6 +34,10 @@
 
 - [Llama 3.1 NemoGuard 8B Topic Control](https://build.nvidia.com/nvidia/llama-3_1-nemoguard-8b-topic-control) ([Llama 3.1 Community License](https://www.llama.com/llama3_1/license/))
 
+### Services
+
+- [Visual Crossing Weather API](https://www.visualcrossing.com/) ([Visual Crossing Terms of Service](https://www.visualcrossing.com/weather-services-terms/))
+
 ### Containers
 
 - [Arize Phoenix](https://github.com/Arize-ai/phoenix) ([Elastic License 2.0](https://www.elastic.co/licensing/elastic-license))

@@ -77,6 +77,17 @@ THIRD_PARTY_CONTAINER_CATALOG = {
 
 
 # NIMs: inference microservices used in compose files (keyed by nvcr.io image prefix)
+# Hosted third-party services, listed when a marker string appears in the source.
+THIRD_PARTY_SERVICE_CATALOG = [
+    {
+        'marker': 'weather.visualcrossing.com',
+        'name': 'Visual Crossing Weather API',
+        'url': 'https://www.visualcrossing.com/',
+        'license': 'Visual Crossing Terms of Service',
+        'license_url': 'https://www.visualcrossing.com/weather-services-terms/',
+    },
+]
+
 NVIDIA_NIM_CATALOG = {}
 
 # Models referenced by ID in config files (keyed by "org/model-name")
@@ -532,7 +543,7 @@ def fetch_github_license(github_url: str):
 # ── Repo scanner ──────────────────────────────────────────────────────────────
 
 def scan_repo(root: Path):
-    found = {'pypi': set(), 'npm': set(), 'docker_images': [], 'nim_images': [], 'model_ids': set(), 'internal_services': [], 'compose_images': []}
+    found = {'pypi': set(), 'npm': set(), 'docker_images': [], 'nim_images': [], 'model_ids': set(), 'internal_services': [], 'compose_images': [], 'services': []}
 
     # Directories to skip for package manifests (not for model config)
     pkg_skip = {'.git', 'node_modules', '.tox', '__pycache__', '.venv', 'venv', 'external'}
@@ -607,6 +618,12 @@ def scan_repo(root: Path):
         if not any(s in p.parts for s in always_skip):
             found['internal_services'].extend(parse_compose_internal_services(p, root))
 
+    source_files = [p for ext in ('*.py', '*.ts', '*.tsx', '*.yaml', '*.yml') for p in root.rglob(ext)
+                    if not any(x in p.parts for x in always_skip | {'.github'})]
+    for svc in THIRD_PARTY_SERVICE_CATALOG:
+        if any(svc['marker'] in p.read_text(errors='ignore') for p in source_files):
+            found['services'].append(svc)
+
     return found
 
 
@@ -654,6 +671,9 @@ def enrich(packages: dict, submodules: list):
         if entry and entry['name'] not in seen_containers:
             seen_containers.add(entry['name'])
             third_party.append({**dict(entry), 'ecosystem': 'Containers'})
+
+    for svc in packages.get('services', []):
+        third_party.append({k: v for k, v in svc.items() if k != 'marker'} | {'ecosystem': 'Services'})
 
     seen_nims = set()
     for img in packages.get('nim_images', []):
@@ -721,7 +741,7 @@ def generate_markdown(nvidia, third_party, internal):
         if not components:
             return
         lines.extend([f'## {title}', ''])
-        for eco in ('Source', 'GitHub', 'Models & NIMs', 'Containers', 'Python', 'Node.js'):
+        for eco in ('Source', 'GitHub', 'Models & NIMs', 'Services', 'Containers', 'Python', 'Node.js'):
             eco_pkgs = [c for c in components if c.get('ecosystem') == eco]
             if eco_pkgs:
                 lines.extend([f'### {eco}', ''])

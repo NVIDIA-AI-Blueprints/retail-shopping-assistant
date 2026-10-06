@@ -17,20 +17,19 @@
 
 FROM nvcr.io/nvidia/base/ubuntu:22.04_20240212
 
-RUN apt update
-RUN apt install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     apt-transport-https \
+    ca-certificates \
     curl \
-    software-properties-common
-
-RUN curl -sL https://deb.nodesource.com/setup_21.x | bash -
-RUN apt install -y nodejs
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY . .
 RUN rm -rf /app/public/images && ln -s /app/shared/images /app/public/images
 
-RUN npm install
+RUN npm ci
 
 CMD ["npm", "run", "start"]

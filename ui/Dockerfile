@@ -11,11 +11,10 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
-# limitations under the License.
 
-#FROM node:18-alpine
+ARG BASE_IMAGE=nvcr.io/nvidia/base/ubuntu:22.04_20240212
 
-FROM nvcr.io/nvidia/base/ubuntu:22.04_20240212
+FROM ${BASE_IMAGE} AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     apt-transport-https \
@@ -26,10 +25,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-COPY . .
-RUN rm -rf /app/public/images && ln -s /app/shared/images /app/public/images
-
+COPY package.json package-lock.json ./
 RUN npm ci
+COPY . .
+RUN npm run build
 
-CMD ["npm", "run", "start"]
+FROM ${BASE_IMAGE}
+
+RUN apt-get update && apt-get install -y --no-install-recommends nginx \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY --from=build /app/build /usr/share/nginx/html
+
+# Product images are mounted at /app/shared/images by docker-compose.
+EXPOSE 3000
+CMD ["nginx", "-g", "daemon off;"]

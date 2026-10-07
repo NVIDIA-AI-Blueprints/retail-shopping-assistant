@@ -33,11 +33,14 @@ RUN npm run build
 FROM ${BASE_IMAGE}
 
 RUN apt-get update && apt-get install -y --no-install-recommends nginx \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && chown -R www-data:www-data /var/lib/nginx /var/log/nginx
 
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY --from=build /app/build /usr/share/nginx/html
 
-# Product images are mounted at /app/shared/images by docker-compose.
+# Product images are mounted at /app/shared/images by docker-compose, and
+# must be readable by www-data.
+USER www-data
 EXPOSE 3000
 CMD ["nginx", "-g", "daemon off;"]

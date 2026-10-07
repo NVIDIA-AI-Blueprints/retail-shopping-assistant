@@ -456,6 +456,16 @@ def parse_config_for_models(path: Path):
     return model_ids
 
 
+def parse_env_example_models(path: Path):
+    """Extract default model IDs from lines like export X_MODEL="${X_MODEL:-org/name}"."""
+    model_ids = []
+    for line in path.read_text(errors='ignore').splitlines():
+        m = re.match(r'\s*export\s+\w*MODEL\w*="\$\{\w+:-([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+)\}"', line)
+        if m:
+            model_ids.append('/'.join(m.group(1).split('/')[-2:]).lower())
+    return model_ids
+
+
 def parse_notebook(path: Path):
     """Extract model IDs and nvcr.io images from Jupyter notebooks."""
     model_ids = []
@@ -603,6 +613,10 @@ def scan_repo(root: Path):
     for p in root.rglob('models.y*ml'):
         if not any(s in p.parts for s in always_skip):
             found['model_ids'].update(parse_config_for_models(p))
+
+    for p in root.rglob('.env*example*'):
+        if not any(s in p.parts for s in always_skip):
+            found['model_ids'].update(parse_env_example_models(p))
 
     for p in root.rglob('models.json'):
         if not any(s in p.parts for s in always_skip):

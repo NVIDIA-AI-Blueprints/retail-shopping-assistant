@@ -243,7 +243,7 @@ def _turn_span(identity: RequestIdentity):
             span.set_attribute("session.id", identity.conversation_id)
             span.set_attribute("conversation.id", identity.conversation_id)
             span.set_attribute("request.id", identity.request_id)
-        except Exception:  # noqa: BLE001 - same.
+        except Exception:  # noqa: BLE001 # nosec B110 - same.
             pass
         yield span
 
@@ -2189,7 +2189,7 @@ Rules:
   unsupported phrases about grass, gravel, water resistance, all-day comfort,
   maximum breathability, or best-in-category performance.
 {media_rules}
-"""
+"""  # nosec B608 - LLM prompt text, not SQL
         return prompt
 
     def _build_user_message(self, state: State, identity: RequestIdentity) -> str:

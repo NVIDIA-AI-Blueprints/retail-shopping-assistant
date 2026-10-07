@@ -27,7 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
+import subprocess  # nosec B404 - fixed git/ruff commands, no shell
 import sys
 
 #: The hunk header names the lines as they are after the change: `+start,count`,
@@ -39,7 +39,7 @@ _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 def _changed_lines(base: str) -> dict[str, set[int]]:
     """Which lines of which Python files this branch added or edited."""
 
-    diff = subprocess.run(
+    diff = subprocess.run(  # nosec B603 B607 - fixed git command, no shell
         # No context lines, so a hunk covers only what changed and not the
         # untouched lines either side of it.
         ["git", "diff", "-U0", "--diff-filter=ACMR", f"{base}...HEAD", "--", "*.py"],
@@ -67,7 +67,7 @@ def _changed_lines(base: str) -> dict[str, set[int]]:
 def _findings(paths: list[str]) -> list[dict]:
     """Every ruff finding in these files, wherever it sits."""
 
-    result = subprocess.run(
+    result = subprocess.run(  # nosec B603 B607 - fixed ruff command, no shell
         ["ruff", "check", "--output-format", "json", *paths],
         capture_output=True,
         text=True,
@@ -112,7 +112,7 @@ def main() -> int:
 
 
 def _cwd() -> str:
-    return subprocess.run(
+    return subprocess.run(  # nosec B603 B607 - fixed git command, no shell
         ["git", "rev-parse", "--show-toplevel"],
         capture_output=True,
         text=True,

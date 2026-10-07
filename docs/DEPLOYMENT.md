@@ -367,7 +367,6 @@ set there; a unit test fails if the two differ, so change both together.
 | `LLM_API_KEY` | Language model API key | Yes | - |
 | `LLM_BASE_URL` / `LLM_MODEL` | Shopping agent endpoint and model | No | `models.yaml`: `app_llm` |
 | `TEXT_EMBED_BASE_URL` / `TEXT_EMBED_MODEL` | Catalog text embedding endpoint and model | No | `models.yaml`: `text_embedding` |
-| `IMAGE_EMBED_BASE_URL` / `IMAGE_EMBED_MODEL` | Visual search embedding endpoint and model | No | `models.yaml`: `image_embedding` |
 | `APP_LLM_TEMPERATURE` | Temperature for the shopping agent and grounding editor; see [Model Sampling and Output Limits](#model-sampling-and-output-limits) | No | `config.yaml`: `llm_temperature` |
 | `APP_LLM_FREQUENCY_PENALTY` | Optional frequency penalty for the same calls | No | off |
 | `LLM_MAX_OUTPUT_TOKENS` | Shopping agent output ceiling per call | No | `config.yaml`: `llm_max_output_tokens` |

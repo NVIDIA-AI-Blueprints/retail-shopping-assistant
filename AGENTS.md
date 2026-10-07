@@ -224,7 +224,6 @@ Key env vars:
 - `HF_TOKEN`, `HF_CACHE` (for locally deployed models)
 - `LLM_BASE_URL`, `LLM_MODEL`
 - `TEXT_EMBED_BASE_URL`, `TEXT_EMBED_MODEL`
-- `IMAGE_EMBED_BASE_URL`, `IMAGE_EMBED_MODEL`
 - `RAILS_BASE_URL`, `RAILS_CONTENT_BASE_URL`, `RAILS_TOPIC_BASE_URL`
 - `GUARDRAILS_URL`
 - `GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` (default-off text-only latency/cost tradeoff; tools still wait for input allow)

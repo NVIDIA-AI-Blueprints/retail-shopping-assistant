@@ -109,7 +109,6 @@ has been removed; `runtime/runtime.py` is the only serving path.
 
 **Key Functionality**:
 - Text embedding using NVIDIA NIM models
-- Image embedding using NVCLIP
 - Milvus vector database queries
 - Schema-driven JSONL loading and semantic-document construction
 - Data-derived capabilities and generic hard filtering

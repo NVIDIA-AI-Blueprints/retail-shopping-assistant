@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 
-ARG BASE_IMAGE=nvcr.io/nvidia/base/ubuntu:22.04_20240212
+ARG BASE_IMAGE=nvcr.io/nvidia/base/ubuntu:jammy-20260810
 
 FROM ${BASE_IMAGE} AS build
 

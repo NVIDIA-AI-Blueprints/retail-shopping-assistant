@@ -142,8 +142,8 @@ python scripts/model_config.py show --validate
 docker compose up -d --build
 ```
 
-The profile's `LLM_*`, `VLM_*` and `TEXT_EMBED_*` override `models.yaml`, so
-tracked configuration does not change. Reasoning output is suppressed via
+The profile sets `LLM_*`, `VLM_*` and `TEXT_EMBED_*` after sourcing
+`.env.example`, so tracked configuration does not change. Reasoning output is suppressed via
 `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` on the
 chain-server side so streamed tokens flow eagerly.
 
@@ -159,7 +159,7 @@ python skills/retail-local-runner/scripts/local_runner.py stop
 
 The local runner:
 - Starts app services as local processes and uses Docker only for Milvus infra (`etcd`, `seaweedfs`, `milvus`).
-- Uses `shared/configs/models.yaml` plus environment overrides.
+- Uses `shared/configs/models.yaml` with the URLs and model names from the shell environment; source `.env.example` first, or run `configure`.
 - `configure --nim-host http://HOST` writes ignored `.local-run/model-endpoints.env` with remote model URLs.
 - Retains `WEATHER_ENABLED` and `WEATHER_API_KEY` only for the chain-server
   process and removes them from memory, guardrail, catalog, and UI processes.
@@ -209,7 +209,7 @@ Integration outputs are generated under `tests/integration/conversations/<TEST_P
 - Service behavior lives in `shared/configs/chain_server/config.yaml`,
   `shared/configs/catalog_retriever/config.yaml`, and
   `shared/configs/rails/config.yml`.
-- Model endpoints live in `models.yaml`; each role independently uses `source: endpoint`, `source: local_model`, or `source: disabled`.
+- Model URLs and model names are set only in `.env.example` (or a profile copied from it). `models.yaml` names each role's variables and its `source`: `endpoint`, `local_model`, or `disabled`. A `base_url` or `model` written on a role in `models.yaml` is rejected.
 - Catalog image helpers read assets from `SHARED_ROOT` when set, otherwise `/app/shared`.
 - Catalog data and role-sidecar paths can be overridden with
   `CATALOG_DATA_SOURCE` and `CATALOG_SCHEMA_SOURCE`.
@@ -224,7 +224,9 @@ Key env vars:
 - `HF_TOKEN`, `HF_CACHE` (for locally deployed models)
 - `LLM_BASE_URL`, `LLM_MODEL`
 - `TEXT_EMBED_BASE_URL`, `TEXT_EMBED_MODEL`
-- `RAILS_BASE_URL`, `RAILS_CONTENT_BASE_URL`, `RAILS_TOPIC_BASE_URL`
+- `VLM_BASE_URL`, `VLM_MODEL`
+- `RAILS_BASE_URL`, `RAILS_CONTENT_BASE_URL`, `RAILS_TOPIC_BASE_URL`, `RAILS_CONTENT_MODEL`, `RAILS_TOPIC_MODEL`
+- `MULTIMODAL_SAFETY_BASE_URL`, `MULTIMODAL_SAFETY_MODEL`
 - `GUARDRAILS_URL`
 - `GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` (default-off text-only latency/cost tradeoff; tools still wait for input allow)
 - `CHECKPOINT_STORE` (currently supports only `memory`)
@@ -346,7 +348,7 @@ Key env vars:
   exact resolution can restore a prior product after restart or on another
   worker. Missing, ambiguous, or stale-catalog references require clarification
   or a fresh search.
-- Local LLM service is named `local-llm`; chain-server reaches it through `LLM_BASE_URL` (set by `.env.local-models.example`), or through `shared/configs/models.yaml` when the app LLM role uses `source: local_model`.
+- Local LLM service is named `local-llm`; chain-server reaches it through `LLM_BASE_URL` (set by `.env.local-models.example`), or through `local_models.services` in `shared/configs/models.yaml` when the app LLM role uses `source: local_model`.
 - Tool calling against the locally deployed LLM requires `--enable-auto-tool-choice --tool-call-parser qwen3_coder`, set in the service's `command`. Without them, requests with `tool_choice="auto"` 400.
 - The Deep Agents model first selects shopper skills through the internal
   activation control tool. Only after the runtime injects the complete selected

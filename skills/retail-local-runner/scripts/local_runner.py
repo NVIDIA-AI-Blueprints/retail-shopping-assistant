@@ -603,7 +603,7 @@ def status(_args: argparse.Namespace) -> None:
     if MODEL_ENV.exists():
         print(f"model endpoint env: {MODEL_ENV.relative_to(REPO_ROOT)}")
     else:
-        print("model endpoint env: not configured; using shell env and shared/configs/models.yaml")
+        print("model endpoint env: not configured; using the shell env (source .env.example first)")
     print()
     print("Local processes:")
     for service in ALL_LOCAL_SERVICES:

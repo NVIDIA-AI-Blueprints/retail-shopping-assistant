@@ -163,7 +163,7 @@ The local runner:
 - `configure --nim-host http://HOST` writes ignored `.local-run/model-endpoints.env` with remote model URLs.
 - Retains `WEATHER_ENABLED` and `WEATHER_API_KEY` only for the chain-server
   process and removes them from memory, guardrail, catalog, and UI processes.
-- Sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, `REACT_APP_API_BASE_URL=http://localhost:8009`, and `BROWSER=none`.
+- Sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, and `VITE_API_BASE_URL=/api` (the Vite dev server proxies `/api` to the chain server).
 - Creates runtime files under ignored `.local-run/` and links ignored `ui/public/images -> shared/images`.
 
 If a remote model host is needed, ask for the base host URL and run `configure`; do not hard-code private hosts in committed files.
@@ -213,7 +213,7 @@ Integration outputs are generated under `tests/integration/conversations/<TEST_P
 - Catalog image helpers read assets from `SHARED_ROOT` when set, otherwise `/app/shared`.
 - Catalog data and role-sidecar paths can be overridden with
   `CATALOG_DATA_SOURCE` and `CATALOG_SCHEMA_SOURCE`.
-- UI API base URL defaults to `/api` for nginx, but local development can set `REACT_APP_API_BASE_URL` to the chain-server URL.
+- UI API base URL defaults to `/api` for nginx, but the Vite dev server proxies `/api` to `CHAIN_SERVER_URL` (default `http://localhost:8009`).
 - Use `python scripts/model_config.py show --validate` to inspect resolved endpoints without printing secrets.
 
 Key env vars:
@@ -237,7 +237,7 @@ Key env vars:
 - `CATALOG_DATA_SOURCE`, `CATALOG_SCHEMA_SOURCE`
 - `SHARED_CONFIG_ROOT` (local runner / non-container config root)
 - `SHARED_ROOT` (local runner / non-container shared asset root)
-- `REACT_APP_API_BASE_URL` (local React dev server API target)
+- `VITE_API_BASE_URL` (UI API base, default `/api`), `CHAIN_SERVER_URL` (Vite dev proxy target)
 - `WEATHER_ENABLED` (registers the forecast tool with the shopper agent;
   default `false`)
 - `WEATHER_API_KEY` (Visual Crossing server-side key; required when weather is

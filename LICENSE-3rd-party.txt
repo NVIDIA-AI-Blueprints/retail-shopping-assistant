@@ -39,9 +39,6 @@ below.
    @mui/material 5.15.18
    Copyright (c) 2014 Call-Em-All
 
-   @types/dompurify 3.0.5
-   Copyright (c) Microsoft Corporation
-
    @types/node 20.11.5
    Copyright (c) Microsoft Corporation
 
@@ -49,9 +46,6 @@ below.
    Copyright (c) Microsoft Corporation
 
    @types/react-dom 18.2.18
-   Copyright (c) Microsoft Corporation
-
-   @types/showdown 2.0.6
    Copyright (c) Microsoft Corporation
 
    annotated-types 0.7.0
@@ -62,9 +56,6 @@ below.
 
    attrs 25.3.0
    Copyright (c) 2015 Hynek Schlawack
-
-   autoprefixer 10.4.13
-   Copyright (c) 2013 Andrey Sitnik
 
    charset-normalizer 3.4.2
    Copyright (c) 2019 TAHRI Ahmed R.
@@ -117,8 +108,9 @@ below.
    langsmith 0.8.8
    Copyright (c) 2022 Harrison Chase
 
-   postcss 8.4.19
-   Copyright (c) 2013 Andrey Sitnik
+   marked 18.1.0
+   Copyright (c) 2018+, MarkedJS (https://github.com/markedjs/)
+   Copyright (c) 2011-2018, Christopher Jeffrey (https://github.com/chjj/)
 
    prettier 2.8.0
    Copyright (c) James Long and contributors
@@ -142,17 +134,11 @@ below.
    react-dom 18.2.0
    Copyright (c) Meta Platforms, Inc. and affiliates.
 
-   react-scripts 5.0.1
-   Copyright (c) 2013-present, Facebook, Inc.
-
    react-toastify 10.0.3
    Copyright (c) 2018 Fadi Khadra
 
    setuptools 80.9.0
    Copyright (c) 2006 Python Software Foundation
-
-   showdown 2.1.0
-   Copyright (c) 2007, John Fraser
 
    six 1.17.0
    Copyright (c) 2010-2020 Benjamin Peterson

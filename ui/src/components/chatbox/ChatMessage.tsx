@@ -20,7 +20,7 @@
  */
 
 import React from "react";
-import Showdown from "showdown";
+import { Marked } from "marked";
 import SafeHTML from "./SafeHTML";
 import Loader from "./Loader";
 import MediaAnalysisCard from "./MediaAnalysisCard";
@@ -33,6 +33,9 @@ import {
 } from "../../types";
 import { isFashionMode } from "../../config/config";
 import nvinfo from "../../assets/nvinfo.jpg";
+
+// Single line breaks become <br>, as the replies are written line by line.
+const markdown = new Marked({ async: false, breaks: true });
 
 const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
   ({ role, content, productName, selectedProductName, onProductSelect, guardrailReport }, ref) => {
@@ -47,17 +50,12 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
       p: `messages__item--${role}--p`,
     };
 
-    // Create Showdown converter with custom extensions
-    const bindings = Object.keys(classMap).map((key) => ({
-      type: "output" as const,
-      regex: new RegExp(`<${key}(.*)>`, "g"),
-      replace: `<${key} class="${classMap[key]}" $1>`,
-    }));
-
-    const converter = new Showdown.Converter({
-      extensions: [...bindings],
-      simpleLineBreaks: true,  // This will convert single line breaks to <br>
-    });
+    const withClasses = (html: string) =>
+      Object.keys(classMap).reduce(
+        (out, tag) =>
+          out.replace(new RegExp(`<${tag}(?=[\\s>])`, "g"), `<${tag} class="${classMap[tag]}"`),
+        html
+      );
 
     // Don't render system messages
     if (role === "system") {
@@ -95,7 +93,7 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
         });
       
       // Then use the Markdown converter to handle all formatting including bold
-      const processedContent = converter.makeHtml(preprocessedContent);
+      const processedContent = withClasses(markdown.parse(preprocessedContent) as string);
 
       return (
         <div ref={ref} style={{ display: "inline-flex", alignItems: "flex-start", gap: 8, marginTop: 10 }}>

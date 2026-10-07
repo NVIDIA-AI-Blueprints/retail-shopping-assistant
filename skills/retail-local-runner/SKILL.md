@@ -128,8 +128,8 @@ If another local Milvus is already healthy at `localhost:19530` with health on `
   `python skills/retail-local-runner/scripts/local_runner.py install-dev`.
 - Use `.local-run/dev-venv/bin/python -m pytest ...` for local unit tests after `install-dev`.
 - UI dependencies are installed into `ui/node_modules` when missing.
-- The runner creates `ui/public/images -> shared/images` so React dev mode can serve catalog images from `/images/...`, matching the UI Dockerfile behavior.
-- The runner sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, `REACT_APP_API_BASE_URL=http://localhost:8009`, and `BROWSER=none`.
+- The runner creates `ui/public/images -> shared/images` so the Vite dev server can serve catalog images from `/images/...`, matching the UI Dockerfile behavior.
+- The runner sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, and `VITE_API_BASE_URL=/api`; the Vite dev server proxies `/api` to the chain server.
 - `configure --nim-host` writes `.local-run/model-endpoints.env` with the per-role base URLs and model names.
 - When `NVIDIA_API_KEY` or `NGC_API_KEY` is present, the runner uses it as the default for `LLM_API_KEY`, `EMBED_API_KEY`, and `RAIL_API_KEY`; generated local endpoint envs use `local-nim` as a no-auth placeholder when no key is set.
 - `WEATHER_ENABLED` and `WEATHER_API_KEY` remain available only to the local

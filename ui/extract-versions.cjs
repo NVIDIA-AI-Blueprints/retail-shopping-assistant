@@ -1,4 +1,4 @@
-// extract-versions.js
+// extract-versions.cjs
 const fs = require('fs');
 
 try {

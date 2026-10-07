@@ -23,8 +23,6 @@
 - [Key Features](#key-features)
 - [Architecture](#architecture)
 - [Get Started](#get-started)
-  - [Using NVIDIA Endpoints](#using-nvidia-endpoints)
-  - [Locally Hosted Models](#locally-hosted-models)
 - [Notebooks](#notebooks)
 - [Documentation](#documentation)
 - [Contribution Guidelines](#contribution-guidelines)
@@ -89,22 +87,11 @@ including the catalog data foundation and the memory boundaries.
 
 ## Get Started
 
-Two paths. They differ only in where the models run; everything else is
-identical. Start with NVIDIA endpoints unless you specifically need your own
-GPUs.
+Every model runs on a hosted NVIDIA endpoint, so this path needs **no GPU**.
 
-### Using NVIDIA Endpoints
-
-Every model runs on a hosted endpoint. **No GPU required.**
-
-**You need**
-
-- Docker 20.10+ with the Compose plugin
-- Python on the host, for the deploy helpers
-- An NVIDIA API key from [build.nvidia.com](https://build.nvidia.com)
-- An [NGC account](https://ngc.nvidia.com/) to pull the UI base image
-
-**Deploy**
+**You need** Docker 20.10+ with the Compose plugin, Python on the host, an
+NVIDIA API key from [build.nvidia.com](https://build.nvidia.com), and an
+[NGC account](https://ngc.nvidia.com/) to pull the UI base image.
 
 ```bash
 git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
@@ -117,108 +104,20 @@ cp .env.example .env
 $EDITOR .env                         # set NVIDIA_API_KEY
 source .env
 
-python scripts/model_config.py show --validate
+python scripts/model_config.py show --validate   # every model role resolves; no keys printed
 python scripts/model_config.py deploy --build
+curl -s http://localhost:8010/ready  # catalog: 503 until the index is built
 ```
 
-`show --validate` prints the resolved endpoint for every model role without
-printing any key, and fails if a required one is missing. Copy the template
-rather than editing it: every `.env.*` is gitignored except the templates, so
-your filled-in copy stays out of git along with its keys.
+Then open **http://localhost:3000**, and continue with
+[Notebook 1](notebook/1_Getting_Started.ipynb).
 
-**Verify**
-
-```bash
-curl -s http://localhost:8010/ready   # catalog: 503 until the index is built
-```
-
-Compose indexes the catalog for you. The `catalog-indexer` service runs once,
-builds the index, and exits, and `catalog-retriever` waits for it to succeed
-before starting. Check `/ready` rather than `/health`: a catalog container with
-no matching index is deliberately alive and serving no traffic.
-
-Then open **http://localhost:3000**.
-
-### Locally Hosted Models
-
-The models run on your own GPUs, pulled from Hugging Face or NGC.
-
-How many GPUs you need depends on which models you run and at what precision,
-and each model publishes its own footprint. Taking H100 80GB as the example:
-
-| Model | Role | On H100 80GB | Published footprint |
-|-------|------|--------------|---------------------|
-| Nemotron 3.5 Super | Shopping agent, photo and video | 4 GPUs at BF16 | [121B MoE, ~227 GB BF16](https://docs.nvidia.com/nemo/automodel/model-coverage/omni/nvidia/nemotron-3-5-super-vl) |
-| Nemotron 3 Embed 1B | Catalog and query embedding | shares 1 GPU | [3.6 GB at FP16](https://docs.nvidia.com/nim/nemo-retriever/text-embedding/latest/support-matrix.html) |
-| Nemotron 3.5 Content Safety | Optional moderation | shares 1 GPU | [4B, 8 GB VRAM and up](https://huggingface.co/blog/nvidia/nemotron-3-5-content-safety) |
-| Llama 3.1 NemoGuard 8B Topic Control | Optional off-topic checks | 1 GPU | [48 GB](https://docs.nvidia.com/nim/llama-3-1-nemoguard-8b-topiccontrol/latest/support-matrix.html) |
-
-`docker-compose-model-local.yaml` serves the first two, which is the five-GPU
-default layout: four for the agent's tensor parallel group
-(`LOCAL_LLM_TP=4`, `LOCAL_LLM_GPUS=0,1,2,3`) and one for embedding
-(`LOCAL_EMBED_GPU=4`). The guard models run on hosted endpoints.
-
-Those published figures assume a model has the card to itself, since vLLM
-reserves most of it for the KV cache. Putting the smaller models together on
-one GPU means capping `--gpu-memory-utilization` for each.
-
-**You need**
-
-- Docker 20.10+ with the Compose plugin, and the NVIDIA Container Toolkit
-- Python on the host, for the deploy helpers
-- **Five GPUs** for the default layout above, as on an 8x H100 80 GB machine
-- About 240 GB of disk for the chat model's BF16 checkpoint
-- A Hugging Face token with access to that checkpoint
-- An NVIDIA API key, because some model roles still use hosted endpoints
-- An [NGC account](https://ngc.nvidia.com/) to pull the UI base image
-
-**Deploy**
-
-```bash
-git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
-cd retail-shopping-assistant
-
-docker login nvcr.io
-python -m pip install --user -r requirements-deploy.txt
-
-cp .env.local-models.example .env.local-models
-$EDITOR .env.local-models            # set HF_TOKEN and NVIDIA_API_KEY
-source .env.local-models
-mkdir -p "$HF_CACHE"
-
-docker compose -f docker-compose-model-local.yaml up -d --wait local-llm local-embedding
-python scripts/model_config.py show --validate
-docker compose up -d --build
-```
-
-Start the models before the app: `--wait` returns once both report healthy, and
-the catalog indexer embeds the catalog once, at startup. The first start
-downloads the checkpoint into `HF_CACHE` and can take an hour; later starts
-read the cache. Follow it with
-`docker compose -f docker-compose-model-local.yaml logs -f local-llm`.
-
-To keep text embedding on the hosted endpoint, comment out the two
-`TEXT_EMBED_*` lines in `.env.local-models` and start only `local-llm`.
-`LOCAL_LLM_GPUS`, `LOCAL_LLM_TP`, and `LOCAL_EMBED_GPU` change the placement.
-
-**What this gets you** that a hosted endpoint cannot: no rate limit, and the
-model's own metrics. vLLM serves Prometheus metrics with nothing to enable:
-
-```bash
-curl -s http://localhost:8000/metrics | grep -E '^vllm:'
-```
-
-[docs/PERFORMANCE.md](docs/PERFORMANCE.md) covers reading them.
-
-**Stopping**
-
-```bash
-docker compose -f docker-compose.yaml down
-docker compose -f docker-compose-model-local.yaml down   # if you started them
-```
-
-No GPUs of your own? [NVIDIA Brev](https://developer.nvidia.com/brev) offers
-pay-as-you-go GPU instances, and [docs/BREV.md](docs/BREV.md) has a walkthrough.
+**Running the models on your own GPUs instead?** The default layout needs five
+GPUs, as on an 8x H100 80 GB machine. See
+[Locally Hosted Models](docs/DEPLOYMENT.md#-locally-hosted-models) for the GPU
+sizing, setup, and model metrics. No GPUs of your own?
+[NVIDIA Brev](https://developer.nvidia.com/brev) offers pay-as-you-go GPU
+instances; [docs/BREV.md](docs/BREV.md) has a walkthrough.
 
 ## Notebooks
 

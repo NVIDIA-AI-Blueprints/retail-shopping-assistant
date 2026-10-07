@@ -121,7 +121,7 @@
 - [sniffio](https://pypi.org/project/sniffio/) ([MIT OR Apache-2.0](https://spdx.org/licenses/MIT.html))
 - [SQLAlchemy](https://pypi.org/project/SQLAlchemy/) ([MIT](https://spdx.org/licenses/MIT.html))
 - [starlette](https://pypi.org/project/starlette/) ([BSD-3-Clause](https://spdx.org/licenses/BSD-3-Clause.html))
-- [tenacity](https://pypi.org/project/tenacity/) ([Apache 2.0](https://spdx.org/licenses/Apache2.0.html))
+- [tenacity](https://pypi.org/project/tenacity/) ([Apache-2.0](https://spdx.org/licenses/Apache-2.0.html))
 - [tqdm](https://pypi.org/project/tqdm/) ([MPL-2.0 AND MIT](https://spdx.org/licenses/MPL-2.0.html))
 - [typing-extensions](https://pypi.org/project/typing-extensions/) ([PSF-2.0](https://spdx.org/licenses/PSF-2.0.html))
 - [typing-inspection](https://pypi.org/project/typing-inspection/) ([MIT](https://spdx.org/licenses/MIT.html))

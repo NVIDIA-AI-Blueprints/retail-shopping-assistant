@@ -110,6 +110,9 @@ The env file is a sourceable shell profile. Source the profile you want before
 validation or deployment; `COMPOSE_DISABLE_ENV_FILE=1` keeps Docker Compose
 from auto-parsing repo-root `.env` as dotenv and mixing environments.
 
+Copy the template rather than editing it: every `.env.*` is gitignored except
+the templates, so your filled-in copy stays out of git along with its keys.
+
 For an existing deployment, restart the catalog service when changing the
 text/image embedding model or catalog data source. Its fingerprint reuses only
 matching complete collections and rebuilds mismatches. After the catalog is
@@ -182,14 +185,46 @@ The defaults fit an 8x H100 80 GB machine. `.env.local-models.example` points
 the app LLM, media and text embedding at them through the environment, so
 `models.yaml` does not change. Image embedding and guardrails stay hosted.
 
+### GPU Sizing
+
+How many GPUs you need depends on which models you run and at what precision,
+and each model publishes its own footprint. Taking H100 80GB as the example:
+
+| Model | Role | On H100 80GB | Published footprint |
+|-------|------|--------------|---------------------|
+| Nemotron 3.5 Super | Shopping agent, photo and video | 4 GPUs at BF16 | [121B MoE, ~227 GB BF16](https://docs.nvidia.com/nemo/automodel/model-coverage/omni/nvidia/nemotron-3-5-super-vl) |
+| Nemotron 3 Embed 1B | Catalog and query embedding | shares 1 GPU | [3.6 GB at FP16](https://docs.nvidia.com/nim/nemo-retriever/text-embedding/latest/support-matrix.html) |
+| Nemotron 3.5 Content Safety | Optional moderation | shares 1 GPU | [4B, 8 GB VRAM and up](https://huggingface.co/blog/nvidia/nemotron-3-5-content-safety) |
+| Llama 3.1 NemoGuard 8B Topic Control | Optional off-topic checks | 1 GPU | [48 GB](https://docs.nvidia.com/nim/llama-3-1-nemoguard-8b-topiccontrol/latest/support-matrix.html) |
+
+`docker-compose-model-local.yaml` serves the first two, which is the five-GPU
+default layout: four for the agent's tensor parallel group
+(`LOCAL_LLM_TP=4`, `LOCAL_LLM_GPUS=0,1,2,3`) and one for embedding
+(`LOCAL_EMBED_GPU=4`). The guard models run on hosted endpoints.
+
+Those published figures assume a model has the card to itself, since vLLM
+reserves most of it for the KV cache. Putting the smaller models together on
+one GPU means capping `--gpu-memory-utilization` for each.
+
+**You need**
+
+- Docker 20.10+ with the Compose plugin, and the NVIDIA Container Toolkit
+- Python on the host, for the deploy helpers
+- **Five GPUs** for the default layout above, as on an 8x H100 80 GB machine
+- About 240 GB of disk for the chat model's BF16 checkpoint
+- A Hugging Face token with access to that checkpoint
+- An NVIDIA API key, because some model roles still use hosted endpoints
+- An [NGC account](https://ngc.nvidia.com/) to pull the UI base image
+
 ### Step 1: Environment Setup
 
 ```bash
 git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
 cd retail-shopping-assistant
+python -m pip install --user -r requirements-deploy.txt
 
 cp .env.local-models.example .env.local-models
-$EDITOR .env.local-models   # HF_TOKEN, with access to the Nemotron 3.5 Super checkpoint
+$EDITOR .env.local-models   # HF_TOKEN (checkpoint access) and NVIDIA_API_KEY (hosted roles)
 source .env.local-models
 mkdir -p "$HF_CACHE"
 ```
@@ -231,6 +266,10 @@ catalog indexer embeds the catalog once, at startup. The first start downloads
 the chat model's ~240 GB into `HF_CACHE` and can take an hour; follow it with
 `docker compose -f docker-compose-model-local.yaml logs -f local-llm`.
 
+To keep text embedding on the hosted endpoint, comment out the two
+`TEXT_EMBED_*` lines in `.env.local-models` and start only `local-llm`.
+`LOCAL_LLM_GPUS`, `LOCAL_LLM_TP`, and `LOCAL_EMBED_GPU` change the placement.
+
 ### Step 5: Index the catalog
 
 Serving containers do not index themselves. Rebuilding an index begins by
@@ -269,6 +308,28 @@ curl http://localhost:8010/ready    # catalog: 503 until the index is built
 curl http://localhost:8011/ready    # memory: 503 until migrations finish
 curl http://localhost:3000
 ```
+
+### Model Metrics
+
+Running the models yourself gets you what a hosted endpoint cannot: no rate
+limit, and the model's own metrics. vLLM serves Prometheus metrics with nothing
+to enable:
+
+```bash
+curl -s http://localhost:8000/metrics | grep -E '^vllm:'
+```
+
+[PERFORMANCE.md](PERFORMANCE.md) covers reading them.
+
+### Stopping
+
+```bash
+docker compose -f docker-compose.yaml down
+docker compose -f docker-compose-model-local.yaml down   # if you started them
+```
+
+No GPUs of your own? [NVIDIA Brev](https://developer.nvidia.com/brev) offers
+pay-as-you-go GPU instances, and [BREV.md](BREV.md) has a walkthrough.
 
 ## 🏭 Production Deployment
 

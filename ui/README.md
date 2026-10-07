@@ -46,8 +46,8 @@ src/
 
 ### Prerequisites
 
-- Node.js 16+
-- npm or yarn
+- Node.js 22.12+
+- npm
 
 ### Setup
 
@@ -68,9 +68,10 @@ src/
 
 ### Available Scripts
 
-- `npm start` - Start development server
+- `npm start` - Start the Vite dev server on port 3000, proxying `/api` to `CHAIN_SERVER_URL` (default `http://localhost:8009`)
 - `npm run build` - Build for production
-- `npm test` - Run tests
+- `npm test` - Run tests (Vitest)
+- `npm run preview` - Serve the production build locally
 - `npm run lint` - Run ESLint
 - `npm run lint:fix` - Fix ESLint issues
 - `npm run format` - Format code with Prettier

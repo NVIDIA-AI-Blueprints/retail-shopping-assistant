@@ -76,9 +76,8 @@ describe("ShopperPicker", () => {
   });
 
   test("supports keyboard, hover, and tap-style preview before confirming", () => {
-    const onChange = jest.fn();
+    const onChange = vi.fn();
     // This test uses React createRoot directly, so rendering must be inside act.
-    // eslint-disable-next-line testing-library/no-unnecessary-act
     React.act(() => {
       root.render(
         <ShopperPicker
@@ -137,9 +136,8 @@ describe("ShopperPicker", () => {
   });
 
   test("blocks opening while streaming or while profiles load", () => {
-    const onChange = jest.fn();
+    const onChange = vi.fn();
     // This test uses React createRoot directly, so rendering must be inside act.
-    // eslint-disable-next-line testing-library/no-unnecessary-act
     React.act(() => {
       root.render(
         <ShopperPicker
@@ -157,7 +155,6 @@ describe("ShopperPicker", () => {
     click(trigger);
     expect(container.querySelector('[role="dialog"]')).toBeNull();
 
-    // eslint-disable-next-line testing-library/no-unnecessary-act
     React.act(() => {
       root.render(
         <ShopperPicker

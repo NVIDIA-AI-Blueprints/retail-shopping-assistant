@@ -46,7 +46,7 @@ export interface AppConfig {
 // Get configuration based on environment
 const getConfig = (): AppConfig => {
   // Default to nginx proxy routing, but allow local development to target chain-server directly.
-  const baseUrl = process.env.REACT_APP_API_BASE_URL || '/api';
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
 
   return {
     api: {

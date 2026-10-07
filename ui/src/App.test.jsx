@@ -7,15 +7,15 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import { getOrCreateUserSession } from "./utils";
 
-jest.mock("@mui/icons-material/Menu", () => () => null);
-jest.mock("@mui/icons-material/Send", () => () => null);
-jest.mock("@mui/icons-material/AttachFile", () => () => null);
-jest.mock("@mui/icons-material/Close", () => () => null);
-jest.mock("@mui/icons-material/RestartAlt", () => () => null);
-jest.mock("@mui/icons-material/ShoppingCart", () => () => null);
-jest.mock("@mui/icons-material/DeleteOutline", () => () => null);
-jest.mock("@mui/material/Switch", () => () => null);
-jest.mock("@mui/material/styles", () => ({
+vi.mock("@mui/icons-material/Menu", () => ({ default: () => null }));
+vi.mock("@mui/icons-material/Send", () => ({ default: () => null }));
+vi.mock("@mui/icons-material/AttachFile", () => ({ default: () => null }));
+vi.mock("@mui/icons-material/Close", () => ({ default: () => null }));
+vi.mock("@mui/icons-material/RestartAlt", () => ({ default: () => null }));
+vi.mock("@mui/icons-material/ShoppingCart", () => ({ default: () => null }));
+vi.mock("@mui/icons-material/DeleteOutline", () => ({ default: () => null }));
+vi.mock("@mui/material/Switch", () => ({ default: () => null }));
+vi.mock("@mui/material/styles", () => ({
   styled: (Component) => () => Component,
 }));
 
@@ -25,7 +25,7 @@ global.TextDecoder = class {
     return "";
   }
 };
-Element.prototype.scrollIntoView = jest.fn();
+Element.prototype.scrollIntoView = vi.fn();
 
 const SESSION_STORAGE_KEY = "shopping_session_identity";
 const SHOPPER_PROFILE_STORAGE_KEY = "shopping_shopper_profile_id";
@@ -109,10 +109,10 @@ describe("App shopper identity lifecycle", () => {
   let originalFetch;
 
   beforeEach(() => {
-    jest.useFakeTimers();
+    vi.useFakeTimers();
     sessionStorage.clear();
     originalFetch = global.fetch;
-    global.fetch = jest.fn((input) => {
+    global.fetch = vi.fn((input) => {
       const url = String(input);
       if (url.endsWith("/shopper-profiles")) {
         return Promise.resolve({
@@ -157,14 +157,13 @@ describe("App shopper identity lifecycle", () => {
     container.remove();
     sessionStorage.clear();
     global.fetch = originalFetch;
-    jest.clearAllTimers();
-    jest.useRealTimers();
-    jest.restoreAllMocks();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   test("Guest requests omit shopper_profile_id through App and Chatbox", async () => {
     // This test uses React createRoot directly, so rendering must be inside act.
-    // eslint-disable-next-line testing-library/no-unnecessary-act
     React.act(() => {
       root.render(<App />);
     });
@@ -182,10 +181,9 @@ describe("App shopper identity lifecycle", () => {
   });
 
   test("shopper switch keeps exactly its rotated identity and manual Reset clears it", async () => {
-    const setItemSpy = jest.spyOn(Storage.prototype, "setItem");
+    const setItemSpy = vi.spyOn(Storage.prototype, "setItem");
 
     // This test uses React createRoot directly, so rendering must be inside act.
-    // eslint-disable-next-line testing-library/no-unnecessary-act
     React.act(() => {
       root.render(<App />);
     });

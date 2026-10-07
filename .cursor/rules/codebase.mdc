@@ -290,10 +290,11 @@ JSONL. The sidecar declares field roles and types, not category or enum values.
 
 ### Model Routing Support
 
-Model endpoints are selected from `shared/configs/models.yaml`. Service configs
-keep service behavior; `models.yaml` owns base URLs, model names, API-key env
-vars, and locally deployed model selection. Each role independently uses
-`source: endpoint`, `source: local_model`, or `source: disabled`.
+Model URLs and model names are set only in `.env.example` (or a profile copied
+from it). `shared/configs/models.yaml` owns the roles: each role's `source`
+(`endpoint`, `local_model`, or `disabled`), the env vars it reads for its URL,
+model and API key, and locally deployed model selection. The loader rejects a
+`base_url` or `model` written on a role. Service configs keep service behavior.
 
 ## Frontend Implementation
 

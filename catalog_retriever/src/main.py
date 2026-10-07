@@ -37,7 +37,8 @@ for entry in os.listdir("."):
     dir_contents.append(entry)
 logging.info(f"CATALOG RETRIEVER | startup | Directory contents: {dir_contents}")
 
-# Get service behavior from config.yaml. Model endpoints come from models.yaml.
+# Get service behavior from config.yaml. Model endpoints come from the environment
+# variables models.yaml names.
 def load_config(base_config_path: str):
     """Load service configuration from YAML file."""
 

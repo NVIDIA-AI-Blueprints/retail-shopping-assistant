@@ -27,6 +27,22 @@ def _make_config(model_entries: List[Dict[str, Any]]) -> SimpleNamespace:
     return SimpleNamespace(models=models)
 
 
+_ENDPOINT_ENV = {
+    "LLM_BASE_URL": "https://llm.example/v1",
+    "LLM_MODEL": "llm-model",
+    "RAILS_CONTENT_BASE_URL": "https://content.example/v1",
+    "RAILS_CONTENT_MODEL": "content-model",
+    "RAILS_TOPIC_BASE_URL": "https://topic.example/v1",
+    "RAILS_TOPIC_MODEL": "topic-model",
+}
+
+
+@pytest.fixture(autouse=True)
+def _endpoint_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key, value in _ENDPOINT_ENV.items():
+        monkeypatch.setenv(key, value)
+
+
 def _write_model_config(root: Path) -> Path:
     config_root = root / "configs"
     rails_dir = config_root / "rails"
@@ -39,20 +55,20 @@ def _write_model_config(root: Path) -> Path:
                 "models": {
                     "app_llm": {
                         "source": "endpoint",
-                        "base_url": "https://llm.example/v1",
-                        "model": "llm-model",
+                        "base_url_env": "LLM_BASE_URL",
+                        "model_env": "LLM_MODEL",
                         "api_key_env": None,
                     },
                     "content_safety": {
                         "source": "endpoint",
-                        "base_url": "https://content.example/v1",
-                        "model": "content-model",
+                        "base_url_env": "RAILS_CONTENT_BASE_URL",
+                        "model_env": "RAILS_CONTENT_MODEL",
                         "api_key_env": "RAIL_API_KEY",
                     },
                     "topic_control": {
                         "source": "endpoint",
-                        "base_url": "https://topic.example/v1",
-                        "model": "topic-model",
+                        "base_url_env": "RAILS_TOPIC_BASE_URL",
+                        "model_env": "RAILS_TOPIC_MODEL",
                         "api_key_env": "RAIL_API_KEY",
                     },
                 },

@@ -15,9 +15,11 @@
 
 ## 🎯 Overview
 
-This guide covers deploying the Retail Shopping Assistant. Model routing lives
-in one file, `shared/configs/models.yaml`. Each model role can independently
-use an external endpoint, a locally deployed model, or be disabled. Locally
+This guide covers deploying the Retail Shopping Assistant. Every model URL and
+model name is set in one file, `.env.example`, which you copy and source.
+`shared/configs/models.yaml` lists the model roles and the variables each one
+reads. Each role can independently use an external endpoint, a locally
+deployed model, or be disabled. Locally
 deployed models are vLLM serving Hugging Face checkpoints from
 `docker-compose-model-local.yaml`.
 
@@ -120,7 +122,7 @@ Model routing is per role:
 
 | `source` | Meaning | Local models started |
 |----------|---------|--------------------|
-| `endpoint` | Use the role's `base_url`/`model` or env overrides | none |
+| `endpoint` | Use the URL and model in the role's environment variables | none |
 | `local_model` | Start and use the referenced locally deployed model | that service only |
 | `disabled` | Capability is intentionally unavailable | none |
 
@@ -315,37 +317,47 @@ are for whoever writes them.
 
 ### Model Endpoints and API Keys
 
-Seven model roles each have their own endpoint, model name, and key variable, so
-any one of them can be repointed without touching the others. The shipped
-defaults are in `shared/configs/models.yaml`:
+Each model role has its own endpoint, model name, and key variable, so any one
+of them can be repointed without touching the others. Every URL and model name
+is set in `.env.example`, and nowhere else: `shared/configs/models.yaml` only
+names the variables a role reads, and a role whose variables are empty stops
+the service at startup with the names of the missing variables.
 
-| Role | What it does | Default host | Key variable |
-|------|--------------|--------------|--------------|
-| `app_llm` | Answers the shopper and drives tool use | `inference-api.nvidia.com` | `LLM_API_KEY` |
-| `vlm` | Reads photo and video uploads | `inference-api.nvidia.com` | `VLM_API_KEY` |
-| `text_embedding` | Embeds the catalog and text queries | `integrate.api.nvidia.com` | `EMBED_API_KEY` |
-| `image_embedding` | Embeds images for visual search | `integrate.api.nvidia.com` | `EMBED_API_KEY` |
-| `content_safety` | Checks text and images for unsafe content | `integrate.api.nvidia.com` | `RAIL_API_KEY` |
-| `topic_control` | Checks whether a request is on topic | `integrate.api.nvidia.com` | `RAIL_API_KEY` |
-| `multimodal_safety` | Checks video, including embedded audio | `integrate.api.nvidia.com` | `MULTIMODAL_SAFETY_API_KEY` |
+| Role | What it does | Host in `.env.example` | URL and model variables | Key variable |
+|------|--------------|------------------------|-------------------------|--------------|
+| `app_llm` | Answers the shopper and drives tool use | `inference-api.nvidia.com` | `LLM_BASE_URL`, `LLM_MODEL` | `LLM_API_KEY` |
+| `vlm` | Reads photo and video uploads | `inference-api.nvidia.com` | `VLM_BASE_URL`, `VLM_MODEL` | `VLM_API_KEY` |
+| `text_embedding` | Embeds the catalog and text queries | `inference-api.nvidia.com` | `TEXT_EMBED_BASE_URL`, `TEXT_EMBED_MODEL` | `EMBED_API_KEY` |
+| `content_safety` | Checks text and images for unsafe content (guardrails, off by default) | `integrate.api.nvidia.com` | `RAILS_CONTENT_BASE_URL`, `RAILS_CONTENT_MODEL` | `RAIL_API_KEY` |
+| `topic_control` | Checks whether a request is on topic (guardrails) | `integrate.api.nvidia.com` | `RAILS_TOPIC_BASE_URL`, `RAILS_TOPIC_MODEL` | `RAIL_API_KEY` |
+| `multimodal_safety` | Checks video, including embedded audio (guardrails) | `integrate.api.nvidia.com` | `MULTIMODAL_SAFETY_BASE_URL`, `MULTIMODAL_SAFETY_MODEL` | `MULTIMODAL_SAFETY_API_KEY` |
+
+Image embedding is not shipped as a role; to turn it on, add an
+`image_embedding` role to `models.yaml` with the same shape and set its
+variables in your profile.
 
 **The two hosts issue different keys, and they are not interchangeable.** A key
 that works against `inference-api.nvidia.com` will be rejected by
-`integrate.api.nvidia.com` and vice versa. This is the most common first-deploy
-failure: the language model answers normally while catalog search or guardrails
-return authentication errors, which looks like a broken service rather than a
-key problem. `python scripts/model_config.py show --validate` reports which key
-variables are missing, though it cannot tell whether a present key is the right
-one for its host.
+`integrate.api.nvidia.com` and vice versa. The roles that are on by default all
+use `inference-api.nvidia.com`, so one key in `NVIDIA_API_KEY` runs them.
+Turning guardrails on adds the `integrate.api.nvidia.com` roles, which need a
+build.nvidia.com key in `RAIL_API_KEY` and `MULTIMODAL_SAFETY_API_KEY`. A
+mismatch is the most common first-deploy failure: the language model answers
+normally while catalog search or guardrails return authentication errors, which
+looks like a broken service rather than a key problem.
+`python scripts/model_config.py show --validate` reports which URL, model and
+key variables are missing, though it cannot tell whether a present key is the
+right one for its host.
 
 Compose chains sensible fallbacks so a single-key deployment works: `VLM_API_KEY`
 falls back to `NVIDIA_API_KEY`, and `MULTIMODAL_SAFETY_API_KEY` falls back to
 `VLM_API_KEY` and then `NVIDIA_API_KEY`. Set the specific variables when the
 roles live on different hosts.
 
-To repoint a role, set its `*_BASE_URL` and `*_MODEL` variables; the names are
-in the table below. `NGC_API_KEY` is unrelated to inference: it authenticates
-`nvcr.io` image pulls.
+To repoint a role, set its `*_BASE_URL` and `*_MODEL` variables in your
+profile, together: hosts name the same model differently
+(`inference-api.nvidia.com` adds an `nvidia/` prefix). `NGC_API_KEY` is
+unrelated to inference: it authenticates `nvcr.io` image pulls.
 
 ### Environment Variables
 
@@ -353,7 +365,8 @@ A default written as a `config.yaml` key lives only in
 `shared/configs/chain_server/config.yaml`; look it up there. The variable
 overrides it, and left empty it leaves the key in place. `docker-compose.yaml`
 and `.env.example` pass these variables through empty, so change a default in
-`config.yaml`, not in either of them.
+`config.yaml`, not in either of them. The exception is the model URL and model
+name variables, whose values live only in `.env.example`.
 
 The memory service has no config file; a default written as a constant lives
 in its code, named in the table. `MEMORY_MAX_CONCURRENT_REQUESTS` has one more
@@ -365,22 +378,22 @@ set there; a unit test fails if the two differ, so change both together.
 | `NGC_API_KEY` | NVIDIA NGC API key, for `nvcr.io` image pulls only | Only to pull images | - |
 | `NVIDIA_API_KEY` | Fallback inference key for roles whose own key variable is unset | No | - |
 | `LLM_API_KEY` | Language model API key | Yes | - |
-| `LLM_BASE_URL` / `LLM_MODEL` | Shopping agent endpoint and model | No | `models.yaml`: `app_llm` |
-| `TEXT_EMBED_BASE_URL` / `TEXT_EMBED_MODEL` | Catalog text embedding endpoint and model | No | `models.yaml`: `text_embedding` |
+| `LLM_BASE_URL` / `LLM_MODEL` | Shopping agent endpoint and model | Yes | `.env.example` |
+| `TEXT_EMBED_BASE_URL` / `TEXT_EMBED_MODEL` | Catalog text embedding endpoint and model | Yes | `.env.example` |
 | `APP_LLM_TEMPERATURE` | Temperature for the shopping agent and grounding editor; see [Model Sampling and Output Limits](#model-sampling-and-output-limits) | No | `config.yaml`: `llm_temperature` |
 | `APP_LLM_FREQUENCY_PENALTY` | Optional frequency penalty for the same calls | No | off |
 | `LLM_MAX_OUTPUT_TOKENS` | Shopping agent output ceiling per call | No | `config.yaml`: `llm_max_output_tokens` |
 | `GROUNDING_EDITOR_MAX_OUTPUT_TOKENS` | Grounding editor output ceiling per call | No | `config.yaml`: `grounding_editor_max_output_tokens` |
-| `VLM_BASE_URL`, `VLM_MODEL` | Media perception endpoint and model; set separately from `LLM_*` | No | Same as `app_llm` in `models.yaml` |
+| `VLM_BASE_URL`, `VLM_MODEL` | Media perception endpoint and model; set separately from `LLM_*` | Yes | `.env.example`, the same model as `app_llm` |
 | `VLM_API_KEY` | Optional VLM media perception API key; Compose falls back to `NVIDIA_API_KEY` when unset | When `vlm` uses an authenticated endpoint and `NVIDIA_API_KEY` is unset | `NVIDIA_API_KEY` |
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
 | `GUARDRAILS_URL` | Chain-server URL for the guardrail service | No | `http://rails:8012` |
-| `RAILS_CONTENT_BASE_URL` / `RAILS_CONTENT_MODEL` | Endpoint and model for current text/image content safety | No | `models.yaml`: `content_safety` |
-| `RAILS_TOPIC_BASE_URL` / `RAILS_TOPIC_MODEL` | Topic-control endpoint and model. The dedicated Topic Control model is preferred; selecting Content Safety applies the configured retail policy through `custom_policy` | No | `models.yaml`: `topic_control` |
+| `RAILS_CONTENT_BASE_URL` / `RAILS_CONTENT_MODEL` | Endpoint and model for current text/image content safety | With guardrails | `.env.example` |
+| `RAILS_TOPIC_BASE_URL` / `RAILS_TOPIC_MODEL` | Topic-control endpoint and model. The dedicated Topic Control model is preferred; selecting Content Safety applies the configured retail policy through `custom_policy` | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_API_KEY` | Key for the independently routed video safety judge; Compose falls back to the VLM/NVIDIA key | When the video safety endpoint requires authentication | `VLM_API_KEY` |
-| `MULTIMODAL_SAFETY_BASE_URL` | OpenAI-compatible endpoint for the video safety judge | No | `models.yaml`: `multimodal_safety` |
-| `MULTIMODAL_SAFETY_MODEL` | Video safety model override, independent of perception | No | `models.yaml`: `multimodal_safety` |
+| `MULTIMODAL_SAFETY_BASE_URL` | OpenAI-compatible endpoint for the video safety judge | With guardrails | `.env.example` |
+| `MULTIMODAL_SAFETY_MODEL` | Video safety model, independent of perception | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_VIDEO_FPS` | Temporal sampling rate sent to Nemotron Omni. The complete video object and embedded audio are submitted, but the model evaluates sampled frames | No | `rails.py` (2.0) |
 | `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the content and topic input rails in `parallel` or `sequential` mode | No | `rails.py` (parallel) |
 | `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Guardrails is opt-in: set this to enable it | No | `config.yaml`: `guardrails_enabled` (off) |
@@ -570,8 +583,8 @@ first use.
 ### Configuration File
 
 Chain-server service behavior is configured in
-`shared/configs/chain_server/config.yaml`. Model roles and endpoints are
-configured separately in `shared/configs/models.yaml`:
+`shared/configs/chain_server/config.yaml`. Model endpoints are configured
+separately; see [Model Routing](#model-routing):
 
 ```yaml
 retriever_port: "http://localhost:8010"
@@ -620,10 +633,12 @@ reindex-and-verify sequence, see
 
 ### Model Routing
 
-Model endpoints are selected from one file: `shared/configs/models.yaml`.
-Service behavior stays in each service's normal config file, while model base
-URLs, model names, API-key environment variables, and locally deployed model metadata
-live in `models.yaml`.
+Model URLs and model names are set in one file, `.env.example`, or the profile
+you copy from it. `shared/configs/models.yaml` holds the rest of the routing:
+which roles exist, each role's `source`, the environment variables it reads for
+its URL, model and key, and the locally deployed model metadata. A `base_url`
+or `model` written on a role in `models.yaml` is rejected at startup, so a value
+cannot hide there. Service behavior stays in each service's normal config file.
 
 Each role has a `source`:
 
@@ -650,7 +665,7 @@ and `CATALOG_IMAGE_EMBEDDING_ENABLED`.
 #### Applying a Routing Change
 
 Whichever path you deployed with, these are the two commands to rerun after
-editing `models.yaml`:
+changing your profile or `models.yaml`:
 
 ```bash
 python scripts/model_config.py show --validate
@@ -662,13 +677,16 @@ any key value, and fails if a required API-key or endpoint variable is missing.
 `deploy` starts only the local services that roles actually reference, then the
 app stack.
 
-Keep the env profile sourced while you do it. A role's own `base_url` and
-`model` win over the local service's, so an unsourced profile quietly routes
-somewhere you did not intend.
+Keep the env profile sourced while you do it. Without it, the endpoint roles
+have no URL or model, and both commands stop and name the missing variables. A
+`local_model` role ignores those variables and always uses its local service's
+URL and model from `local_models.services`.
 
 #### Adding or Changing Models
 
-Edit `shared/configs/models.yaml` and update one role entry:
+To point an existing role at another model, change its `*_BASE_URL` and
+`*_MODEL` in your profile; `models.yaml` does not change. To add a role, or
+change how one is served, edit its entry in `shared/configs/models.yaml`:
 
 ```yaml
 models:

@@ -2,8 +2,9 @@
 
 Each model role is resolved independently. A role can point at an external
 endpoint, a locally deployed model that this repo can start, or be explicitly
-disabled. Secrets are referenced by environment-variable name and are never
-returned by this module.
+disabled. An endpoint role's URL and model name come only from the environment
+variables it names; the shipped values are in .env.example. Secrets are
+referenced by environment-variable name and are never returned by this module.
 """
 
 from __future__ import annotations
@@ -37,6 +38,8 @@ class ModelEndpoint:
     local_service: str | None = None
     compose_file: str | None = None
     compose_service: str | None = None
+    base_url_env: str | None = None
+    model_env: str | None = None
 
     @property
     def disabled(self) -> bool:
@@ -45,6 +48,17 @@ class ModelEndpoint:
     @property
     def api_key_required(self) -> bool:
         return self.api_key_env is not None
+
+    @property
+    def missing_env(self) -> tuple[str, ...]:
+        """Variables that must be set before this role has an endpoint."""
+
+        missing = []
+        if self.base_url is None and self.base_url_env:
+            missing.append(self.base_url_env)
+        if self.model is None and self.model_env:
+            missing.append(self.model_env)
+        return tuple(missing)
 
 
 @dataclass(frozen=True)
@@ -60,6 +74,8 @@ class ResolvedModelConfig:
             raise ModelConfigError(f"models.yaml does not define role '{role}'.") from exc
         if endpoint.disabled:
             raise ModelConfigError(f"Model role '{role}' is disabled.")
+        if endpoint.missing_env:
+            raise ModelConfigError(_missing_endpoint_message([role], self.models))
         return endpoint
 
     def get(self, role: str) -> ModelEndpoint | None:
@@ -117,7 +133,9 @@ def model_config_snapshot(config: ResolvedModelConfig) -> dict[str, Any]:
                 "source": endpoint.source,
                 "provider": endpoint.provider,
                 "base_url": endpoint.base_url,
+                "base_url_env": endpoint.base_url_env,
                 "model": endpoint.model,
+                "model_env": endpoint.model_env,
                 "api_key_env": endpoint.api_key_env,
                 "api_key_required": endpoint.api_key_required,
                 "api_key_present": endpoint.api_key_present,
@@ -139,6 +157,7 @@ def validate_model_config(
         role for role, endpoint in config.models.items() if not endpoint.disabled
     )
     missing_keys = []
+    missing_endpoints = []
     disabled_roles = []
     for role in selected_roles:
         endpoint = config.get(role)
@@ -147,11 +166,15 @@ def validate_model_config(
         if endpoint.disabled:
             disabled_roles.append(role)
             continue
+        if endpoint.missing_env:
+            missing_endpoints.append(role)
         if endpoint.api_key_env and not endpoint.api_key_present:
             missing_keys.append(f"{role}:{endpoint.api_key_env}")
 
     if disabled_roles:
         raise ModelConfigError("Disabled required model roles: " + ", ".join(disabled_roles))
+    if missing_endpoints:
+        raise ModelConfigError(_missing_endpoint_message(missing_endpoints, config.models))
     if missing_keys:
         raise ModelConfigError(
             "Missing required API key environment variables: " + ", ".join(missing_keys)
@@ -217,20 +240,28 @@ def _resolve_model(
             f"local_models.services.{local_service}.compose_service",
         )
 
-    base_url = _resolve_value(
-        data,
-        service_data,
-        value_key="base_url",
-        env_key="base_url_env",
-        field=f"models.{role}.base_url",
-    )
-    model = _resolve_value(
-        data,
-        service_data,
-        value_key="model",
-        env_key="model_env",
-        field=f"models.{role}.model",
-    )
+    for value_key, env_key in (("base_url", "base_url_env"), ("model", "model_env")):
+        if value_key in data:
+            raise ModelConfigError(
+                f"models.{role}.{value_key} is not read: set the variable named by "
+                f"{env_key} in your env profile instead (.env.example lists the defaults)."
+            )
+
+    base_url_env = model_env = None
+    if source == "local_model":
+        # The env profile always sets the hosted URLs, so they must not
+        # redirect a role that was declared local.
+        base_url = _as_str(
+            service_data.get("base_url"), f"local_models.services.{local_service}.base_url"
+        )
+        model = _as_str(
+            service_data.get("model"), f"local_models.services.{local_service}.model"
+        )
+    else:
+        base_url_env = _as_str(data.get("base_url_env"), f"models.{role}.base_url_env")
+        model_env = _as_str(data.get("model_env"), f"models.{role}.model_env")
+        base_url = _env_value(base_url_env)
+        model = _env_value(model_env)
     api_key_present = bool(api_key_env and os.environ.get(api_key_env, "").strip())
 
     return ModelEndpoint(
@@ -244,30 +275,25 @@ def _resolve_model(
         local_service=local_service,
         compose_file=compose_file,
         compose_service=compose_service,
+        base_url_env=base_url_env,
+        model_env=model_env,
     )
 
 
-def _resolve_value(
-    data: Mapping[str, Any],
-    service_data: Mapping[str, Any],
-    *,
-    value_key: str,
-    env_key: str,
-    field: str,
+def _env_value(env_name: str | None) -> str | None:
+    value = os.environ.get(env_name, "").strip() if env_name else ""
+    return value or None
+
+
+def _missing_endpoint_message(
+    roles: list[str] | tuple[str, ...], models: Mapping[str, ModelEndpoint]
 ) -> str:
-    env_name = data.get(env_key)
-    if env_name is not None:
-        env_value = os.environ.get(_as_str(env_name, f"{field}_env"), "").strip()
-        if env_value:
-            return env_value
-
-    if data.get(value_key) is not None:
-        return _as_str(data.get(value_key), field)
-
-    if service_data.get(value_key) is not None:
-        return _as_str(service_data.get(value_key), field)
-
-    raise ModelConfigError(f"Missing {field}: set {value_key} or {env_key}.")
+    details = ", ".join(f"{role}:{'+'.join(models[role].missing_env)}" for role in roles)
+    return (
+        "Missing model endpoint environment variables: "
+        + details
+        + ". Source .env.example, or a profile copied from it, before starting."
+    )
 
 
 def _load_yaml_mapping(path: Path) -> Mapping[str, Any]:

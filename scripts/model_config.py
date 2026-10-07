@@ -46,8 +46,8 @@ def _print_human(snapshot: dict) -> None:
         parts = [
             f"{role}: source={model['source']}",
             f"provider={model['provider']}",
-            f"base_url={model['base_url']}",
-            f"model={model['model']}",
+            f"base_url={model['base_url'] or 'unset (' + str(model['base_url_env']) + ')'}",
+            f"model={model['model'] or 'unset (' + str(model['model_env']) + ')'}",
             f"api_key_env={key_detail}",
         ]
         if model.get("local_service"):

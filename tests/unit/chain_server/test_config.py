@@ -45,10 +45,6 @@ def _clear_model_and_service_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "GUARDRAILS_SUPPORTED_MODALITIES",
         "WEATHER_ENABLED",
         "WEATHER_API_KEY",
-        "LLM_BASE_URL",
-        "LLM_MODEL",
-        "VLM_BASE_URL",
-        "VLM_MODEL",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -262,6 +258,7 @@ class TestChainServerConfigValidation:
             ChainServerConfig(**valid_config_dict, unexpected_field="oops")
 
 
+@pytest.mark.usefixtures("model_endpoint_env")
 class TestLoadConfig:
     def test_returns_typed_chain_server_config(
         self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch

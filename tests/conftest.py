@@ -17,7 +17,10 @@ Goals
 from __future__ import annotations
 
 import os
+import re
+import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -35,6 +38,32 @@ if str(REPO_ROOT) not in sys.path:
 for _key in ("LLM_API_KEY", "EMBED_API_KEY", "RAIL_API_KEY", "NVIDIA_API_KEY", "VLM_API_KEY"):
     os.environ.setdefault(_key, f"test-{_key.lower()}")
 os.environ.setdefault("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared" / "configs"))
+
+
+@lru_cache(maxsize=1)
+def _env_example_model_endpoints() -> tuple[tuple[str, str], ...]:
+    """Every *_BASE_URL and *_MODEL a clean shell gets from .env.example."""
+
+    result = subprocess.run(
+        ["bash", "-c", "set -a && . ./.env.example && env -0"],
+        cwd=REPO_ROOT,
+        env={"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "")},
+        capture_output=True,
+        check=True,
+    )
+    pairs = (item.split("=", 1) for item in result.stdout.decode().split("\0") if "=" in item)
+    return tuple(
+        (key, value) for key, value in pairs if re.search(r"_(BASE_URL|MODEL)$", key)
+    )
+
+
+@pytest.fixture
+def model_endpoint_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+    """Set the model URLs and names exactly as .env.example ships them."""
+
+    for key, value in _env_example_model_endpoints():
+        monkeypatch.setenv(key, value)
+    return monkeypatch
 
 
 @pytest.fixture

@@ -21,34 +21,32 @@ local_models:
       base_url: "http://local-embedding:8000/v1"
       model: "nvidia/Nemotron-3-Embed-1B-BF16"
 
+# Each role names the environment variables that hold its endpoint URL, model
+# name and API key. The URLs and model names are set in .env.example, the one
+# place to review or change them; a role whose variables are empty fails at
+# startup instead of falling back to a hidden default.
 models:
   app_llm:
     source: endpoint
     provider: openai_compatible
     base_url_env: LLM_BASE_URL
-    base_url: "https://inference-api.nvidia.com/v1"
     model_env: LLM_MODEL
-    model: "nvidia/nvidia/nemotron-3.5-super-vl-preview"
     api_key_env: LLM_API_KEY
 
   text_embedding:
     source: endpoint
     provider: openai_compatible
     base_url_env: TEXT_EMBED_BASE_URL
-    base_url: "https://integrate.api.nvidia.com/v1"
     model_env: TEXT_EMBED_MODEL
-    model: "nvidia/nemotron-3-embed-1b"
     api_key_env: EMBED_API_KEY
 
-  # Media perception for photo and video uploads. The same model as app_llm by
-  # default, since it reads images and video; VLM_* points it elsewhere.
+  # Media perception for photo and video uploads. .env.example sets it to the
+  # same model as app_llm, since that model reads images and video.
   vlm:
     source: endpoint
     provider: openai_compatible
     base_url_env: VLM_BASE_URL
-    base_url: "https://inference-api.nvidia.com/v1"
     model_env: VLM_MODEL
-    model: "nvidia/nvidia/nemotron-3.5-super-vl-preview"
     api_key_env: VLM_API_KEY
 
   # This role receives complete video objects for safety evaluation. Images use
@@ -57,18 +55,14 @@ models:
     source: endpoint
     provider: openai_compatible
     base_url_env: MULTIMODAL_SAFETY_BASE_URL
-    base_url: "https://integrate.api.nvidia.com/v1"
     model_env: MULTIMODAL_SAFETY_MODEL
-    model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
     api_key_env: MULTIMODAL_SAFETY_API_KEY
 
   content_safety:
     source: endpoint
     provider: nim_guardrails
     base_url_env: RAILS_CONTENT_BASE_URL
-    base_url: "https://integrate.api.nvidia.com/v1"
     model_env: RAILS_CONTENT_MODEL
-    model: "nvidia/nemotron-3.5-content-safety"
     api_key_env: RAIL_API_KEY
 
   # Prefer the dedicated Topic Control model. Point this role at Content Safety
@@ -77,7 +71,5 @@ models:
     source: endpoint
     provider: nim_guardrails
     base_url_env: RAILS_TOPIC_BASE_URL
-    base_url: "https://integrate.api.nvidia.com/v1"
     model_env: RAILS_TOPIC_MODEL
-    model: "nvidia/llama-3.1-nemoguard-8b-topic-control"
     api_key_env: RAIL_API_KEY

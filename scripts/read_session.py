@@ -31,7 +31,9 @@ import urllib.request
 def _spans(base: str, limit: int) -> list[dict]:
     # Phoenix rejects anything above 1000 outright rather than clamping.
     url = f"{base.rstrip('/')}/v1/projects/default/spans?limit={min(limit, 1000)}"
-    with urllib.request.urlopen(url, timeout=30) as response:
+    if not url.startswith(("http://", "https://")):
+        sys.exit(f"--phoenix must be an http(s) URL, got {base!r}")
+    with urllib.request.urlopen(url, timeout=30) as response:  # nosec B310 - scheme checked above
         return json.load(response)["data"]
 
 

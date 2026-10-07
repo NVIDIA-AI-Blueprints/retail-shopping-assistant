@@ -7,7 +7,7 @@ import argparse
 import json
 import os
 from pathlib import Path
-import subprocess
+import subprocess  # nosec B404 - runs docker compose, no shell
 import sys
 from typing import Sequence
 
@@ -30,7 +30,7 @@ def _run(command: Sequence[str]) -> None:
     print("$ " + " ".join(command), flush=True)
     env = os.environ.copy()
     env["COMPOSE_DISABLE_ENV_FILE"] = "1"
-    subprocess.run(command, cwd=REPO_ROOT, env=env, check=True)
+    subprocess.run(command, cwd=REPO_ROOT, env=env, check=True)  # nosec B603 - docker compose argv built here, no shell
 
 
 def _print_human(snapshot: dict) -> None:

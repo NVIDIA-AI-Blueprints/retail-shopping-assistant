@@ -342,7 +342,7 @@ def build_catalog_tools(
                         runtime.config, "catalog_search_timeout_seconds", None
                     ),
                 )
-            except Exception:  # pragma: no cover - retrieval already degrades
+            except Exception:  # pragma: no cover # nosec B112 - retrieval already degrades
                 continue
             found = execution.result
             if not found.ok or not found.products:

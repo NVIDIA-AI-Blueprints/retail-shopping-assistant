@@ -772,7 +772,7 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                     capabilities,
                 )
                 repair_guidance = (
-                    " For a role the shopper did not name, keep your role "
+                    " For a role the shopper did not name, keep your role "  # nosec B608 - LLM prompt text, not SQL
                     "noun in requested_product_type and select every "
                     "advertised subcategory that role covers. Choose from "
                     "these currently advertised subcategories: "

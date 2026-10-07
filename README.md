@@ -46,7 +46,7 @@ shopper-facing filters. Point the service at your own data and the search
 contract follows. Retrieval stays deterministic: the agent writes the query,
 and the catalog service does the embedding search and ranking.
 
-It is a complete reference rather than a demo. Five notebooks carry one
+It is a complete reference rather than a demo. The notebooks carry one
 deployment the whole way: stand it up, read a single turn's traces, replay
 conversations to tell flaky from broken, then serve the model on your own GPUs
 and measure time to first token and throughput under load.
@@ -222,16 +222,16 @@ pay-as-you-go GPU instances, and [docs/BREV.md](docs/BREV.md) has a walkthrough.
 
 ## Notebooks
 
-Five notebooks take the deployment you just made and teach what it does. They
+The notebooks take the deployment you just made and teach what it does. They
 are the fastest way to understand this blueprint, and the best place to start
 after the UI loads.
 
 | Notebook | You will | Time | GPU |
 |---|---|---|---|
 | [1 · Getting Started](notebook/1_Getting_Started.ipynb) | deploy on hosted endpoints, hold a first conversation, and call each component once | ~20 min | No |
-| [2 · Observability](notebook/2_Observability.ipynb) | read a turn's traces: skills, prompts, tool calls, refusals, time and tokens | ~30 min | No |
+| [2 · Observability](notebook/2_Observability.ipynb) | read a turn's traces: skills, prompts, tool calls, refusals, time and tokens | ~20 min | No |
 | [3 · Evaluation](notebook/3_Evaluation.ipynb) | replay conversations, investigate a failure, tell flaky from broken, run the Challenger and Judge | ~30 min | No |
-| [4 · Capture Traces](notebook/4_Capture_Traces.ipynb) | record every model call of 25 journeys as an AIPerf trace, for Notebook 5 to replay | ~35 min | No |
+| [4 · Capture Traces](notebook/4_Capture_Traces.ipynb) | record every model call of the journeys as an AIPerf trace, for Notebook 5 to replay | ~35 min | No |
 | [5 · Performance Measurement](notebook/5_Performance_Measurement.ipynb) | serve Nemotron with vLLM and measure prefix-cache hit rate, TTFT, and throughput by concurrency | hours | Yes |
 
 Notebook 2 is the one to read if you only read one: it shows you what the model

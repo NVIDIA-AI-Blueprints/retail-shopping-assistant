@@ -697,7 +697,7 @@ def _what_came_back(result: Any) -> str:
     """
 
     content = result.content if isinstance(result.content, str) else str(result.content)
-    return hashlib.sha1(content.encode()).hexdigest()
+    return hashlib.sha1(content.encode(), usedforsecurity=False).hexdigest()
 
 
 def _produced_nothing_usable(result: Any) -> bool:

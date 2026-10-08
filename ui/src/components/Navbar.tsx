@@ -20,8 +20,10 @@
  */
 
 import React from "react";
-import MenuIcon from "@mui/icons-material/Menu";
-import RestartAltIcon from "@mui/icons-material/RestartAlt";
+import {
+  Menu as MenuIcon,
+  RestartAlt as RestartAltIcon,
+} from "@mui/icons-material";
 import { config } from "../config/config";
 import { ShopperProfile } from "../types";
 import CartPanel from "./CartPanel";

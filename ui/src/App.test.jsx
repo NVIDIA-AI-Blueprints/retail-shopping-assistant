@@ -7,13 +7,15 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import { getOrCreateUserSession } from "./utils";
 
-vi.mock("@mui/icons-material/Menu", () => ({ default: () => null }));
-vi.mock("@mui/icons-material/Send", () => ({ default: () => null }));
-vi.mock("@mui/icons-material/AttachFile", () => ({ default: () => null }));
-vi.mock("@mui/icons-material/Close", () => ({ default: () => null }));
-vi.mock("@mui/icons-material/RestartAlt", () => ({ default: () => null }));
-vi.mock("@mui/icons-material/ShoppingCart", () => ({ default: () => null }));
-vi.mock("@mui/icons-material/DeleteOutline", () => ({ default: () => null }));
+vi.mock("@mui/icons-material", () => ({
+  Menu: () => null,
+  Send: () => null,
+  AttachFile: () => null,
+  Close: () => null,
+  RestartAlt: () => null,
+  ShoppingCart: () => null,
+  DeleteOutline: () => null,
+}));
 vi.mock("@mui/material/Switch", () => ({ default: () => null }));
 vi.mock("@mui/material/styles", () => ({
   styled: (Component) => () => Component,

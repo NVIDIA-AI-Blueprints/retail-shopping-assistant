@@ -607,7 +607,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
         userSession,
         outgoing,
         image || "",
-        guardrailOverrideRef.current,
+        guardrailsAvailable ? isGuardrailsOn : undefined,
         media,
         selectedShopperProfileId
       );

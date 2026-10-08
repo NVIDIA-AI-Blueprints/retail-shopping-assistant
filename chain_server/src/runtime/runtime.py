@@ -15,6 +15,7 @@ import logging
 import os
 import sys
 import time
+import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -2610,4 +2611,4 @@ async def _partial_graph_messages(
 
 def _prompt_alias(kind: str, value: str) -> str:
     digest = hashlib.sha256(f"prompt-alias:{kind}:{value}".encode()).hexdigest()
-    return f"{kind}-ref-{digest[:16]}"
+    return f"{kind}-{uuid.UUID(digest[:32])}"

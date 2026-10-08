@@ -259,6 +259,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
   const [newMessage, setNewMessage] = useState<string>("");
   const [isGuardrailsOn, setIsGuardrailsOn] = useState(config.features.guardrails.defaultState);
   const guardrailOverrideRef = useRef<boolean | undefined>(undefined);
+  const [guardrailsAvailable, setGuardrailsAvailable] = useState(true);
   const [guardrailModalities, setGuardrailModalities] = useState<Array<"text" | "image" | "video">>([
     "text", "image"
   ]);
@@ -924,7 +925,11 @@ const Chatbox: React.FC<ChatboxProps> = ({
         if (data.media_input) {
           setMediaCapabilities(data.media_input);
         }
-        if (data.guardrails) {
+        if (data.guardrails?.available === false) {
+          setGuardrailsAvailable(false);
+          setIsGuardrailsOn(false);
+          guardrailOverrideRef.current = undefined;
+        } else if (data.guardrails) {
           setGuardrailModalities(data.guardrails.supported_modalities);
           if (guardrailOverrideRef.current === undefined) {
             setIsGuardrailsOn(data.guardrails.default_enabled);
@@ -1058,10 +1063,12 @@ const Chatbox: React.FC<ChatboxProps> = ({
 
           </div>
 
-          <div className="chatbox__guardrail">
-            <span>Guardrails</span>
-            <CustomSwitch checked={isGuardrailsOn} onChange={toggleGuardrails} size="small" />
-          </div>
+          {guardrailsAvailable && (
+            <div className="chatbox__guardrail">
+              <span>Guardrails</span>
+              <CustomSwitch checked={isGuardrailsOn} onChange={toggleGuardrails} size="small" />
+            </div>
+          )}
         </div>
 
         <ModelStrip

@@ -6,6 +6,7 @@ import pytest
 import yaml
 from shared.model_config import (
     ModelConfigError,
+    guardrails_available,
     model_config_snapshot,
     resolve_model_config,
     validate_local_model_env,
@@ -194,6 +195,32 @@ def test_validate_model_config_reports_disabled_required_role(
 
     with pytest.raises(ModelConfigError, match="topic_control"):
         validate_model_config(config, roles=("topic_control",))
+
+
+def test_unavailable_guardrails_need_no_guardrail_endpoint_or_key(
+    model_endpoint_env: pytest.MonkeyPatch,
+) -> None:
+    for key in ("LLM_API_KEY", "VLM_API_KEY", "EMBED_API_KEY", "IMAGE_EMBED_API_KEY"):
+        model_endpoint_env.setenv(key, "test-key")
+    for key in ("RAIL_API_KEY", "MULTIMODAL_SAFETY_API_KEY", "RAILS_CONTENT_BASE_URL"):
+        model_endpoint_env.delenv(key, raising=False)
+    config = resolve_model_config(config_root=_SHIPPED)
+
+    with pytest.raises(ModelConfigError, match="content_safety"):
+        validate_model_config(config)
+
+    model_endpoint_env.setenv("GUARDRAILS_AVAILABLE", "false")
+    validate_model_config(config)
+    assert model_config_snapshot(config)["guardrails_available"] is False
+
+
+def test_guardrails_available_rejects_an_unknown_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GUARDRAILS_AVAILABLE", "ture")
+
+    with pytest.raises(ModelConfigError, match="GUARDRAILS_AVAILABLE"):
+        guardrails_available()
 
 
 def test_validate_local_model_env_only_when_local_services_are_used(

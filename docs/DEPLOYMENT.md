@@ -198,7 +198,11 @@ The default layout needs six 80 GB GPUs. `.env.local-models.example` points
 every role at these services through the environment, so `models.yaml` does not change,
 and adds video to the guarded modalities. Guardrails stay off by default, as on
 the hosted path; turn them on per session with the UI's Guardrails toggle, or
-for the deployment with `GUARDRAILS_ENABLED=true`.
+for the deployment with `GUARDRAILS_ENABLED=true`. To deploy without them, set
+`GUARDRAILS_AVAILABLE=false` in `.env.local-models`: the three guardrail
+models are not started, which frees GPU 5 and 50 GB of GPU 4, and the UI has
+no Guardrails toggle. The same setting works on the hosted path
+([Guardrails](GUARDRAILS.md#deploying-without-guardrails)).
 
 The guardrail service picks its request shape from the model name: the
 dedicated on-topic/off-topic check runs only for a name containing
@@ -218,8 +222,9 @@ misjudge while its neighbours load at the same time.
 |--------|--------------|-----------|-----|
 | Every model local (default) | 6 | 0-3 chat; 4 embedding, content safety and topic control; 5 video safety | nothing |
 | Every model local, one GPU each | 8 | 0-3 chat; 4 embedding; 5 content safety; 6 topic control; 7 video safety | `LOCAL_CONTENT_SAFETY_GPU=5 LOCAL_TOPIC_CONTROL_GPU=6 LOCAL_VIDEO_SAFETY_GPU=7` |
-| Guardrails hosted | 5 | 0-3 chat; 4 embedding | leave out the three guardrail services ([Step 4](#step-4-start-the-models-then-the-app)) |
-| Guardrails and embedding hosted | 4 | 0-3 chat | start only `local-llm` ([Step 4](#step-4-start-the-models-then-the-app)) |
+| No guardrails | 5 | 0-3 chat; 4 embedding | `GUARDRAILS_AVAILABLE=false` |
+| Guardrails hosted | 5 | 0-3 chat; 4 embedding | comment out the guardrails block in `.env.local-models` ([Step 4](#step-4-start-the-models-then-the-app)) |
+| No guardrails, embedding hosted | 4 | 0-3 chat | `GUARDRAILS_AVAILABLE=false`, and comment out the embedding lines ([Step 4](#step-4-start-the-models-then-the-app)) |
 
 `LOCAL_LLM_GPUS` (with `LOCAL_LLM_TP` set to as many GPUs), `LOCAL_EMBED_GPU`,
 `LOCAL_CONTENT_SAFETY_GPU`, `LOCAL_TOPIC_CONTROL_GPU` and
@@ -294,13 +299,15 @@ done
 ### Step 4: Start the Models, Then the App
 
 ```bash
-docker compose -f docker-compose-model-local.yaml up -d --wait \
-  local-llm local-embedding local-content-safety local-topic-control local-video-safety
+echo "$LOCAL_MODEL_SERVICES"
+docker compose -f docker-compose-model-local.yaml up -d --wait $LOCAL_MODEL_SERVICES
 python3 scripts/model_config.py show --validate
 docker compose -f docker-compose.yaml up -d --build
 ```
 
-`--wait` returns once every model reports healthy. Start the app after that:
+`LOCAL_MODEL_SERVICES` is set by `.env.local-models` to the model services its
+roles point at: all five by default, and `local-llm local-embedding` with
+`GUARDRAILS_AVAILABLE=false`. `--wait` returns once every model reports healthy. Start the app after that:
 the catalog indexer embeds the catalog once, at startup. The first start
 downloads ~300 GB into `HF_CACHE`, most of it the chat model, and can take an
 hour; follow it with
@@ -313,12 +320,14 @@ the other's containers are "orphan containers" and suggests
 `--remove-orphans`. Ignore the warning: that flag would stop the models.
 
 To keep text embedding on the hosted endpoint, comment out the
-`TEXT_EMBED_*` and `EMBED_API_KEY` lines in `.env.local-models` and leave out
-`local-embedding`.
-To keep guardrails hosted, comment out the guardrails block there, leave out
-the three guardrail services, and set `RAIL_API_KEY` and
-`MULTIMODAL_SAFETY_API_KEY` to build.nvidia.com keys. [GPU Sizing](#gpu-sizing)
-lists the GPUs each of these layouts needs and the variables that move models.
+`TEXT_EMBED_*` and `EMBED_API_KEY` lines in `.env.local-models`.
+To keep guardrails hosted, comment out the `RAILS_*`, `RAIL_API_KEY` and
+`MULTIMODAL_SAFETY_*` lines there, and set `RAIL_API_KEY` and
+`MULTIMODAL_SAFETY_API_KEY` to build.nvidia.com keys. To leave guardrails out,
+set `GUARDRAILS_AVAILABLE=false` there. Each drops the matching services from
+`LOCAL_MODEL_SERVICES` after the next `source .env.local-models`.
+[GPU Sizing](#gpu-sizing) lists the GPUs each of these layouts needs and the
+variables that move models.
 
 ### Step 5: Index the catalog
 
@@ -528,6 +537,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `MULTIMODAL_SAFETY_MODEL` | Video safety model, independent of perception | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_VIDEO_FPS` | Temporal sampling rate sent to Nemotron Omni. The complete video object and embedded audio are submitted, but the model evaluates sampled frames | No | `rails.py` (2.0) |
 | `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the content and topic input rails in `parallel` or `sequential` mode | No | `rails.py` (parallel) |
+| `GUARDRAILS_AVAILABLE` | `false` deploys without guardrails: no guardrail model is called or needs a key, `.env.local-models` starts no guardrail model, the UI hides the Guardrails toggle, and a request with `guardrails: true` gets a 400. Cannot be combined with `GUARDRAILS_ENABLED=true`. Read from the environment only, as both services and `.env.local-models` need it | No | true |
 | `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Guardrails is opt-in: set this to enable it | No | `config.yaml`: `guardrails_enabled` (off) |
 | `GUARDRAILS_FAILURE_MODE` | Required-check error/timeout behavior: `open` bypasses and `closed` stops the turn. Explicit unsafe decisions always block in either mode | No | `config.yaml`: `guardrails_failure_mode` (closed) |
 | `GUARDRAILS_TIMEOUT_SECONDS` | Timeout for each isolated guardrail service decision. Both services read it: the chain server bounds its call, the guardrail service bounds the judges behind it | No | `config.yaml`: `guardrails_timeout_seconds`, and `rails.py` (15.0) |
@@ -963,8 +973,7 @@ nvidia-smi
 # IDs); for example, everything two GPUs up from the default layout:
 LOCAL_LLM_GPUS=2,3,4,5 LOCAL_EMBED_GPU=6 LOCAL_CONTENT_SAFETY_GPU=6 \
 LOCAL_TOPIC_CONTROL_GPU=6 LOCAL_VIDEO_SAFETY_GPU=7 \
-  docker compose -f docker-compose-model-local.yaml up -d --wait \
-  local-llm local-embedding local-content-safety local-topic-control local-video-safety
+  docker compose -f docker-compose-model-local.yaml up -d --wait $LOCAL_MODEL_SERVICES
 
 # Or return to hosted endpoints: source .env instead of .env.local-models
 ```

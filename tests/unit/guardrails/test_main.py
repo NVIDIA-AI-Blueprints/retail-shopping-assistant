@@ -54,7 +54,8 @@ def test_health_and_typed_input_contract(main_module):
     client = TestClient(main_module.create_app(engine))
     assert client.get("/health").json() == {"status": "healthy"}
     assert client.get("/capabilities").json() == {
-        "input_execution_mode": "parallel"
+        "input_execution_mode": "parallel",
+        "available": True,
     }
 
     response = client.post("/v1/checks", json={
@@ -76,6 +77,26 @@ def test_health_and_typed_input_contract(main_module):
         "modalities": ["text", "video"],
         "model_calls": {"content_safety": 1, "topic_control": 1},
     }
+
+
+def test_unavailable_guardrails_build_no_engine(main_module, monkeypatch):
+    def no_engine():
+        raise AssertionError("no guardrail model may be configured")
+
+    monkeypatch.setenv("GUARDRAILS_AVAILABLE", "false")
+    monkeypatch.setattr(main_module, "GuardrailEngine", no_engine)
+    client = TestClient(main_module.create_app())
+
+    assert client.get("/health").json() == {"status": "healthy"}
+    assert client.get("/capabilities").json() == {
+        "input_execution_mode": "unknown",
+        "available": False,
+    }
+    body = client.post("/v1/checks", json={
+        "stage": "input", "shopper_text": "find a jacket"
+    }).json()
+    assert body["status"] == "error"
+    assert body["diagnostic_code"] == "guardrails_unavailable"
 
 
 def test_contract_rejects_media_on_output(main_module):

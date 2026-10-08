@@ -62,10 +62,40 @@ The service listens on port 8012 and the chain server reaches it at
 overrides the deployment default either way; `/capabilities` advertises this as
 `request_override_supported`.
 
+## Deploying without guardrails
+
+Set `GUARDRAILS_AVAILABLE=false` for a deployment that has no guardrails at
+all, hosted or local: to save the GPUs the judges need, or because no key for
+them is available.
+
+```bash
+export GUARDRAILS_AVAILABLE=false
+```
+
+Then:
+
+- The guardrail service starts without building its rails, so no guard model
+  endpoint or key is needed, and every check returns `error` with
+  `diagnostic_code: guardrails_unavailable`. The chain server sends none.
+- With the locally hosted models, `.env.local-models` points no role at the
+  three guardrail models and leaves them out of `LOCAL_MODEL_SERVICES`, so they
+  are not started.
+- `/capabilities` reports `guardrails.available: false`, the UI hides the
+  Guardrails toggle, and the content safety, topic control and multimodal
+  safety models show as off.
+- A request with `guardrails: true` gets a 400. Requests that omit it, or send
+  `false`, run unguarded as before.
+- `scripts/model_config.py show --validate` does not check the three guardrail
+  roles.
+
+`GUARDRAILS_ENABLED=true` with `GUARDRAILS_AVAILABLE=false` stops the chain
+server at startup, as the two contradict each other.
+
 ## Configuration
 
 | Variable | What it controls | Default |
 | --- | --- | --- |
+| `GUARDRAILS_AVAILABLE` | `false`: no guardrails in this deployment ([above](#deploying-without-guardrails)) | true |
 | `RAIL_API_KEY` | API key for the guard models | Required |
 | `GUARDRAILS_URL` | Where the chain server reaches the service | `http://rails:8012` |
 | `GUARDRAILS_ENABLED` | Deployment default for requests that omit `guardrails` | off |

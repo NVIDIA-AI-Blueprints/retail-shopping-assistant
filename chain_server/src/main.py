@@ -22,7 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from shared.commerce_contracts import GetCartInput, UpdateCartItemInput
-from shared.model_config import resolve_model_config
+from shared.model_config import GUARDRAIL_ROLES, resolve_model_config
 
 from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, Cart, State
 from .commerce_tools import get_cart, update_cart_item
@@ -176,6 +176,11 @@ _MODEL_LABELS = {
 
 def create_initial_state(request: QueryRequest) -> State:
     """Create initial state from request."""
+    if request.guardrails and not config.guardrails_available:
+        raise HTTPException(
+            status_code=400,
+            detail="Guardrails are not available in this deployment.",
+        )
     media = _normalized_media(request)
     first_image = next(
         (item["data"] for item in media if item.get("type") == "image"),
@@ -353,6 +358,7 @@ async def capabilities():
         },
         "models": _model_capabilities(),
         "guardrails": {
+            "available": config.guardrails_available,
             "default_enabled": config.guardrails_enabled,
             "failure_mode": config.guardrails_failure_mode,
             "speculative_main_model_enabled": (
@@ -611,7 +617,11 @@ def _model_capabilities() -> dict[str, dict[str, Any]]:
             "label": _MODEL_LABELS.get(role, role.replace("_", " ").title()),
             "model": endpoint.model,
             "source": endpoint.source,
-            "enabled": not endpoint.disabled and bool(endpoint.model),
+            "enabled": (
+                not endpoint.disabled
+                and bool(endpoint.model)
+                and (config.guardrails_available or role not in GUARDRAIL_ROLES)
+            ),
         }
 
     models["app_llm"].update(

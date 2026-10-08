@@ -140,15 +140,18 @@ cp .env.local-models.example .env.local-models
 $EDITOR .env.local-models      # HF_TOKEN
 source .env.local-models
 mkdir -p "$HF_CACHE"
-docker compose -f docker-compose-model-local.yaml up -d --wait \
-  local-llm local-embedding local-content-safety local-topic-control local-video-safety
+docker compose -f docker-compose-model-local.yaml up -d --wait $LOCAL_MODEL_SERVICES
 python scripts/model_config.py show --validate
 docker compose up -d --build
 ```
 
 The profile sets `LLM_*`, `VLM_*`, `TEXT_EMBED_*`, `RAILS_*` and
 `MULTIMODAL_SAFETY_*` (guardrails stay off by default, as hosted), after sourcing
-`.env.example`, so tracked configuration does not change. Reasoning output is suppressed via
+`.env.example`, so tracked configuration does not change, and sets
+`LOCAL_MODEL_SERVICES` to the model services those roles point at.
+`GUARDRAILS_AVAILABLE=false`, hosted or local, deploys without guardrails: the
+three guardrail models are not started and the UI hides the Guardrails toggle
+(`docs/GUARDRAILS.md`). Reasoning output is suppressed via
 `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` on the
 chain-server side so streamed tokens flow eagerly.
 

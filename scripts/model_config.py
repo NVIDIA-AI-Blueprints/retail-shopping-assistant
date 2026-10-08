@@ -18,6 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 os.environ.setdefault("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared" / "configs"))
 
 from shared.model_config import (  # noqa: E402
+    GUARDRAIL_ROLES,
     ModelConfigError,
     model_config_snapshot,
     resolve_model_config,
@@ -34,7 +35,11 @@ def _run(command: Sequence[str]) -> None:
 
 
 def _print_human(snapshot: dict) -> None:
+    print("guardrails_available: " + str(snapshot["guardrails_available"]).lower())
     for role, model in snapshot["models"].items():
+        if role in GUARDRAIL_ROLES and not snapshot["guardrails_available"]:
+            print(f"{role}: not used (GUARDRAILS_AVAILABLE=false)")
+            continue
         if model["source"] == "disabled":
             print(f"{role}: source=disabled")
             continue

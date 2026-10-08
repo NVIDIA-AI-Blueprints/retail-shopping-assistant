@@ -26,7 +26,9 @@ below is historical; these are the current shapes.
   survive a restart.
 - 🔒 **Optional guardrails** as an isolated service: content safety, topic
   control, and video safety. Off by default, enabled per request or per
-  deployment, and reported back per turn.
+  deployment, and reported back per turn. `GUARDRAILS_AVAILABLE=false` deploys
+  without them, hosted or local: no guardrail model is started or called, and
+  the UI hides the toggle.
 - 📊 **Observability**: per-turn spans, Phoenix session views, and optional
   NeMo Relay for richer model spans.
 - 🔍 **Data-derived catalog filters**, published from the catalog and its schema

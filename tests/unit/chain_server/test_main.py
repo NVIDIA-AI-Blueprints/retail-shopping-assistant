@@ -245,6 +245,22 @@ class TestCreateInitialState:
 
         assert state.guardrails is False
 
+    def test_guardrails_cannot_be_requested_when_unavailable(
+        self, main_module, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(main_module.config, "guardrails_enabled", False)
+        monkeypatch.setattr(main_module.config, "guardrails_available", False)
+
+        state = main_module.create_initial_state(
+            main_module.QueryRequest(user_id=1, query="hi")
+        )
+        assert state.guardrails is False
+        with pytest.raises(main_module.HTTPException) as raised:
+            main_module.create_initial_state(
+                main_module.QueryRequest(user_id=1, query="hi", guardrails=True)
+            )
+        assert raised.value.status_code == 400
+
     def test_cart_passthrough(self, main_module) -> None:
         cart = Cart(contents=[{"item": "X", "amount": 2, "price": 9.99}])
         request = main_module.QueryRequest(user_id=1, query="hi", cart=cart)
@@ -307,6 +323,7 @@ class TestHealthAndRoot:
         assert body["models"]["vlm"]["model"] == "test-vlm"
         assert body["models"]["vlm"]["enabled"] is True
         assert body["guardrails"] == {
+            "available": True,
             "default_enabled": True,
             "failure_mode": "closed",
             "speculative_main_model_enabled": False,

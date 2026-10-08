@@ -206,6 +206,14 @@ class ChainServerConfig(BaseModel):
     media_input: MediaInputConfig = Field(default_factory=MediaInputConfig)
 
     # Safety Configuration
+    guardrails_available: bool = Field(
+        default=True,
+        description=(
+            "Whether this deployment has guardrails at all. When false no "
+            "guardrail model is needed, no check runs, and requests cannot "
+            "turn them on."
+        ),
+    )
     guardrails_enabled: bool = Field(
         default=False,
         description=(
@@ -334,6 +342,14 @@ class ChainServerConfig(BaseModel):
             raise ValueError("guardrails_timeout_seconds must be finite and positive")
         return v
 
+    @validator('guardrails_enabled')
+    def validate_guardrails_enabled(cls, v, values):
+        if v and values.get("guardrails_available") is False:
+            raise ValueError(
+                "GUARDRAILS_ENABLED cannot be true when GUARDRAILS_AVAILABLE is false"
+            )
+        return v
+
     class Config:
         """Pydantic configuration."""
         extra = "forbid"  # Prevent additional fields
@@ -386,6 +402,7 @@ def load_config(config_path: str | None = None) -> ChainServerConfig:
         ),
         "expose_agent_diagnostics": _env_bool("EXPOSE_AGENT_DIAGNOSTICS"),
         "relay_enabled": _env_bool("RELAY_ENABLED"),
+        "guardrails_available": _env_bool("GUARDRAILS_AVAILABLE"),
         "guardrails_enabled": _env_bool("GUARDRAILS_ENABLED"),
         "guardrails_failure_mode": os.environ.get("GUARDRAILS_FAILURE_MODE"),
         "guardrails_timeout_seconds": os.environ.get("GUARDRAILS_TIMEOUT_SECONDS"),

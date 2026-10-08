@@ -192,6 +192,7 @@ export interface CapabilitiesResponse {
   media_input: MediaCapabilities;
   models?: ModelCapabilities;
   guardrails?: {
+    available?: boolean;
     default_enabled: boolean;
     failure_mode: 'open' | 'closed';
     supported_modalities: Array<'text' | 'image' | 'video'>;

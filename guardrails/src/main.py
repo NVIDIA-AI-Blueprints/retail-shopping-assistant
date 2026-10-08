@@ -10,6 +10,7 @@ from typing import Literal
 from fastapi import FastAPI
 from pydantic import BaseModel, Field, model_validator
 from rails import GuardrailEngine
+from shared.model_config import guardrails_available
 
 
 class Attachment(BaseModel):
@@ -55,11 +56,14 @@ class CheckResponse(BaseModel):
 
 class CapabilitiesResponse(BaseModel):
     input_execution_mode: Literal["parallel", "sequential", "unknown"]
+    available: bool = True
 
 
 def create_app(engine: GuardrailEngine | None = None) -> FastAPI:
     app = FastAPI(title="Retail Guardrails", version="1.0.0")
-    evaluator = engine or GuardrailEngine()
+    # With GUARDRAILS_AVAILABLE=false there are no guardrail models to reach,
+    # so no engine is built and every check reports that.
+    evaluator = engine or (GuardrailEngine() if guardrails_available() else None)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -68,11 +72,20 @@ def create_app(engine: GuardrailEngine | None = None) -> FastAPI:
     @app.get("/capabilities", response_model=CapabilitiesResponse)
     async def capabilities() -> CapabilitiesResponse:
         return CapabilitiesResponse(
-            input_execution_mode=getattr(evaluator, "input_execution_mode", "unknown")
+            input_execution_mode=getattr(evaluator, "input_execution_mode", "unknown"),
+            available=evaluator is not None,
         )
 
     @app.post("/v1/checks", response_model=CheckResponse)
     async def checks(request: CheckRequest) -> CheckResponse:
+        if evaluator is None:
+            return CheckResponse(
+                status="error",
+                stage=request.stage,
+                policy="service",
+                latency_ms=0,
+                diagnostic_code="guardrails_unavailable",
+            )
         try:
             decision, latency_ms, modalities, model_calls = await evaluator.check(request)
         except Exception:  # noqa: BLE001 - keep diagnostics sanitized.

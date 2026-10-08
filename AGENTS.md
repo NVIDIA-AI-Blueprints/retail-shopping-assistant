@@ -127,22 +127,26 @@ python scripts/model_config.py deploy --build
 
 ### Locally deployed model mode (requires multi-GPU setup)
 
-`docker-compose-model-local.yaml` serves Nemotron 3.5 Super (`local-llm`, 4
-GPUs) and Nemotron 3 Embed 1B (`local-embedding`, 1 GPU) with vLLM from
-Hugging Face checkpoints. Image
-embedding and guardrails stay hosted.
+`docker-compose-model-local.yaml` serves every model role with vLLM from
+Hugging Face checkpoints, on 8 GPUs by default: Nemotron 3.5 Super
+(`local-llm`, 4 GPUs), Nemotron 3 Embed 1B (`local-embedding`), Nemotron 3.5
+Content Safety (`local-content-safety`), Llama 3.1 NemoGuard 8B Topic Control
+as a LoRA on Llama 3.1 8B Instruct (`local-topic-control`), and Nemotron 3
+Nano Omni for video safety (`local-video-safety`), one GPU each.
 
 ```bash
 cp .env.local-models.example .env.local-models
-$EDITOR .env.local-models      # HF_TOKEN, NVIDIA_API_KEY
+$EDITOR .env.local-models      # HF_TOKEN, NGC_API_KEY
 source .env.local-models
 mkdir -p "$HF_CACHE"
-docker compose -f docker-compose-model-local.yaml up -d --wait local-llm local-embedding
+docker compose -f docker-compose-model-local.yaml up -d --wait \
+  local-llm local-embedding local-content-safety local-topic-control local-video-safety
 python scripts/model_config.py show --validate
 docker compose up -d --build
 ```
 
-The profile sets `LLM_*`, `VLM_*` and `TEXT_EMBED_*` after sourcing
+The profile sets `LLM_*`, `VLM_*`, `TEXT_EMBED_*`, `RAILS_*` and
+`MULTIMODAL_SAFETY_*` (guardrails stay off by default, as hosted), after sourcing
 `.env.example`, so tracked configuration does not change. Reasoning output is suppressed via
 `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` on the
 chain-server side so streamed tokens flow eagerly.

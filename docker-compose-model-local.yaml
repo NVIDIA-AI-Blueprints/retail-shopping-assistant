@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Locally deployed models -- `local_models` in shared/configs/models.yaml --
-# served on this machine by vLLM from Hugging Face checkpoints.
+# served on this machine by vLLM from Hugging Face checkpoints: the app LLM,
+# text embedding, and the three guardrail judges.
 #
 # .env.local-models.example points the app at these services; see
 # docs/DEPLOYMENT.md, Local Deployment.
@@ -110,6 +111,141 @@ services:
       timeout: 5s
       retries: 30
       start_period: 600s
+
+  local-content-safety:
+    # Nemotron 3.5 Content Safety from Hugging Face, served by vLLM:
+    #   https://huggingface.co/nvidia/Nemotron-3.5-Content-Safety
+    # The model card validates vLLM 0.11.0 to 0.20.2. The served name matches
+    # the hosted model, so RAILS_CONTENT_MODEL is the same either way.
+    image: ${LOCAL_CONTENT_SAFETY_VLLM_IMAGE:-vllm/vllm-openai:v0.20.0}
+    # vLLM is started without --api-key, so the host port is loopback only.
+    ports:
+      - "127.0.0.1:8003:8000"
+    environment:
+      # Optional: the model is public. Set, it raises Hugging Face rate limits.
+      - HF_TOKEN
+    command:
+      - --model=nvidia/Nemotron-3.5-Content-Safety
+      - --served-model-name=nvidia/nemotron-3.5-content-safety
+      - --host=0.0.0.0
+      - --port=8000
+      - --max-model-len=16384
+      - --gpu-memory-utilization=0.85
+    volumes:
+      - ${HF_CACHE}:/root/.cache/huggingface
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${LOCAL_CONTENT_SAFETY_GPU:-5}']
+              capabilities: [gpu]
+    restart: "no"
+    networks:
+      - shopping-network
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 900s
+
+  local-topic-control:
+    # Llama 3.1 NemoGuard 8B Topic Control: a LoRA adapter from Hugging Face on
+    # Meta's Llama 3.1 8B Instruct, served by vLLM:
+    #   https://huggingface.co/nvidia/llama-3.1-nemoguard-8b-topic-control
+    # The base model is gated: HF_TOKEN needs Meta's approval for it.
+    #
+    # The guardrail service uses its dedicated on-topic/off-topic path only
+    # when the model name contains "topic-control", so the adapter's name does.
+    image: ${LOCAL_TOPIC_CONTROL_VLLM_IMAGE:-vllm/vllm-openai:v0.20.0}
+    # vLLM is started without --api-key, so the host port is loopback only.
+    ports:
+      - "127.0.0.1:8004:8000"
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+    command:
+      - --model=meta-llama/Llama-3.1-8B-Instruct
+      - --enable-lora
+      - --max-lora-rank=8
+      - --lora-modules
+      - llama-3.1-nemoguard-8b-topic-control=nvidia/llama-3.1-nemoguard-8b-topic-control
+      - --host=0.0.0.0
+      - --port=8000
+      - --max-model-len=16384
+      - --gpu-memory-utilization=0.85
+    volumes:
+      - ${HF_CACHE}:/root/.cache/huggingface
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${LOCAL_TOPIC_CONTROL_GPU:-6}']
+              capabilities: [gpu]
+    restart: "no"
+    networks:
+      - shopping-network
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 900s
+
+  local-video-safety:
+    # Nemotron 3 Nano Omni from Hugging Face, served by vLLM, judges complete
+    # videos including their audio:
+    #   https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
+    # The model card requires vLLM 0.20.0, whose image lacks the audio
+    # packages use_audio_in_video needs, so they are installed at start.
+    #
+    # BF16 weights are ~66 GB on one 80 GB GPU. If that leaves too little KV
+    # cache, set LOCAL_VIDEO_SAFETY_HF_MODEL to the -FP8 checkpoint (~35 GB).
+    # The guardrail service sends the Omni-specific video request only when
+    # the model name contains "nemotron-3-nano-omni".
+    image: ${LOCAL_VIDEO_SAFETY_VLLM_IMAGE:-vllm/vllm-openai:v0.20.0}
+    # vLLM is started without --api-key, so the host port is loopback only.
+    ports:
+      - "127.0.0.1:8005:8000"
+    environment:
+      # Optional: the model is public. Set, it raises Hugging Face rate limits.
+      - HF_TOKEN
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        python3 -m pip install --quiet "vllm[audio]==0.20.0" &&
+        exec vllm serve ${LOCAL_VIDEO_SAFETY_HF_MODEL:-nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16}
+        --served-model-name=nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
+        --host=0.0.0.0
+        --port=8000
+        --trust-remote-code
+        --max-model-len=32768
+        --gpu-memory-utilization=0.90
+        --video-pruning-rate=0.5
+        --reasoning-parser=nemotron_v3
+    volumes:
+      - ${HF_CACHE}:/root/.cache/huggingface
+    ipc: host
+    shm_size: "16gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${LOCAL_VIDEO_SAFETY_GPU:-7}']
+              capabilities: [gpu]
+    restart: "no"
+    networks:
+      - shopping-network
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 1800s
 
 networks:
   shopping-network:

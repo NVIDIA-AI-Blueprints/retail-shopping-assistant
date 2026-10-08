@@ -39,7 +39,7 @@ deployed models are vLLM serving Hugging Face checkpoints from
 - **CPU**: 16+ cores
 - **RAM**: 128GB+ system memory
 - **Storage**: 100GB+ available disk space
-- **GPUs**: 8x H100 (for locally deployed models; 5 are used by default)
+- **GPUs**: 8x H100 (for locally deployed models; all 8 are used by default)
 - **Network**: High-speed internet connection
 
 ### Software Dependencies
@@ -68,8 +68,8 @@ deployed models are vLLM serving Hugging Face checkpoints from
 
 3. **Accept Terms**:
    - Ensure you have access to the NVIDIA Container Registry
-   - For locally hosted models, request access to the Nemotron 3.5 Super checkpoint on
-     Hugging Face and create an `HF_TOKEN`
+   - For locally hosted models, request access on Hugging Face to the Nemotron 3.5 Super
+     checkpoint and to `meta-llama/Llama-3.1-8B-Instruct`, then create an `HF_TOKEN`
 
 ## 🚀 Hosted Endpoints
 
@@ -151,10 +151,11 @@ required by models.yaml" and starts only the application: nothing in
 That is correct behavior, not a failure. Start the models yourself first, as
 [Step 4](#step-4-start-the-models-then-the-app) does.
 
-Not every role can move to your own GPUs. Image embedding and the guardrail
-models have no local service defined, so the self-hosted path is a hybrid: the
-language, media and text-embedding roles run locally while those stay on hosted
-endpoints. A fully offline deployment is not possible today.
+Every model role can move to your own GPUs: the language, media,
+text-embedding and guardrail roles each have a local service in
+`docker-compose-model-local.yaml`, and `.env.local-models.example` points all
+of them there. Image embedding is the exception; it has no role or local
+service and stays off.
 
 Image embedding is off by default: catalog indexing populates the text
 collection only, and needs just the text embedding endpoint. Set
@@ -172,18 +173,29 @@ default in `shared/configs/chain_server/config.yaml`.
 
 Use this only when this machine will serve the models itself. The local setup
 mirrors the hosted default: Nemotron 3.5 Super answers the shopper and reads
-photo and video uploads, and Nemotron 3 Embed 1B embeds the catalog. Both are
-locally deployed models: Hugging Face checkpoints served by vLLM from
-`docker-compose-model-local.yaml`:
+photo and video uploads, Nemotron 3 Embed 1B embeds the catalog, and three
+guardrail judges check each turn. All are locally deployed models: Hugging
+Face checkpoints served by vLLM from `docker-compose-model-local.yaml`:
 
-| Service | Checkpoint | GPUs |
-|---------|------------|------|
-| `local-llm` | `nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026`, BF16, tensor parallel 4 | `LOCAL_LLM_GPUS`, default `0,1,2,3` |
-| `local-embedding` | `nvidia/Nemotron-3-Embed-1B-BF16` | `LOCAL_EMBED_GPU`, default `4` |
+| Service | Role | Checkpoint | GPUs |
+|---------|------|------------|------|
+| `local-llm` | `app_llm`, `vlm` | `nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026`, BF16, tensor parallel 4 | `LOCAL_LLM_GPUS`, default `0,1,2,3` |
+| `local-embedding` | `text_embedding` | `nvidia/Nemotron-3-Embed-1B-BF16` | `LOCAL_EMBED_GPU`, default `4` |
+| `local-content-safety` | `content_safety` | `nvidia/Nemotron-3.5-Content-Safety` | `LOCAL_CONTENT_SAFETY_GPU`, default `5` |
+| `local-topic-control` | `topic_control` | `nvidia/llama-3.1-nemoguard-8b-topic-control` LoRA on `meta-llama/Llama-3.1-8B-Instruct` | `LOCAL_TOPIC_CONTROL_GPU`, default `6` |
+| `local-video-safety` | `multimodal_safety` | `nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16` | `LOCAL_VIDEO_SAFETY_GPU`, default `7` |
 
 The defaults fit an 8x H100 80 GB machine. `.env.local-models.example` points
-the app LLM, media and text embedding at them through the environment, so
-`models.yaml` does not change. Image embedding and guardrails stay hosted.
+every role at them through the environment, so `models.yaml` does not change,
+and adds video to the guarded modalities. Guardrails stay off by default, as on
+the hosted path; turn them on per session with the UI's Guardrails toggle, or
+for the deployment with `GUARDRAILS_ENABLED=true`.
+
+The guardrail service picks its request shape from the model name: the
+dedicated on-topic/off-topic check runs only for a name containing
+`topic-control`, and the Omni video request only for one containing
+`nemotron-3-nano-omni`. The served names in the compose file are chosen to
+match; keep them if you change a checkpoint.
 
 ### GPU Sizing
 
@@ -194,13 +206,20 @@ and each model publishes its own footprint. Taking H100 80GB as the example:
 |-------|------|--------------|---------------------|
 | Nemotron 3.5 Super | Shopping agent, photo and video | 4 GPUs at BF16 | [121B MoE, ~227 GB BF16](https://docs.nvidia.com/nemo/automodel/model-coverage/omni/nvidia/nemotron-3-5-super-vl) |
 | Nemotron 3 Embed 1B | Catalog and query embedding | shares 1 GPU | [3.6 GB at FP16](https://docs.nvidia.com/nim/nemo-retriever/text-embedding/latest/support-matrix.html) |
-| Nemotron 3.5 Content Safety | Optional moderation | shares 1 GPU | [4B, 8 GB VRAM and up](https://huggingface.co/blog/nvidia/nemotron-3-5-content-safety) |
-| Llama 3.1 NemoGuard 8B Topic Control | Optional off-topic checks | 1 GPU | [48 GB](https://docs.nvidia.com/nim/llama-3-1-nemoguard-8b-topiccontrol/latest/support-matrix.html) |
+| Nemotron 3.5 Content Safety | Text and image moderation | 1 GPU | [4B, 8 GB VRAM and up](https://huggingface.co/blog/nvidia/nemotron-3-5-content-safety) |
+| Llama 3.1 NemoGuard 8B Topic Control | Off-topic checks | 1 GPU | [48 GB](https://docs.nvidia.com/nim/llama-3-1-nemoguard-8b-topiccontrol/latest/support-matrix.html) |
+| Nemotron 3 Nano Omni 30B | Video safety, with audio | 1 GPU at BF16 | [1x H100 80GB at BF16](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16) |
 
-`docker-compose-model-local.yaml` serves the first two, which is the five-GPU
+`docker-compose-model-local.yaml` serves all five, which is the eight-GPU
 default layout: four for the agent's tensor parallel group
-(`LOCAL_LLM_TP=4`, `LOCAL_LLM_GPUS=0,1,2,3`) and one for embedding
-(`LOCAL_EMBED_GPU=4`). The guard models run on hosted endpoints.
+(`LOCAL_LLM_TP=4`, `LOCAL_LLM_GPUS=0,1,2,3`), then one each for embedding
+(`LOCAL_EMBED_GPU=4`), content safety (`LOCAL_CONTENT_SAFETY_GPU=5`), topic
+control (`LOCAL_TOPIC_CONTROL_GPU=6`) and video safety
+(`LOCAL_VIDEO_SAFETY_GPU=7`).
+
+Omni's ~66 GB of BF16 weights leave little KV cache on one 80 GB card. If
+`local-video-safety` runs out of memory, set `LOCAL_VIDEO_SAFETY_HF_MODEL` to
+`nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8` (~35 GB).
 
 Those published figures assume a model has the card to itself, since vLLM
 reserves most of it for the KV cache. Putting the smaller models together on
@@ -210,10 +229,14 @@ one GPU means capping `--gpu-memory-utilization` for each.
 
 - Docker 20.10+ with the Compose plugin, and the NVIDIA Container Toolkit
 - Python on the host, for the deploy helpers
-- **Five GPUs** for the default layout above, as on an 8x H100 80 GB machine
-- About 240 GB of disk for the chat model's BF16 checkpoint
-- A Hugging Face token with access to that checkpoint
-- An NVIDIA API key, because some model roles still use hosted endpoints
+- **Eight GPUs** for the default layout above, as on an 8x H100 80 GB machine
+- About 330 GB of disk for the checkpoints, most of it the chat model's BF16 weights
+- A Hugging Face token with access to the two gated checkpoints: the
+  Nemotron 3.5 Super chat model, and `meta-llama/Llama-3.1-8B-Instruct`, the
+  topic-control adapter's base, which Meta approves by hand. The other three
+  are public.
+- Network access from the `local-video-safety` container at start, which
+  installs vLLM's audio packages before serving
 - An [NGC account](https://ngc.nvidia.com/) to pull the UI base image
 
 ### Step 1: Environment Setup
@@ -224,7 +247,7 @@ cd retail-shopping-assistant
 python -m pip install --user -r requirements-deploy.txt
 
 cp .env.local-models.example .env.local-models
-$EDITOR .env.local-models   # HF_TOKEN (checkpoint access) and NVIDIA_API_KEY (hosted roles)
+$EDITOR .env.local-models   # HF_TOKEN (checkpoint access) and NGC_API_KEY (UI base image)
 source .env.local-models
 mkdir -p "$HF_CACHE"
 ```
@@ -256,19 +279,26 @@ docker login nvcr.io
 ### Step 4: Start the Models, Then the App
 
 ```bash
-docker compose -f docker-compose-model-local.yaml up -d --wait local-llm local-embedding
+docker compose -f docker-compose-model-local.yaml up -d --wait \
+  local-llm local-embedding local-content-safety local-topic-control local-video-safety
 python scripts/model_config.py show --validate
 docker compose -f docker-compose.yaml up -d --build
 ```
 
-`--wait` returns once both report healthy. Start the app after that: the
-catalog indexer embeds the catalog once, at startup. The first start downloads
-the chat model's ~240 GB into `HF_CACHE` and can take an hour; follow it with
+`--wait` returns once every model reports healthy. Start the app after that:
+the catalog indexer embeds the catalog once, at startup. The first start
+downloads ~330 GB into `HF_CACHE`, most of it the chat model, and can take an
+hour; follow it with
 `docker compose -f docker-compose-model-local.yaml logs -f local-llm`.
 
-To keep text embedding on the hosted endpoint, comment out the two
-`TEXT_EMBED_*` lines in `.env.local-models` and start only `local-llm`.
-`LOCAL_LLM_GPUS`, `LOCAL_LLM_TP`, and `LOCAL_EMBED_GPU` change the placement.
+To keep text embedding on the hosted endpoint, comment out the
+`TEXT_EMBED_*` and `EMBED_API_KEY` lines in `.env.local-models` and leave out
+`local-embedding`.
+To keep guardrails hosted, comment out the guardrails block there, leave out
+the three guardrail services, and set `RAIL_API_KEY` and
+`MULTIMODAL_SAFETY_API_KEY` to build.nvidia.com keys. `LOCAL_LLM_GPUS`,
+`LOCAL_LLM_TP`, `LOCAL_EMBED_GPU`, `LOCAL_CONTENT_SAFETY_GPU`,
+`LOCAL_TOPIC_CONTROL_GPU` and `LOCAL_VIDEO_SAFETY_GPU` change the placement.
 
 ### Step 5: Index the catalog
 
@@ -493,7 +523,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `SHUTDOWN_GRACE_SECONDS` | Time the chain server and memory service drain in-flight turns before exiting | No | image default |
 | `CHAIN_SERVER_RELOAD` | Reload the chain server on source changes; development only | No | off |
 | `MEMORY_DB_USER` / `MEMORY_DB_PASSWORD` / `MEMORY_DB_NAME` | PostgreSQL credentials under the `postgres` Compose profile. **Change these before any shared deployment**; the defaults are `memory` for all three | No | `memory` |
-| `HF_TOKEN` | Hugging Face token with access to the local LLM checkpoint | Local only | - |
+| `HF_TOKEN` | Hugging Face token with access to the gated local checkpoints: the LLM and Llama 3.1 8B Instruct | Local only | - |
 | `HF_CACHE` | Hugging Face cache the locally deployed models download into | Local only | `~/.cache/huggingface` |
 | `LOCAL_LLM_HF_MODEL` | Checkpoint the local vLLM server loads | Local only | `nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026` |
 | `LOCAL_LLM_GPUS` | Comma-separated GPU ids for the local LLM; supply as many as `LOCAL_LLM_TP` | Local only | `0,1,2,3` |
@@ -501,6 +531,11 @@ set there; a unit test fails if the two differ, so change both together.
 | `LOCAL_LLM_VLLM_IMAGE` | vLLM image serving the local LLM | Local only | `vllm/vllm-openai:v0.30.0` |
 | `LOCAL_EMBED_GPU` | GPU id for the local embedding model | Local only | `4` |
 | `LOCAL_EMBED_VLLM_IMAGE` | vLLM image serving local embeddings | Local only | `vllm/vllm-openai:v0.24.0` |
+| `LOCAL_CONTENT_SAFETY_GPU` | GPU id for the local content safety model | Local only | `5` |
+| `LOCAL_TOPIC_CONTROL_GPU` | GPU id for the local topic control model | Local only | `6` |
+| `LOCAL_VIDEO_SAFETY_GPU` | GPU id for the local video safety model | Local only | `7` |
+| `LOCAL_VIDEO_SAFETY_HF_MODEL` | Checkpoint the local video safety server loads; the `-FP8` variant halves its memory | Local only | `nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16` |
+| `LOCAL_CONTENT_SAFETY_VLLM_IMAGE` / `LOCAL_TOPIC_CONTROL_VLLM_IMAGE` / `LOCAL_VIDEO_SAFETY_VLLM_IMAGE` | vLLM images serving the local guardrail models | Local only | `vllm/vllm-openai:v0.20.0` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
 | `SHARED_CONFIG_ROOT` | Directory the services read `shared/configs/` from | No | `/app/shared/configs` |

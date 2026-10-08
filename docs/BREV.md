@@ -91,7 +91,7 @@ If 4x H100 is unavailable:
 
 ![Step 5: Compute Resources](images/step1.png)
 
-> **Performance Note**: You only need GPUs here if you intend to serve the models yourself. The default layout for locally hosted models uses five: four for the shopping model's tensor parallel group and one for embedding. Against NVIDIA-hosted endpoints, no GPU is required.
+> **Performance Note**: You only need GPUs here if you intend to serve the models yourself. The default layout for locally hosted models uses eight: four for the shopping model's tensor parallel group, one for embedding, and one each for the content safety, topic control and video safety guardrails. Against NVIDIA-hosted endpoints, no GPU is required.
 
 ### Step 6: Review Configuration Summary
 

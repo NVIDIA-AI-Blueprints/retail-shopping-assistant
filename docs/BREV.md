@@ -97,7 +97,7 @@ Configure the GPU compute resources for optimal performance.
 Review your selected configuration and pricing information.
 
 1. **Review Configuration Details**:
-   - **Compute**: Selected GPU configuration (e.g., 2x NVIDIA H100)
+   - **Compute**: Selected GPU configuration (e.g., 8x NVIDIA H100)
    - **Storage**: Disk storage allocation (e.g., 5TB SSD)
    - **Network**: Configured tunnels (tunnel-1:3000)
    - **Pricing**: Hourly rate
@@ -114,7 +114,7 @@ Review your selected configuration and pricing information.
 Create your GPU environment template with the configured settings.
 
 1. **Final Configuration Review**:
-   - **Compute**: GPU configuration (e.g., NVIDIA H100 with 2 GPUs × 52 CPUs)
+   - **Compute**: GPU configuration (e.g., NVIDIA H100 with 8 GPUs)
    - **Container**: VM Mode with Jupyter enabled
    - **Exposed Ports**: tunnel-1:3000 for web access
 

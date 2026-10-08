@@ -112,7 +112,7 @@ curl -s http://localhost:8010/ready  # catalog: 503 until the index is built
 Then open **http://localhost:3000**, and continue with
 [Notebook 1](notebook/1_Getting_Started.ipynb).
 
-**Running the models on your own GPUs instead?** The default layout needs five
+**Running the models on your own GPUs instead?** The default layout needs eight
 GPUs, as on an 8x H100 80 GB machine. See
 [Locally Hosted Models](docs/DEPLOYMENT.md#-locally-hosted-models) for the GPU
 sizing, setup, and model metrics. No GPUs of your own?

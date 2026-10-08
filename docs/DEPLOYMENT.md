@@ -211,7 +211,7 @@ and each model publishes its own footprint. Taking H100 80GB as the example:
 | Model | Role | On H100 80GB | Footprint |
 |-------|------|--------------|---------------------|
 | Nemotron 3.5 Super | Shopping agent, photo and video | 4 GPUs at BF16 | [121B MoE, ~227 GB BF16](https://docs.nvidia.com/nemo/automodel/model-coverage/omni/nvidia/nemotron-3-5-super-vl) |
-| Nemotron 3 Embed 1B | Catalog and query embedding | shares 1 GPU | [1B, ~2 GB BF16](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16) |
+| Nemotron 3 Embed 1B | Catalog and query embedding | 1 GPU | [1B, ~2 GB BF16](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16) |
 | Nemotron 3.5 Content Safety | Text and image moderation | 1 GPU | [4B, 8 GB VRAM and up](https://huggingface.co/blog/nvidia/nemotron-3-5-content-safety) |
 | Llama 3.1 NemoGuard 8B Topic Control | Off-topic checks | 1 GPU | [LoRA on an 8B base, ~16 GB BF16](https://huggingface.co/nvidia/llama-3.1-nemoguard-8b-topic-control) |
 | Nemotron 3 Nano Omni 30B | Video safety, with audio | 1 GPU at FP8 | [~35 GB FP8, ~66 GB BF16](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8) |

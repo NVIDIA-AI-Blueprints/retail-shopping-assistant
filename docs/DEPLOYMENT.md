@@ -931,7 +931,7 @@ than 1024 tokens.
 
 #### Guardrail Defaults
 
-Guardrails ships disabled and spans two services, so each default lives with
+Guardrails ships enabled and spans two services, so each default lives with
 whichever one reads it. [Guardrails](GUARDRAILS.md) owns that layout, along
 with what a failed check costs and what the shopper is told.
 
@@ -1050,6 +1050,27 @@ htop
 ```bash
 # Show which key variables each role needs and whether they are set
 python scripts/model_config.py show --validate
+```
+
+#### 6. Every Reply Says "I cannot safely validate this request right now"
+
+**Symptoms**: with guardrails on, every turn is refused; with the UI's
+Guardrails toggle off, the same turn works.
+
+**Cause**: the guardrail check errored, and `GUARDRAILS_FAILURE_MODE=closed`
+refuses the turn. Usually `RAIL_API_KEY` is not a build.nvidia.com key with
+access to the guard models, so `integrate.api.nvidia.com` answers 401 or 403.
+It falls back to `NVIDIA_API_KEY`, which works only if that is also a
+build.nvidia.com key.
+
+**Solutions**:
+```bash
+# Set a build.nvidia.com key for the guard models, then recreate the services
+export RAIL_API_KEY="..."
+docker compose -f docker-compose.yaml up -d --force-recreate rails chain-server
+
+# Or, until you have one, make guardrails off by default
+export GUARDRAILS_ENABLED=false
 ```
 
 ### Debug Mode

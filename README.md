@@ -101,13 +101,19 @@ docker login nvcr.io                 # username: $oauthtoken, password: NGC API 
 python -m pip install --user -r requirements-deploy.txt
 
 cp .env.example .env
-$EDITOR .env                         # set NVIDIA_API_KEY
+$EDITOR .env                         # set NVIDIA_API_KEY, and RAIL_API_KEY for guardrails
 source .env
 
 python scripts/model_config.py show --validate   # every model role resolves; no keys printed
 python scripts/model_config.py deploy --build
 curl -s http://localhost:8010/ready  # catalog: 503 until the index is built
 ```
+
+Guardrails are on by default and call `integrate.api.nvidia.com`, so
+`RAIL_API_KEY` must be a [build.nvidia.com](https://build.nvidia.com) key. It
+falls back to `NVIDIA_API_KEY`. Without a working one every turn is refused
+while guardrails are on; see
+[Troubleshooting](docs/DEPLOYMENT.md#6-every-reply-says-i-cannot-safely-validate-this-request-right-now).
 
 Then open **http://localhost:3000**, and continue with
 [Notebook 1](notebook/1_Getting_Started.ipynb).

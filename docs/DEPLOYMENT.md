@@ -196,9 +196,10 @@ because vLLM also reserves a KV cache, plus a few GB of working memory.
 
 The default layout needs six 80 GB GPUs. `.env.local-models.example` points
 every role at these services through the environment, so `models.yaml` does not change,
-and adds video to the guarded modalities. Guardrails are on by default, as on
-the hosted path; turn them off per session with the UI's Guardrails toggle, or
-for the deployment with `GUARDRAILS_ENABLED=false`. To deploy without them, set
+and adds video to the guarded modalities. As on the hosted path, guardrails
+are on by default for API requests, and the UI's Guardrails toggle starts off
+and turns them on per session; `GUARDRAILS_ENABLED=false` makes off the API
+default. To deploy without them, set
 `GUARDRAILS_AVAILABLE=false` in `.env.local-models`: the three guardrail
 models are not started, which frees GPU 5 and 50 GB of GPU 4, and the UI has
 no Guardrails toggle. The same setting works on the hosted path

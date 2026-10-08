@@ -197,6 +197,7 @@ export interface CapabilitiesResponse {
     failure_mode: 'open' | 'closed';
     supported_modalities: Array<'text' | 'image' | 'video'>;
     request_override_supported: boolean;
+    client_can_disable?: boolean;
   };
   catalog?: CatalogCapabilities;
 }

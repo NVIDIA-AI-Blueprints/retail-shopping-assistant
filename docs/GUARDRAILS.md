@@ -1,8 +1,10 @@
 # Guardrails
 
 An optional safety layer that runs as its own service and decides whether a
-turn may proceed. It ships enabled; the UI's Guardrails toggle turns it off for
-a session.
+turn may proceed. It ships enabled for API requests that do not say otherwise.
+The UI's Guardrails toggle starts off, to show the same turn before and after,
+and turns it on for a session; with `GUARDRAILS_CLIENT_CAN_DISABLE=false` it
+starts on.
 
 ## How it decides
 

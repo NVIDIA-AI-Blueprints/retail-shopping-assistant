@@ -748,6 +748,32 @@ class TestStreamEndpoint:
         )
 
 
+    def test_a_new_session_for_the_same_user_shares_no_cart_or_memory(
+        self, main_module, client: TestClient
+    ) -> None:
+        identities = []
+        for tab in ("a", "b"):
+            response = client.post(
+                "/query/timing",
+                json={
+                    "user_id": 1759999999123456,
+                    "query": "hello",
+                    "session_id": f"session-{tab}",
+                    "conversation_id": f"conversation-{tab}",
+                    "cart_id": f"cart-{tab}",
+                },
+            )
+            assert response.status_code == 200
+            identities.append(main_module._test_runtime.ainvoke_calls[-1][1])
+
+        first, second = identities
+        assert first.cart_user_id != second.cart_user_id
+        assert first.context_user_id != second.context_user_id
+        assert first.checkpoint_thread_id != second.checkpoint_thread_id
+        for identity in identities:
+            assert 1759999999123456 not in (identity.cart_user_id, identity.context_user_id)
+
+
 class TestRequestIdentity:
     def test_missing_explicit_ids_keep_legacy_user_scope(self) -> None:
         from chain_server.src.runtime.identity import create_request_identity

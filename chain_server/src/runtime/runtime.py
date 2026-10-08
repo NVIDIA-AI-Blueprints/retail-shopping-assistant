@@ -2193,14 +2193,10 @@ Rules:
         return prompt
 
     def _build_user_message(self, state: State, identity: RequestIdentity) -> str:
-        sections = [
-            (
-                f"REQUEST ID: {identity.request_id}\n"
-                f"SESSION ID: {identity.session_id}\n"
-                f"CONVERSATION ID: {identity.conversation_id}\n"
-                f"CART ID: {identity.cart_id}"
-            )
-        ]
+        # The cart and conversation IDs authorize the cart routes, so they stay
+        # out of anything that reaches the model provider or prompt traces.
+        # Tools take identity from the request context instead.
+        sections = [f"REQUEST ID: {identity.request_id}"]
         sections.append(_format_store_date())
         shopper_context = _format_shopper_context(state.shopper_context)
         wearer = _format_wearer_audience(state.wearer_audience)

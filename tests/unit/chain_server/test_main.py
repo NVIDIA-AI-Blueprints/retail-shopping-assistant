@@ -926,6 +926,11 @@ class TestSystemPrompt:
         )
 
         assert "USER QUERY: Show me a dress." in user_message
+        # The cart ID alone authorizes the cart routes; the model provider and
+        # prompt traces must never see it, nor the conversation that keys memory.
+        assert user_message.startswith("REQUEST ID: request-a\n")
+        for handle in ("cart-a", "conversation-a", "session-a"):
+            assert handle not in user_message
         # Wiring, not formatting. The formatter had its own tests and every one
         # of them passed with the block deleted from the turn entirely.
         assert "TODAY (store's current date, server-resolved):" in user_message

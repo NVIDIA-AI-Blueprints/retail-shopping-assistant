@@ -140,7 +140,7 @@ interface QueryRequest {
   context?: string;                   // Previous conversation context
   cart?: Cart;                        // Current shopping cart state
   retrieved?: Record<string, string>; // Previously retrieved products
-  guardrails?: boolean;               // Explicit per-request override; omitted uses server default
+  guardrails?: boolean;               // true turns guardrails on; false is ignored when the deployment enabled them, unless GUARDRAILS_CLIENT_CAN_DISABLE; omitted uses server default
   image_bool?: boolean;               // Indicate if image is provided (default: false)
 }
 
@@ -787,7 +787,8 @@ turns are not cut off before the SSE response is emitted.
     "speculative_main_model_enabled": false,
     "speculative_main_model_scope": "text_only",
     "supported_modalities": ["text", "image"],
-    "request_override_supported": true
+    "request_override_supported": true,
+    "client_can_disable": false
   },
   "catalog": {
     "catalog_id": "fashion_products",

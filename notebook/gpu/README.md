@@ -48,7 +48,6 @@ Every setting is an environment variable to `deploy.sh`. Notebook 5 and
 | Weights on a bigger disk | `HF_CACHE=/data/huggingface` |
 | Another checkpoint | `MODEL=...`, and possibly `VLLM_IMAGE=...`. Keep `SERVED_NAME` or pass it to the check as `MODEL`. |
 | Out of memory at load | `MAX_NUM_SEQS=64`, or `GPU_MEM_UTIL=0.80` |
-| A vLLM-based NIM instead | Skip `deploy.sh`. Start it with `NIM_ENABLE_KV_CACHE_REUSE=1` and point `BASE_URL` at it. |
 
 Other settings:
 

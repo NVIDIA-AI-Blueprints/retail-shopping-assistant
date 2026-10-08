@@ -6,9 +6,10 @@ import pytest
 import yaml
 from shared.model_config import (
     ModelConfigError,
+    guardrails_available,
     model_config_snapshot,
     resolve_model_config,
-    validate_local_nim_env,
+    validate_local_model_env,
     validate_model_config,
 )
 
@@ -75,8 +76,8 @@ def test_resolves_endpoint_local_and_disabled_roles(
     assert config.require("text_embedding").base_url == "http://local-embedding:8000/v1"
     assert config.require("text_embedding").api_key_env is None
     assert config.get("topic_control").disabled is True
-    assert config.required_local_nim_services == ("local-embedding",)
-    assert config.required_local_nim_env == ("HF_TOKEN", "HF_CACHE")
+    assert config.required_local_model_services == ("local-embedding",)
+    assert config.required_local_model_env == ("HF_TOKEN", "HF_CACHE")
 
 
 def test_a_local_role_is_not_redirected_by_the_hosted_env(
@@ -140,7 +141,7 @@ def test_shipped_media_perception_is_the_app_llm_model(model_endpoint_env: pytes
     app_llm, vlm = config.require("app_llm"), config.require("vlm")
     assert (vlm.base_url, vlm.model) == (app_llm.base_url, app_llm.model)
     assert vlm.api_key_env == "VLM_API_KEY"
-    assert config.required_local_nim_services == ()
+    assert config.required_local_model_services == ()
 
 
 def test_shipped_default_roles_share_one_host(model_endpoint_env: pytest.MonkeyPatch) -> None:
@@ -196,7 +197,33 @@ def test_validate_model_config_reports_disabled_required_role(
         validate_model_config(config, roles=("topic_control",))
 
 
-def test_validate_local_nim_env_only_when_local_services_are_used(
+def test_unavailable_guardrails_need_no_guardrail_endpoint_or_key(
+    model_endpoint_env: pytest.MonkeyPatch,
+) -> None:
+    for key in ("LLM_API_KEY", "VLM_API_KEY", "EMBED_API_KEY", "IMAGE_EMBED_API_KEY"):
+        model_endpoint_env.setenv(key, "test-key")
+    for key in ("RAIL_API_KEY", "MULTIMODAL_SAFETY_API_KEY", "RAILS_CONTENT_BASE_URL"):
+        model_endpoint_env.delenv(key, raising=False)
+    config = resolve_model_config(config_root=_SHIPPED)
+
+    with pytest.raises(ModelConfigError, match="content_safety"):
+        validate_model_config(config)
+
+    model_endpoint_env.setenv("GUARDRAILS_AVAILABLE", "false")
+    validate_model_config(config)
+    assert model_config_snapshot(config)["guardrails_available"] is False
+
+
+def test_guardrails_available_rejects_an_unknown_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GUARDRAILS_AVAILABLE", "ture")
+
+    with pytest.raises(ModelConfigError, match="GUARDRAILS_AVAILABLE"):
+        guardrails_available()
+
+
+def test_validate_local_model_env_only_when_local_services_are_used(
     llm_env: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     config = resolve_model_config(config_root=_write_models(tmp_path))
@@ -204,11 +231,11 @@ def test_validate_local_nim_env_only_when_local_services_are_used(
     llm_env.delenv("HF_CACHE", raising=False)
 
     with pytest.raises(ModelConfigError, match="HF_TOKEN"):
-        validate_local_nim_env(config)
+        validate_local_model_env(config)
 
     llm_env.setenv("HF_TOKEN", "test-token")
     llm_env.setenv("HF_CACHE", "/tmp/hf")
-    validate_local_nim_env(config)
+    validate_local_model_env(config)
 
 
 def test_snapshot_does_not_include_secret_value(

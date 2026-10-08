@@ -34,6 +34,7 @@ services:
       # so config wins.
       - CATALOG_RETRIEVER_URL=${CATALOG_RETRIEVER_URL:-}
       - MEMORY_RETRIEVER_URL=${MEMORY_RETRIEVER_URL:-}
+      - GUARDRAILS_AVAILABLE=${GUARDRAILS_AVAILABLE:-}
       - GUARDRAILS_ENABLED=${GUARDRAILS_ENABLED:-}
       - GUARDRAILS_FAILURE_MODE=${GUARDRAILS_FAILURE_MODE:-}
       - GUARDRAILS_TIMEOUT_SECONDS=${GUARDRAILS_TIMEOUT_SECONDS:-}
@@ -220,6 +221,7 @@ services:
       # Pass-through, no defaults here: guardrails/src/rails.py holds them, and
       # it reads an empty value as unset. Restating them would give each one two
       # sources that can drift apart unnoticed.
+      - GUARDRAILS_AVAILABLE=${GUARDRAILS_AVAILABLE:-}
       - GUARDRAILS_SUPPORTED_MODALITIES=${GUARDRAILS_SUPPORTED_MODALITIES:-}
       - MULTIMODAL_SAFETY_VIDEO_FPS=${MULTIMODAL_SAFETY_VIDEO_FPS:-}
       - GUARDRAILS_INPUT_EXECUTION_MODE=${GUARDRAILS_INPUT_EXECUTION_MODE:-}

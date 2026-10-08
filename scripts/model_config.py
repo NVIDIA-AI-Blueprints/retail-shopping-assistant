@@ -18,10 +18,11 @@ if str(REPO_ROOT) not in sys.path:
 os.environ.setdefault("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared" / "configs"))
 
 from shared.model_config import (  # noqa: E402
+    GUARDRAIL_ROLES,
     ModelConfigError,
     model_config_snapshot,
     resolve_model_config,
-    validate_local_nim_env,
+    validate_local_model_env,
     validate_model_config,
 )
 
@@ -34,7 +35,11 @@ def _run(command: Sequence[str]) -> None:
 
 
 def _print_human(snapshot: dict) -> None:
+    print("guardrails_available: " + str(snapshot["guardrails_available"]).lower())
     for role, model in snapshot["models"].items():
+        if role in GUARDRAIL_ROLES and not snapshot["guardrails_available"]:
+            print(f"{role}: not used (GUARDRAILS_AVAILABLE=false)")
+            continue
         if model["source"] == "disabled":
             print(f"{role}: source=disabled")
             continue
@@ -54,10 +59,10 @@ def _print_human(snapshot: dict) -> None:
             parts.append(f"local_service={model['local_service']}")
         print(", ".join(parts))
 
-    services = snapshot["required_local_nim_services"]
-    print("required_local_nim_services: " + (", ".join(services) if services else "[]"))
-    required_env = snapshot["required_local_nim_env"] if services else []
-    print("required_local_nim_env: " + (", ".join(required_env) if required_env else "[]"))
+    services = snapshot["required_local_model_services"]
+    print("required_local_model_services: " + (", ".join(services) if services else "[]"))
+    required_env = snapshot["required_local_model_env"] if services else []
+    print("required_local_model_env: " + (", ".join(required_env) if required_env else "[]"))
 
 
 def show(args: argparse.Namespace) -> int:
@@ -69,18 +74,18 @@ def show(args: argparse.Namespace) -> int:
         _print_human(snapshot)
     if args.validate:
         validate_model_config(config)
-        validate_local_nim_env(config)
+        validate_local_model_env(config)
     return 0
 
 
 def deploy(args: argparse.Namespace) -> int:
     config = resolve_model_config()
     validate_model_config(config)
-    validate_local_nim_env(config)
+    validate_local_model_env(config)
     snapshot = model_config_snapshot(config)
     _print_human(snapshot)
 
-    services = list(config.required_local_nim_services)
+    services = list(config.required_local_model_services)
     if services:
         _run(["docker", "compose", "-f", "docker-compose-model-local.yaml", "up", "-d", "--wait", *services])
     else:

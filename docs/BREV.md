@@ -77,28 +77,27 @@ Configure the GPU compute resources for optimal performance.
 
 #### Recommended Configuration
 1. **Select GPU Type**: Choose **H100** from the available options
-2. **Select Configuration**: Choose **4x NVIDIA H100** for optimal performance
-   - **Specifications**: 4x H100 GPUs with 80GB VRAM each
+2. **Select Configuration**: Choose **8x NVIDIA H100** to serve every model locally; the default layout uses six of them
+   - **Specifications**: 8x H100 GPUs with 80GB VRAM each
    - **Memory**: High-RAM configuration (varies by provider)
-   - **Storage**: Flexible storage options
+   - **Storage**: At least 500 GB; the model checkpoints alone are about 300 GB
 
 #### Alternative Configurations
-If 4x H100 is unavailable:
-- **8x NVIDIA H100**
-- **8x NVIDIA A100**
+- **Hosted endpoints only**: any instance, no GPU required
+- **8x NVIDIA A100 80GB**: the same layout, without native FP8 for the video safety model
 
 3. Click **Next** to review your configuration
 
 ![Step 5: Compute Resources](images/step1.png)
 
-> **Performance Note**: You only need GPUs here if you intend to serve the models yourself. The default layout for locally hosted models uses five: four for the shopping model's tensor parallel group and one for embedding. Against NVIDIA-hosted endpoints, no GPU is required.
+> **Performance Note**: You only need GPUs here if you intend to serve the models yourself. The default layout for locally hosted models uses six 80 GB GPUs: four for the shopping model's tensor parallel group, one shared by the embedding, content safety and topic control models, and one for the video safety model. Without guardrails (`GUARDRAILS_AVAILABLE=false`) it uses five. [GPU Sizing](DEPLOYMENT.md#gpu-sizing) lists what each model needs and the other layouts. Against NVIDIA-hosted endpoints, no GPU is required.
 
 ### Step 6: Review Configuration Summary
 
 Review your selected configuration and pricing information.
 
 1. **Review Configuration Details**:
-   - **Compute**: Selected GPU configuration (e.g., 2x NVIDIA H100)
+   - **Compute**: Selected GPU configuration (e.g., 8x NVIDIA H100)
    - **Storage**: Disk storage allocation (e.g., 5TB SSD)
    - **Network**: Configured tunnels (tunnel-1:3000)
    - **Pricing**: Hourly rate
@@ -115,7 +114,7 @@ Review your selected configuration and pricing information.
 Create your GPU environment template with the configured settings.
 
 1. **Final Configuration Review**:
-   - **Compute**: GPU configuration (e.g., NVIDIA H100 with 2 GPUs × 52 CPUs)
+   - **Compute**: GPU configuration (e.g., NVIDIA H100 with 8 GPUs)
    - **Container**: VM Mode with Jupyter enabled
    - **Exposed Ports**: tunnel-1:3000 for web access
 
@@ -225,12 +224,12 @@ Access the retail shopping assistant through your secure tunnel.
 
 Allow the system to complete initialization before use.
 
-1. **Monitor Initialization**: The system automatically creates embeddings for products and images
+1. **Monitor Initialization**: The system automatically creates embeddings for the product catalog
 2. **Check Progress**: Observe initialization in the deployment notebook output or terminal logs
 3. **Wait for Completion**: Process typically takes **2-5 minutes** depending on GPU configuration
 4. **Watch for Completion Indicators**:
-   - "Processing image batch" (image embeddings)
-   - "Milvus database ready" (vector database initialization)
+   - "Processing text chunk batch" (catalog embeddings)
+   - "CATALOG INDEXER | index is current" (catalog index built)
    - "Uvicorn running" (web server ready)
 
 ![Step 15: System Initialization](images/step15.png)

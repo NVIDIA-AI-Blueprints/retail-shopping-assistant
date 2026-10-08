@@ -38,6 +38,7 @@ def _clear_model_and_service_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "GROUNDING_REWRITE_ENABLED",
         "GROUNDING_REWRITE_MAX_EVIDENCE_CHARS",
         "EXPOSE_AGENT_DIAGNOSTICS",
+        "GUARDRAILS_AVAILABLE",
         "GUARDRAILS_ENABLED",
         "GUARDRAILS_FAILURE_MODE",
         "GUARDRAILS_TIMEOUT_SECONDS",
@@ -326,6 +327,24 @@ class TestLoadConfig:
         config = load_config(str(path))
 
         assert config.guardrails_enabled is expected
+
+    def test_guardrails_cannot_default_on_when_unavailable(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GUARDRAILS_AVAILABLE", "false")
+        path = write_yaml("config.yaml", {**valid_config_dict, "guardrails_enabled": False})
+
+        assert load_config(str(path)).guardrails_available is False
+
+        monkeypatch.setenv("GUARDRAILS_ENABLED", "true")
+        with pytest.raises(ValueError, match="GUARDRAILS_AVAILABLE is false"):
+            load_config(str(path))
 
     def test_guardrails_is_off_unless_something_turns_it_on(
         self, valid_config_dict: dict

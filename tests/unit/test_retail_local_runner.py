@@ -121,7 +121,7 @@ def test_ui_process_does_not_receive_weather_environment(
     assert "WEATHER_API_KEY" not in process_env
 
 
-def test_configure_uses_dedicated_topic_and_full_video_endpoints(
+def test_configure_matches_local_model_compose_services(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runner = load_runner_module()
@@ -133,13 +133,12 @@ def test_configure_uses_dedicated_topic_and_full_video_endpoints(
         lambda _path, content: captured.update(content=content),
     )
 
-    runner.configure(type("Args", (), {"nim_host": "http://pdx-host"})())
+    runner.configure(type("Args", (), {"model_host": "http://pdx-host"})())
 
     content = captured["content"]
+    assert 'LLM_BASE_URL="http://pdx-host:8000/v1"' in content
+    assert 'VLM_BASE_URL="http://pdx-host:8000/v1"' in content
+    assert 'TEXT_EMBED_MODEL="nvidia/Nemotron-3-Embed-1B-BF16"' in content
     assert 'RAILS_TOPIC_BASE_URL="http://pdx-host:8004/v1"' in content
-    assert (
-        'RAILS_TOPIC_MODEL="nvidia/llama-3.1-nemoguard-8b-topic-control"'
-        in content
-    )
-    assert 'VLM_BASE_URL="http://pdx-host:8005/v1"' in content
+    assert 'RAILS_TOPIC_MODEL="llama-3.1-nemoguard-8b-topic-control"' in content
     assert 'MULTIMODAL_SAFETY_BASE_URL="http://pdx-host:8005/v1"' in content

@@ -35,7 +35,7 @@ The NVIDIA Retail Shopping Assistant is an AI-powered microservices application 
 - **Milvus**: Vector database for similarity search
 - **SQLite**: User context and cart storage
 - **Docker**: Containerized deployment
-- **NVIDIA NIM**: LLM and embedding models
+- **NVIDIA Nemotron models**: LLM, embedding and guardrail models, on hosted endpoints or served locally by vLLM
 
 ## Architecture
 
@@ -44,7 +44,7 @@ The NVIDIA Retail Shopping Assistant is an AI-powered microservices application 
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────────┐
 │   Frontend  │────│    Nginx     │    │  External APIs  │
-│  (React)    │    │   Proxy      │    │  (NVIDIA NIM)   │
+│  (React)    │    │   Proxy      │    │  (Hosted/vLLM)  │
 └─────────────┘    └──────────────┘    └─────────────────┘
                            │
                    ┌──────────────┐
@@ -108,7 +108,7 @@ has been removed; `runtime/runtime.py` is the only serving path.
 **Purpose**: Vector-based product search using embeddings
 
 **Key Functionality**:
-- Text embedding using NVIDIA NIM models
+- Text embedding through the configured `text_embedding` model
 - Milvus vector database queries
 - Schema-driven JSONL loading and semantic-document construction
 - Data-derived capabilities and generic hard filtering
@@ -142,7 +142,7 @@ has been removed; `runtime/runtime.py` is the only serving path.
 **Functionality**:
 - Input content filtering
 - Output content filtering
-- NVIDIA NIM-based safety checks
+- Nemotron content safety, topic control and video safety model checks
 - Configurable safety prompts
 
 ### 5. Frontend (`/ui/`)
@@ -429,11 +429,12 @@ RAIL_API_KEY=$NVIDIA_API_KEY
 Locally deployed models are vLLM serving Hugging Face checkpoints from
 `docker-compose-model-local.yaml`.
 
-**Option A: Local Deployment** (8x H100 by default: 4 for the LLM, 1 for embedding):
+**Option A: Local Deployment** (6x 80 GB GPUs by default: 4 for the LLM, 1 shared by embedding, content safety and topic control, 1 for video safety):
 ```bash
-cp .env.local-models.example .env.local-models  # add HF_TOKEN, NVIDIA_API_KEY
+cp .env.local-models.example .env.local-models  # add HF_TOKEN
 source .env.local-models
-docker compose -f docker-compose-model-local.yaml up -d --wait local-llm local-embedding
+docker compose -f docker-compose-model-local.yaml up -d --wait \
+  local-llm local-embedding local-content-safety local-topic-control local-video-safety
 docker compose up -d --build
 ```
 

@@ -76,7 +76,6 @@ THIRD_PARTY_CONTAINER_CATALOG = {
 }
 
 
-# NIMs: inference microservices used in compose files (keyed by nvcr.io image prefix)
 # Hosted third-party services, listed when a marker string appears in the source.
 THIRD_PARTY_SERVICE_CATALOG = [
     {
@@ -88,6 +87,7 @@ THIRD_PARTY_SERVICE_CATALOG = [
     },
 ]
 
+# Model containers used in compose files (keyed by nvcr.io image prefix)
 NVIDIA_NIM_CATALOG = {}
 
 # Models referenced by ID in config files (keyed by "org/model-name")
@@ -96,7 +96,7 @@ MODEL_ID_CATALOG = {
     'nvidia/nemotron-3-embed-1b': {'name': 'Nemotron 3 Embed 1B', 'url': 'https://build.nvidia.com/nvidia/nemotron-3-embed-1b', 'license': 'NVIDIA Community Models License', 'license_url': 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/'},
     'nvidia/nemotron-3-embed-1b-bf16': {'name': 'Nemotron 3 Embed 1B', 'url': 'https://build.nvidia.com/nvidia/nemotron-3-embed-1b', 'license': 'NVIDIA Community Models License', 'license_url': 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/'},
     'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning': {'name': 'Nemotron 3 Nano Omni 30B A3B Reasoning', 'url': 'https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', 'license': 'NVIDIA Community Models License', 'license_url': 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/'},
-    'nvidia/nemotron-3.5-content-safety': {'name': 'Nemotron 3.5 Content Safety', 'url': 'https://catalog.ngc.nvidia.com/orgs/nim/teams/nvidia/containers/nemotron-3.5-content-safety', 'license': 'NVIDIA Community Models License', 'license_url': 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/'},
+    'nvidia/nemotron-3.5-content-safety': {'name': 'Nemotron 3.5 Content Safety', 'url': 'https://huggingface.co/nvidia/Nemotron-3.5-Content-Safety', 'license': 'NVIDIA Community Models License', 'license_url': 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/'},
     'nvidia/llama-3.1-nemoguard-8b-topic-control': {
         'name': 'Llama 3.1 NemoGuard 8B Topic Control',
         'url': 'https://build.nvidia.com/nvidia/llama-3_1-nemoguard-8b-topic-control',
@@ -694,13 +694,13 @@ def enrich(packages: dict, submodules: list):
         entry = resolve_image(img, NVIDIA_NIM_CATALOG)
         if entry and entry['name'] not in seen_nims:
             seen_nims.add(entry['name'])
-            nvidia.append({**dict(entry), 'ecosystem': 'Models & NIMs'})
+            nvidia.append({**dict(entry), 'ecosystem': 'Models'})
 
     for model_id in sorted(packages.get('model_ids', [])):
         entry = MODEL_ID_CATALOG.get(model_id.lower())
         if entry and entry['name'] not in seen_nims:
             seen_nims.add(entry['name'])
-            item = {**dict(entry), 'ecosystem': 'Models & NIMs'}
+            item = {**dict(entry), 'ecosystem': 'Models'}
             org = model_id.split('/')[0].lower()
             if org in ('meta', 'mistral', 'google', 'microsoft', 'amazon') or 'llama' in model_id.lower():
                 third_party.append(item)
@@ -755,7 +755,7 @@ def generate_markdown(nvidia, third_party, internal):
         if not components:
             return
         lines.extend([f'## {title}', ''])
-        for eco in ('Source', 'GitHub', 'Models & NIMs', 'Services', 'Containers', 'Python', 'Node.js'):
+        for eco in ('Source', 'GitHub', 'Models', 'Services', 'Containers', 'Python', 'Node.js'):
             eco_pkgs = [c for c in components if c.get('ecosystem') == eco]
             if eco_pkgs:
                 lines.extend([f'### {eco}', ''])
@@ -782,7 +782,7 @@ if __name__ == '__main__':
     submodules = parse_gitmodules(root)
     print(f'Found packages, {len(submodules)} submodules, '
           f'{len(packages["docker_images"])} container images, '
-          f'{len(packages["nim_images"])} NIMs — fetching registry info ...')
+          f'{len(packages["nim_images"])} model containers — fetching registry info ...')
 
     nvidia, third_party, internal = enrich(packages, submodules)
     print(f'NVIDIA: {len(nvidia) + len(internal)}  |  Third-party: {len(third_party)}')

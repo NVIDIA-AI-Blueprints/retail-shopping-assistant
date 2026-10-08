@@ -20,6 +20,7 @@ import yaml
 DEFAULT_CONFIG_ROOT = Path("/app/shared/configs")
 MODEL_CONFIG_FILE_NAME = "models.yaml"
 SOURCES = {"endpoint", "local_model", "disabled"}
+GUARDRAIL_ROLES = ("content_safety", "topic_control", "multimodal_safety")
 
 
 class ModelConfigError(ValueError):
@@ -64,8 +65,8 @@ class ModelEndpoint:
 @dataclass(frozen=True)
 class ResolvedModelConfig:
     models: dict[str, ModelEndpoint]
-    required_local_nim_services: tuple[str, ...]
-    required_local_nim_env: tuple[str, ...]
+    required_local_model_services: tuple[str, ...]
+    required_local_model_env: tuple[str, ...]
 
     def require(self, role: str) -> ModelEndpoint:
         try:
@@ -80,6 +81,20 @@ class ResolvedModelConfig:
 
     def get(self, role: str) -> ModelEndpoint | None:
         return self.models.get(role)
+
+
+def guardrails_available() -> bool:
+    """GUARDRAILS_AVAILABLE: false means the deployment has no guardrail models."""
+
+    value = os.environ.get("GUARDRAILS_AVAILABLE", "").strip().lower()
+    if value in {"", "1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ModelConfigError(
+        "GUARDRAILS_AVAILABLE must be one of true/false, yes/no, on/off, or 1/0; "
+        f"got {os.environ['GUARDRAILS_AVAILABLE']!r}"
+    )
 
 
 def config_root_from_env() -> Path:
@@ -100,12 +115,13 @@ def resolve_model_config(
 
     local_models = _as_mapping(data.get("local_models", {}), "local_models")
     local_services = _as_mapping(local_models.get("services", {}), "local_models.services")
-    required_local_nim_env = tuple(
+    required_local_model_env = tuple(
         _as_str(value, "local_models.required_env")
         for value in _as_list(local_models.get("required_env", []), "local_models.required_env")
     )
 
     raw_models = _as_mapping(data.get("models"), "models")
+    with_guardrails = guardrails_available()
     models: dict[str, ModelEndpoint] = {}
     required_services: list[str] = []
     for role, raw_model in raw_models.items():
@@ -114,13 +130,13 @@ def resolve_model_config(
         model_data = _as_mapping(raw_model, f"models.{role}")
         endpoint = _resolve_model(role, model_data, local_services)
         models[role] = endpoint
-        if endpoint.compose_service:
+        if endpoint.compose_service and (with_guardrails or role not in GUARDRAIL_ROLES):
             required_services.append(endpoint.compose_service)
 
     return ResolvedModelConfig(
         models=models,
-        required_local_nim_services=tuple(dict.fromkeys(required_services)),
-        required_local_nim_env=required_local_nim_env,
+        required_local_model_services=tuple(dict.fromkeys(required_services)),
+        required_local_model_env=required_local_model_env,
     )
 
 
@@ -144,8 +160,9 @@ def model_config_snapshot(config: ResolvedModelConfig) -> dict[str, Any]:
             }
             for role, endpoint in config.models.items()
         },
-        "required_local_nim_services": list(config.required_local_nim_services),
-        "required_local_nim_env": list(config.required_local_nim_env),
+        "required_local_model_services": list(config.required_local_model_services),
+        "required_local_model_env": list(config.required_local_model_env),
+        "guardrails_available": guardrails_available(),
     }
 
 
@@ -153,8 +170,11 @@ def validate_model_config(
     config: ResolvedModelConfig,
     roles: list[str] | tuple[str, ...] | None = None,
 ) -> None:
+    with_guardrails = guardrails_available()
     selected_roles = roles or tuple(
-        role for role, endpoint in config.models.items() if not endpoint.disabled
+        role
+        for role, endpoint in config.models.items()
+        if not endpoint.disabled and (with_guardrails or role not in GUARDRAIL_ROLES)
     )
     missing_keys = []
     missing_endpoints = []
@@ -181,13 +201,13 @@ def validate_model_config(
         )
 
 
-def validate_local_nim_env(config: ResolvedModelConfig) -> None:
-    if not config.required_local_nim_services:
+def validate_local_model_env(config: ResolvedModelConfig) -> None:
+    if not config.required_local_model_services:
         return
 
     missing = [
         env_name
-        for env_name in config.required_local_nim_env
+        for env_name in config.required_local_model_env
         if not os.environ.get(env_name, "").strip()
     ]
     if missing:

@@ -127,23 +127,31 @@ python scripts/model_config.py deploy --build
 
 ### Locally deployed model mode (requires multi-GPU setup)
 
-`docker-compose-model-local.yaml` serves Nemotron 3.5 Super (`local-llm`, 4
-GPUs) and Nemotron 3 Embed 1B (`local-embedding`, 1 GPU) with vLLM from
-Hugging Face checkpoints. Image
-embedding and guardrails stay hosted.
+`docker-compose-model-local.yaml` serves every model role with vLLM from
+Hugging Face checkpoints, on six 80 GB GPUs by default: Nemotron 3.5 Super
+(`local-llm`, GPUs 0-3); Nemotron 3 Embed 1B (`local-embedding`), Nemotron 3.5
+Content Safety (`local-content-safety`) and Llama 3.1 NemoGuard 8B Topic
+Control as a LoRA on Llama 3.1 8B Instruct (`local-topic-control`) sharing
+GPU 4; and Nemotron 3 Nano Omni for video safety (`local-video-safety`, GPU 5).
+`docs/DEPLOYMENT.md` (GPU Sizing) lists per-model memory and other layouts.
 
 ```bash
 cp .env.local-models.example .env.local-models
-$EDITOR .env.local-models      # HF_TOKEN, NVIDIA_API_KEY
+$EDITOR .env.local-models      # HF_TOKEN
 source .env.local-models
 mkdir -p "$HF_CACHE"
-docker compose -f docker-compose-model-local.yaml up -d --wait local-llm local-embedding
+docker compose -f docker-compose-model-local.yaml up -d --wait $LOCAL_MODEL_SERVICES
 python scripts/model_config.py show --validate
 docker compose up -d --build
 ```
 
-The profile sets `LLM_*`, `VLM_*` and `TEXT_EMBED_*` after sourcing
-`.env.example`, so tracked configuration does not change. Reasoning output is suppressed via
+The profile sets `LLM_*`, `VLM_*`, `TEXT_EMBED_*`, `RAILS_*` and
+`MULTIMODAL_SAFETY_*` (guardrails stay off by default, as hosted), after sourcing
+`.env.example`, so tracked configuration does not change, and sets
+`LOCAL_MODEL_SERVICES` to the model services those roles point at.
+`GUARDRAILS_AVAILABLE=false`, hosted or local, deploys without guardrails: the
+three guardrail models are not started and the UI hides the Guardrails toggle
+(`docs/GUARDRAILS.md`). Reasoning output is suppressed via
 `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` on the
 chain-server side so streamed tokens flow eagerly.
 
@@ -160,7 +168,7 @@ python skills/retail-local-runner/scripts/local_runner.py stop
 The local runner:
 - Starts app services as local processes and uses Docker only for Milvus infra (`etcd`, `seaweedfs`, `milvus`).
 - Uses `shared/configs/models.yaml` with the URLs and model names from the shell environment; source `.env.example` first, or run `configure`.
-- `configure --nim-host http://HOST` writes ignored `.local-run/model-endpoints.env` with remote model URLs.
+- `configure --model-host http://HOST` writes ignored `.local-run/model-endpoints.env` with remote model URLs.
 - Retains `WEATHER_ENABLED` and `WEATHER_API_KEY` only for the chain-server
   process and removes them from memory, guardrail, catalog, and UI processes.
 - Sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, and `VITE_API_BASE_URL=/api` (the Vite dev server proxies `/api` to the chain server).
@@ -222,6 +230,7 @@ Key env vars:
 - `RAIL_API_KEY` / `NVIDIA_API_KEY` (guardrails container)
 - `NGC_API_KEY` (for `docker login nvcr.io`)
 - `HF_TOKEN`, `HF_CACHE` (for locally deployed models)
+- `GUARDRAILS_AVAILABLE` (`false`: no guardrails, hosted or local; no guardrail model is started or called)
 - `LLM_BASE_URL`, `LLM_MODEL`
 - `TEXT_EMBED_BASE_URL`, `TEXT_EMBED_MODEL`
 - `VLM_BASE_URL`, `VLM_MODEL`

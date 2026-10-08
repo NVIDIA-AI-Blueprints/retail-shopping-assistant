@@ -11,7 +11,9 @@ below is historical; these are the current shapes.
 - 💬 **Nemotron 3.5 Super VL** replaces Llama 3.1 70B Instruct as the shopping
   model, and reads image and video uploads directly.
 - 🐳 **vLLM with Hugging Face checkpoints** replaces NIM containers for
-  self-hosted models.
+  self-hosted models, and covers every model role: the chat model, text
+  embedding, and the content safety, topic control, and video safety
+  guardrails, on six 80 GB GPUs by default.
 - ⚙️ **One source for every setting**: Compose and the env templates pass
   settings through empty, and each default lives once in `shared/configs/` or in
   code. An unset or empty variable leaves the shipped default in place.
@@ -24,7 +26,9 @@ below is historical; these are the current shapes.
   survive a restart.
 - 🔒 **Optional guardrails** as an isolated service: content safety, topic
   control, and video safety. Off by default, enabled per request or per
-  deployment, and reported back per turn.
+  deployment, and reported back per turn. `GUARDRAILS_AVAILABLE=false` deploys
+  without them, hosted or local: no guardrail model is started or called, and
+  the UI hides the toggle.
 - 📊 **Observability**: per-turn spans, Phoenix session views, and optional
   NeMo Relay for richer model spans.
 - 🔍 **Data-derived catalog filters**, published from the catalog and its schema

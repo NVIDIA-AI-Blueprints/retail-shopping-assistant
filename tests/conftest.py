@@ -114,6 +114,7 @@ def base_config() -> SimpleNamespace:
         vlm_name="test-vlm",
         vlm_api_key_env="VLM_API_KEY",
         vlm_api_key_required=True,
+        guardrails_available=True,
         guardrails_enabled=True,
         guardrails_failure_mode="closed",
         guardrails_timeout_seconds=15.0,

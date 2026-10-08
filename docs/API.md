@@ -269,7 +269,9 @@ event.
 
 `guardrails=true` and `guardrails=false` are authoritative even when they differ
 from `GUARDRAILS_ENABLED`; the environment variable is only the default for an
-omitted field. Provider errors follow `GUARDRAILS_FAILURE_MODE` (`closed` by
+omitted field. A deployment with `GUARDRAILS_AVAILABLE=false` has no guardrails:
+`/capabilities` reports `guardrails.available: false`, and `guardrails=true`
+gets a 400. Provider errors follow `GUARDRAILS_FAILURE_MODE` (`closed` by
 default). Closed output errors suppress unvalidated response text and product
 media, while the fallback tells the shopper to verify their cart because a
 commerce effect may already have committed.
@@ -773,6 +775,7 @@ turns are not cut off before the SSE response is emitted.
     }
   },
   "guardrails": {
+    "available": true,
     "default_enabled": false,
     "failure_mode": "closed",
     "speculative_main_model_enabled": false,

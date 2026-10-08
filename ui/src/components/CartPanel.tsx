@@ -10,9 +10,11 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import CloseIcon from "@mui/icons-material/Close";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
-import ShoppingCartIcon from "@mui/icons-material/ShoppingCart";
+import {
+  Close as CloseIcon,
+  DeleteOutline as DeleteOutlineIcon,
+  ShoppingCart as ShoppingCartIcon,
+} from "@mui/icons-material";
 
 import { CartLine, CartSnapshot } from "../types";
 

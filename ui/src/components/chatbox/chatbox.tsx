@@ -17,9 +17,11 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { toast } from "react-toastify";
-import SendIcon from "@mui/icons-material/Send";
-import AttachFileIcon from "@mui/icons-material/AttachFile";
-import CloseIcon from "@mui/icons-material/Close";
+import {
+  Send as SendIcon,
+  AttachFile as AttachFileIcon,
+  Close as CloseIcon,
+} from "@mui/icons-material";
 import Switch from '@mui/material/Switch';
 import { styled } from '@mui/material/styles';
 

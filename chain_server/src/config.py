@@ -218,15 +218,16 @@ class ChainServerConfig(BaseModel):
         default=False,
         description=(
             "Default guardrails setting for requests that omit it. A request "
-            "may turn guardrails on; it may turn them off only when "
-            "guardrails_client_can_disable is true."
+            "may turn guardrails on, and off unless "
+            "guardrails_client_can_disable is false."
         ),
     )
     guardrails_client_can_disable: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Whether a request may turn guardrails off when guardrails_enabled "
-            "is true. A request can always turn them on."
+            "is true, as the UI toggle does to show before and after. Set "
+            "false to lock them on. A request can always turn them on."
         ),
     )
     guardrails_failure_mode: Literal["open", "closed"] = Field(

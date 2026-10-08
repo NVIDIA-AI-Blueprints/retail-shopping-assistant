@@ -116,7 +116,7 @@ def base_config() -> SimpleNamespace:
         vlm_api_key_required=True,
         guardrails_available=True,
         guardrails_enabled=True,
-        guardrails_client_can_disable=False,
+        guardrails_client_can_disable=True,
         guardrails_failure_mode="closed",
         guardrails_timeout_seconds=15.0,
         guardrails_speculative_main_model_enabled=False,

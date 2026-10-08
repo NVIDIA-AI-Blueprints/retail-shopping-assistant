@@ -58,10 +58,11 @@ docker compose up -d rails
 ```
 
 The service listens on port 8012 and the chain server reaches it at
-`GUARDRAILS_URL`. A request may carry its own `guardrails` value. `true` always
-turns guardrails on for that turn. `false` turns them off only when the
-deployment default is off, or when `GUARDRAILS_CLIENT_CAN_DISABLE=true` (meant
-for evaluation runs; leave it unset wherever shoppers can reach the API).
+`GUARDRAILS_URL`. A request may carry its own `guardrails` value, as the UI
+toggle does, and by default it overrides the deployment default either way, so
+you can show the same turn with and without guardrails. Set
+`GUARDRAILS_CLIENT_CAN_DISABLE=false` to lock them on: `true` still turns them
+on, and `false` is ignored.
 `/capabilities` reports this as `request_override_supported` and
 `client_can_disable`.
 

@@ -431,8 +431,10 @@ that separates one shopper from another. Before shoppers can reach it:
   `CATALOG_IMAGE_EMBEDDING_ENABLED` unset, the catalog retriever refuses image
   queries before it fetches anything. Turning it on makes the retriever fetch
   caller-supplied image URLs, so restrict the hosts it may reach first.
-- **Leave `GUARDRAILS_CLIENT_CAN_DISABLE` unset.** It lets a request turn
-  guardrails off and is meant for evaluation runs only.
+- **Set `GUARDRAILS_CLIENT_CAN_DISABLE=false` if guardrails are on.** By
+  default a request, such as the UI toggle, may still turn them off, which is
+  what a before-and-after demo needs and what an untrusted caller should not
+  have.
 
 ### Kubernetes
 
@@ -560,7 +562,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the content and topic input rails in `parallel` or `sequential` mode | No | `rails.py` (parallel) |
 | `GUARDRAILS_AVAILABLE` | `false` deploys without guardrails: no guardrail model is called or needs a key, `.env.local-models` starts no guardrail model, the UI hides the Guardrails toggle, and a request with `guardrails: true` gets a 400. Cannot be combined with `GUARDRAILS_ENABLED=true`. Read from the environment only, as both services and `.env.local-models` need it | No | true |
 | `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Guardrails is opt-in: set this to enable it | No | `config.yaml`: `guardrails_enabled` (off) |
-| `GUARDRAILS_CLIENT_CAN_DISABLE` | With guardrails enabled, whether a request's `guardrails: false` is honoured. Off by default, so callers cannot switch off the deployment's guardrails; set it for evaluation runs that compare with and without them | No | false |
+| `GUARDRAILS_CLIENT_CAN_DISABLE` | With guardrails enabled, whether a request's `guardrails: false` is honoured. On by default, so the UI toggle can show before and after; set `false` to lock guardrails on | No | true |
 | `GUARDRAILS_FAILURE_MODE` | Required-check error/timeout behavior: `open` bypasses and `closed` stops the turn. Explicit unsafe decisions always block in either mode | No | `config.yaml`: `guardrails_failure_mode` (closed) |
 | `GUARDRAILS_TIMEOUT_SECONDS` | Timeout for each isolated guardrail service decision. Both services read it: the chain server bounds its call, the guardrail service bounds the judges behind it | No | `config.yaml`: `guardrails_timeout_seconds`, and `rails.py` (15.0) |
 | `GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` | For guarded text-only turns, overlap the first app-model step with input guardrails while holding every tool behind the allow decision. Reduces latency but blocked turns can still incur one app-model request. Media remains sequential | No | `config.yaml`: `guardrails_speculative_main_model_enabled` (off) |

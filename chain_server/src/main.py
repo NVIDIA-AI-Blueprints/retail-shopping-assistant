@@ -198,6 +198,20 @@ def create_initial_state(request: QueryRequest) -> State:
     )
 
 
+def _require_conversation_and_cart(request: QueryRequest) -> None:
+    """Refuse a turn that names no conversation or cart.
+
+    The cart routes trust whoever holds a cart ID, so the server must never
+    pick one on the caller's behalf from a guessable user ID.
+    """
+
+    if not (request.conversation_id or "").strip() or not (request.cart_id or "").strip():
+        raise HTTPException(
+            status_code=422,
+            detail="conversation_id and cart_id are required",
+        )
+
+
 def _requested_guardrails(requested: bool | None) -> bool:
     """A request may add guardrails, but not remove ones the deployment enabled."""
 
@@ -217,6 +231,7 @@ async def process_query_stream(request: QueryRequest):
     """
     try:
         logger.info(f"chain-server | /query/stream | Processing streaming query for user {request.user_id}")
+        _require_conversation_and_cart(request)
 
         media = _normalized_media(request)
         _validate_media(media)
@@ -266,6 +281,7 @@ async def process_query_timing(request: QueryRequest):
     """
     try:
         logger.info(f"chain-server | /query/timing | Processing timing query for user {request.user_id}")
+        _require_conversation_and_cart(request)
 
         media = _normalized_media(request)
         _validate_media(media)

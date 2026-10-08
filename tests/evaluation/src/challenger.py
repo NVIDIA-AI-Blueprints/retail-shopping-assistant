@@ -190,8 +190,14 @@ class TargetAgentClient:
         self._recorded_diagnostics = tuple(config.run.recorded_diagnostics)
 
     def send_turn(self, *, user_id: int, query: str, image: str) -> dict[str, Any]:
+        # user_id is unique per run and scenario, so the conversation and cart
+        # it names are too.
+        conversation = f"challenger-{user_id}"
         payload = {
             "user_id": user_id,
+            "session_id": conversation,
+            "conversation_id": conversation,
+            "cart_id": f"{conversation}-cart",
             "query": query,
             "image": image,
             "image_bool": bool(image),

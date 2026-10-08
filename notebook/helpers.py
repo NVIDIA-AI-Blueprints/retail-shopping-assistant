@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from collections import defaultdict
@@ -30,6 +31,8 @@ WEB_UI = os.environ.get("WEB_UI", "http://localhost:3000")
 
 #: A fixed shopper for the notebooks, clear of the ids replays use.
 NOTEBOOK_USER_ID = 770000111
+#: The notebooks' cart. New for each kernel, so a run never inherits another's.
+NOTEBOOK_CART_ID = f"notebook-cart-{uuid.uuid4().hex[:12]}"
 
 
 def get(url: str, timeout: float = 30):
@@ -37,11 +40,12 @@ def get(url: str, timeout: float = 30):
         return json.load(response)
 
 
-def post(url: str, body: dict, timeout: float = 60):
+def post(url: str, body: dict, timeout: float = 60, method: str = "POST"):
     request = urllib.request.Request(
         url,
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
+        method=method,
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.load(response)
@@ -84,21 +88,34 @@ def wait_until_ready(timeout_s: float = 900, every_s: float = 10) -> bool:
         sleep(every_s)
 
 
-def clear_shopper(user_id: int = NOTEBOOK_USER_ID) -> None:
-    """Empty a shopper's cart and context. A shopper never seen is already clear."""
+def cart(cart_id: str = NOTEBOOK_CART_ID) -> dict:
+    """The cart as the storefront reads it, through the agent service."""
 
-    try:
-        post(f"{MEMORY}/user/{user_id}/clear", {})
-    except urllib.error.HTTPError as exc:
-        if exc.code != 404:
-            raise
+    return get(f"{CHAIN_SERVER}/cart?{urllib.parse.urlencode({'cart_id': cart_id})}")
+
+
+def clear_shopper(cart_id: str = NOTEBOOK_CART_ID) -> None:
+    """Empty the cart. Each conversation already starts with no remembered dialogue."""
+
+    query = urllib.parse.urlencode({"cart_id": cart_id})
+    for line in cart(cart_id)["lines"]:
+        post(
+            f"{CHAIN_SERVER}/cart/lines/{urllib.parse.quote(line['cart_line_id'], safe='')}?{query}",
+            {"quantity": 0, "idempotency_key": uuid.uuid4().hex},
+            method="PATCH",
+        )
 
 
 def new_conversation(prefix: str = "notebook") -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
-def say(text: str, conversation_id: str, user_id: int = NOTEBOOK_USER_ID) -> dict:
+def say(
+    text: str,
+    conversation_id: str,
+    user_id: int = NOTEBOOK_USER_ID,
+    cart_id: str = NOTEBOOK_CART_ID,
+) -> dict:
     """Send one shopper turn and collect what streams back.
 
     The stream carries the reply as it grows (`content`), the products shown
@@ -113,6 +130,7 @@ def say(text: str, conversation_id: str, user_id: int = NOTEBOOK_USER_ID) -> dic
                 "user_id": user_id,
                 "session_id": conversation_id,
                 "conversation_id": conversation_id,
+                "cart_id": cart_id,
             }
         ).encode(),
         headers={"Content-Type": "application/json"},

@@ -116,15 +116,12 @@ def scenario_identity(
 
     seed = f"{label}|{run_id}|{scenario_id}|{repeat}".encode()
     digest = int(hashlib.sha256(seed).hexdigest()[:12], 16)
-    # No cart_id: the runtime keys the cart on it when present, and on the
-    # user id otherwise. Leaving it out means the cart can be read back by the
-    # same id the turn was sent with -- and user_id is already unique per
-    # scenario and repeat, so nothing is shared.
     conversation = f"{label}-{run_id}-{scenario_id}-{repeat}"
     return {
         "user_id": _USER_ID_BASE + digest % 90_000_000,
         "session_id": conversation,
         "conversation_id": conversation,
+        "cart_id": f"{conversation}-cart",
     }
 
 
@@ -160,7 +157,7 @@ class Assistant:
     def __init__(self, config: EvalConfig) -> None:
         base = config.target_agent.base_url.rstrip("/")
         self._url = f"{base}/query/stream"
-        self._memory = "http://localhost:8011"
+        self._cart_url = f"{base}/cart"
         self._timeout = config.target_agent.timeout_seconds
         self._guardrails = config.target_agent.guardrails
 
@@ -225,7 +222,7 @@ class Assistant:
             # The cart service's own answer, never the reply's account of it.
             # A reply once said "added" over an empty cart, and once reported a
             # size nobody had asked for.
-            "cart": self.cart(identity["user_id"]),
+            "cart": self.cart(identity["cart_id"]),
             "tools": [
                 str(call.get("tool_name") or "")
                 for call in (diagnostics.get("tool_calls") or [])
@@ -260,12 +257,12 @@ class Assistant:
             "ttft": round(first_token, 2) if first_token is not None else None,
         }
 
-    def cart(self, user_id: int) -> list[dict[str, Any]]:
+    def cart(self, cart_id: str) -> list[dict[str, Any]]:
         response = requests.get(
-            f"{self._memory}/user/{user_id}/cart", timeout=20
+            self._cart_url, params={"cart_id": cart_id}, timeout=20
         )
         response.raise_for_status()
-        return _cart_lines(response.json())
+        return [_memory_shaped_line(line) for line in response.json().get("lines", [])]
 
 
 def _how_the_turn_ended(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
@@ -355,13 +352,19 @@ def _identical_repeats(calls: Sequence[Mapping[str, Any]]) -> dict[str, int]:
     return repeats
 
 
-def _cart_lines(cart: Any) -> list[dict[str, Any]]:
-    contents = (
-        cart.get("cart", cart.get("contents")) if isinstance(cart, dict) else cart
-    )
-    if not isinstance(contents, list):
-        return []
-    return [line for line in contents if isinstance(line, dict)]
+def _memory_shaped_line(line: Mapping[str, Any]) -> dict[str, Any]:
+    """A `/cart` line under the memory service's keys, which the checks read."""
+
+    shaped = {
+        "cart_line_id": line.get("cart_line_id"),
+        "item": line.get("display_name"),
+        "amount": line.get("quantity"),
+        "price": line.get("unit_price"),
+        "product_id": line.get("product_id"),
+    }
+    if line.get("size"):
+        shaped["size"] = line["size"]
+    return shaped
 
 
 #: Every expectation `check_turn` implements. An unknown key is a scenario

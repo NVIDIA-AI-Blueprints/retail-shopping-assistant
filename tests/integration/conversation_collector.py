@@ -2,6 +2,7 @@ import argparse
 import os
 import random
 import time
+import uuid
 
 import requests
 import yaml
@@ -44,6 +45,7 @@ yaml_files = [f for f in os.listdir(INPUT_DIRECTORY) if f.endswith('.yaml') or f
 for filename in yaml_files:
 
     user_id = random.randint(0,99999)
+    conversation_id = f"collector-{uuid.uuid4().hex}"
 
     print(f"USER_ID: {user_id}")
     
@@ -65,6 +67,9 @@ for filename in yaml_files:
     for query in queries:
         payload = {
             "user_id" : user_id,
+            "session_id": conversation_id,
+            "conversation_id": conversation_id,
+            "cart_id": f"{conversation_id}-cart",
             "query": query,
             "guardrails": not args.disable_guardrails,
             }

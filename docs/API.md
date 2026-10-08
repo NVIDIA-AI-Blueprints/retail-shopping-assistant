@@ -1325,7 +1325,8 @@ starting a turn or writing anything: the bounded recent-turn window, the latest
 declared and assumed audiences, and the projection. Only
 `product_reference_index` in the projection is consumed by the runtime; the
 other projection lanes are returned as stored. The cart is deliberately absent
-because it belongs to the shopper; read it from `/user/{user_id}/cart`. An
+because it outlives the conversation; read it from the chain server's
+`GET /cart?cart_id=...`. An
 unknown conversation returns `404` with `conversation_not_found`.
 
 ```json

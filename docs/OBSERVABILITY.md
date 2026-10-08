@@ -575,7 +575,7 @@ Relay's spans are the ones carrying `nemo_relay.*` attributes:
 ```bash
 curl -s -X POST localhost:8009/query/stream -H 'Content-Type: application/json' \
   -d '{"query":"show me black dresses in a size 2","user_id":770000111,
-       "conversation_id":"relay-check"}' > /dev/null
+       "conversation_id":"relay-check","cart_id":"relay-check-cart"}' > /dev/null
 sleep 15
 
 curl -s 'localhost:6006/v1/projects/default/spans?limit=1000' | python3 -c "

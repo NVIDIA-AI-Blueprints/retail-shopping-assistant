@@ -35,7 +35,7 @@ The NVIDIA Retail Shopping Assistant is an AI-powered microservices application 
 - **Milvus**: Vector database for similarity search
 - **SQLite**: User context and cart storage
 - **Docker**: Containerized deployment
-- **NVIDIA NIM**: LLM and embedding models
+- **NVIDIA Nemotron models**: LLM, embedding and guardrail models, on hosted endpoints or served locally by vLLM
 
 ## Architecture
 
@@ -44,7 +44,7 @@ The NVIDIA Retail Shopping Assistant is an AI-powered microservices application 
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────────┐
 │   Frontend  │────│    Nginx     │    │  External APIs  │
-│  (React)    │    │   Proxy      │    │  (NVIDIA NIM)   │
+│  (React)    │    │   Proxy      │    │  (Hosted/vLLM)  │
 └─────────────┘    └──────────────┘    └─────────────────┘
                            │
                    ┌──────────────┐
@@ -108,7 +108,7 @@ has been removed; `runtime/runtime.py` is the only serving path.
 **Purpose**: Vector-based product search using embeddings
 
 **Key Functionality**:
-- Text embedding using NVIDIA NIM models
+- Text embedding through the configured `text_embedding` model
 - Milvus vector database queries
 - Schema-driven JSONL loading and semantic-document construction
 - Data-derived capabilities and generic hard filtering
@@ -142,7 +142,7 @@ has been removed; `runtime/runtime.py` is the only serving path.
 **Functionality**:
 - Input content filtering
 - Output content filtering
-- NVIDIA NIM-based safety checks
+- Nemotron content safety, topic control and video safety model checks
 - Configurable safety prompts
 
 ### 5. Frontend (`/ui/`)

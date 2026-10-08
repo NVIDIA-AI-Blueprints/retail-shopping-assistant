@@ -78,7 +78,7 @@ models:
 
   content_safety:
     source: endpoint
-    provider: nim_guardrails
+    provider: openai_compatible
     base_url_env: RAILS_CONTENT_BASE_URL
     model_env: RAILS_CONTENT_MODEL
     api_key_env: RAIL_API_KEY
@@ -87,7 +87,7 @@ models:
   # to use the same retail policy through chat_template_kwargs.custom_policy.
   topic_control:
     source: endpoint
-    provider: nim_guardrails
+    provider: openai_compatible
     base_url_env: RAILS_TOPIC_BASE_URL
     model_env: RAILS_TOPIC_MODEL
     api_key_env: RAIL_API_KEY

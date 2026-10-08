@@ -8,7 +8,7 @@ from shared.model_config import (
     ModelConfigError,
     model_config_snapshot,
     resolve_model_config,
-    validate_local_nim_env,
+    validate_local_model_env,
     validate_model_config,
 )
 
@@ -75,8 +75,8 @@ def test_resolves_endpoint_local_and_disabled_roles(
     assert config.require("text_embedding").base_url == "http://local-embedding:8000/v1"
     assert config.require("text_embedding").api_key_env is None
     assert config.get("topic_control").disabled is True
-    assert config.required_local_nim_services == ("local-embedding",)
-    assert config.required_local_nim_env == ("HF_TOKEN", "HF_CACHE")
+    assert config.required_local_model_services == ("local-embedding",)
+    assert config.required_local_model_env == ("HF_TOKEN", "HF_CACHE")
 
 
 def test_a_local_role_is_not_redirected_by_the_hosted_env(
@@ -140,7 +140,7 @@ def test_shipped_media_perception_is_the_app_llm_model(model_endpoint_env: pytes
     app_llm, vlm = config.require("app_llm"), config.require("vlm")
     assert (vlm.base_url, vlm.model) == (app_llm.base_url, app_llm.model)
     assert vlm.api_key_env == "VLM_API_KEY"
-    assert config.required_local_nim_services == ()
+    assert config.required_local_model_services == ()
 
 
 def test_shipped_default_roles_share_one_host(model_endpoint_env: pytest.MonkeyPatch) -> None:
@@ -196,7 +196,7 @@ def test_validate_model_config_reports_disabled_required_role(
         validate_model_config(config, roles=("topic_control",))
 
 
-def test_validate_local_nim_env_only_when_local_services_are_used(
+def test_validate_local_model_env_only_when_local_services_are_used(
     llm_env: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     config = resolve_model_config(config_root=_write_models(tmp_path))
@@ -204,11 +204,11 @@ def test_validate_local_nim_env_only_when_local_services_are_used(
     llm_env.delenv("HF_CACHE", raising=False)
 
     with pytest.raises(ModelConfigError, match="HF_TOKEN"):
-        validate_local_nim_env(config)
+        validate_local_model_env(config)
 
     llm_env.setenv("HF_TOKEN", "test-token")
     llm_env.setenv("HF_CACHE", "/tmp/hf")
-    validate_local_nim_env(config)
+    validate_local_model_env(config)
 
 
 def test_snapshot_does_not_include_secret_value(

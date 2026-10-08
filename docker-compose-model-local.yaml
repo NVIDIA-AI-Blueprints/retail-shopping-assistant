@@ -198,12 +198,13 @@ services:
   local-video-safety:
     # Nemotron 3 Nano Omni from Hugging Face, served by vLLM, judges complete
     # videos including their audio:
-    #   https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
+    #   https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8
     # The model card requires vLLM 0.20.0, whose image lacks the audio
     # packages use_audio_in_video needs, so they are installed at start.
     #
-    # BF16 weights are ~66 GB on one 80 GB GPU. If that leaves too little KV
-    # cache, set LOCAL_VIDEO_SAFETY_HF_MODEL to the -FP8 checkpoint (~35 GB).
+    # FP8 weights are ~35 GB, leaving one 80 GB GPU ~32 GB of KV cache. The
+    # ~66 GB -BF16 checkpoint, set with LOCAL_VIDEO_SAFETY_HF_MODEL, needs a
+    # larger GPU.
     # The guardrail service sends the Omni-specific video request only when
     # the model name contains "nemotron-3-nano-omni".
     image: ${LOCAL_VIDEO_SAFETY_VLLM_IMAGE:-vllm/vllm-openai:v0.20.0}
@@ -217,7 +218,7 @@ services:
     command:
       - >-
         python3 -m pip install --quiet "vllm[audio]==0.20.0" &&
-        exec vllm serve ${LOCAL_VIDEO_SAFETY_HF_MODEL:-nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16}
+        exec vllm serve ${LOCAL_VIDEO_SAFETY_HF_MODEL:-nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8}
         --served-model-name=nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
         --host=0.0.0.0
         --port=8000

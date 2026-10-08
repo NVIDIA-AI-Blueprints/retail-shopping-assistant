@@ -136,7 +136,7 @@ Nano Omni for video safety (`local-video-safety`), one GPU each.
 
 ```bash
 cp .env.local-models.example .env.local-models
-$EDITOR .env.local-models      # HF_TOKEN, NGC_API_KEY
+$EDITOR .env.local-models      # HF_TOKEN
 source .env.local-models
 mkdir -p "$HF_CACHE"
 docker compose -f docker-compose-model-local.yaml up -d --wait \
@@ -164,7 +164,7 @@ python skills/retail-local-runner/scripts/local_runner.py stop
 The local runner:
 - Starts app services as local processes and uses Docker only for Milvus infra (`etcd`, `seaweedfs`, `milvus`).
 - Uses `shared/configs/models.yaml` with the URLs and model names from the shell environment; source `.env.example` first, or run `configure`.
-- `configure --nim-host http://HOST` writes ignored `.local-run/model-endpoints.env` with remote model URLs.
+- `configure --model-host http://HOST` writes ignored `.local-run/model-endpoints.env` with remote model URLs.
 - Retains `WEATHER_ENABLED` and `WEATHER_API_KEY` only for the chain-server
   process and removes them from memory, guardrail, catalog, and UI processes.
 - Sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, and `VITE_API_BASE_URL=/api` (the Vite dev server proxies `/api` to the chain server).

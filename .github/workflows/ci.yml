@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  run-nim-notebooks:
+  run-notebooks:
     runs-on: arc-runners-org-nvidia-ai-bp-4-gpu
     env:
       PYTHON_VERSION: 3.12
@@ -95,18 +95,13 @@ jobs:
             echo "Running: $NOTEBOOK_NAME"
             echo "================================"
             
-            # Skip cloud NIM config and container teardown cells for 1_Deploy_Retail_Shopping_Assistant.ipynb
+            # Skip the model routing validation and container teardown cells for 1_Deploy_Retail_Shopping_Assistant.ipynb
             if [[ "$NOTEBOOK_NAME" == "1_Deploy_Retail_Shopping_Assistant" ]]; then
               skip_cells "$TEMP_NOTEBOOK" 47-48 78-79
               
               echo "Modifying notebook for CI environment..."
               
-              # Modification 1: Change cache directory to local path
-              echo "  - Changing cache directory to local path..."
-              sed -i 's|"local_nim_cache = os.path.expanduser(\\"~/.cache/nim\\")\\n"|"local_nim_cache = os.path.join(os.getcwd(), \\".cache\\", \\"nim\\")\\n"|g' "$TEMP_NOTEBOOK"
-              echo "    ✅ Modified cache directory path"
-              
-              # Modification 2: Add sleep before docker logs command
+              # Add sleep before docker logs command
               echo "  - Adding sleep before docker logs command..."
               sed -i '/"# Monitor application startup\\n",/a\    "!sleep 60\\n",' "$TEMP_NOTEBOOK"
               echo "    ✅ Added sleep 60 before docker logs command"
@@ -197,7 +192,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: nim-notebooks-results
+          name: notebooks-results
           path: |
              notebook/1_Deploy_Retail_Shopping_Assistant_result.html
              retail-shopping-assistant_test.html

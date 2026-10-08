@@ -64,8 +64,8 @@ class ModelEndpoint:
 @dataclass(frozen=True)
 class ResolvedModelConfig:
     models: dict[str, ModelEndpoint]
-    required_local_nim_services: tuple[str, ...]
-    required_local_nim_env: tuple[str, ...]
+    required_local_model_services: tuple[str, ...]
+    required_local_model_env: tuple[str, ...]
 
     def require(self, role: str) -> ModelEndpoint:
         try:
@@ -100,7 +100,7 @@ def resolve_model_config(
 
     local_models = _as_mapping(data.get("local_models", {}), "local_models")
     local_services = _as_mapping(local_models.get("services", {}), "local_models.services")
-    required_local_nim_env = tuple(
+    required_local_model_env = tuple(
         _as_str(value, "local_models.required_env")
         for value in _as_list(local_models.get("required_env", []), "local_models.required_env")
     )
@@ -119,8 +119,8 @@ def resolve_model_config(
 
     return ResolvedModelConfig(
         models=models,
-        required_local_nim_services=tuple(dict.fromkeys(required_services)),
-        required_local_nim_env=required_local_nim_env,
+        required_local_model_services=tuple(dict.fromkeys(required_services)),
+        required_local_model_env=required_local_model_env,
     )
 
 
@@ -144,8 +144,8 @@ def model_config_snapshot(config: ResolvedModelConfig) -> dict[str, Any]:
             }
             for role, endpoint in config.models.items()
         },
-        "required_local_nim_services": list(config.required_local_nim_services),
-        "required_local_nim_env": list(config.required_local_nim_env),
+        "required_local_model_services": list(config.required_local_model_services),
+        "required_local_model_env": list(config.required_local_model_env),
     }
 
 
@@ -181,13 +181,13 @@ def validate_model_config(
         )
 
 
-def validate_local_nim_env(config: ResolvedModelConfig) -> None:
-    if not config.required_local_nim_services:
+def validate_local_model_env(config: ResolvedModelConfig) -> None:
+    if not config.required_local_model_services:
         return
 
     missing = [
         env_name
-        for env_name in config.required_local_nim_env
+        for env_name in config.required_local_model_env
         if not os.environ.get(env_name, "").strip()
     ]
     if missing:

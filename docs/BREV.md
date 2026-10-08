@@ -77,15 +77,14 @@ Configure the GPU compute resources for optimal performance.
 
 #### Recommended Configuration
 1. **Select GPU Type**: Choose **H100** from the available options
-2. **Select Configuration**: Choose **4x NVIDIA H100** for optimal performance
-   - **Specifications**: 4x H100 GPUs with 80GB VRAM each
+2. **Select Configuration**: Choose **8x NVIDIA H100** to serve every model locally
+   - **Specifications**: 8x H100 GPUs with 80GB VRAM each
    - **Memory**: High-RAM configuration (varies by provider)
-   - **Storage**: Flexible storage options
+   - **Storage**: At least 500 GB; the model checkpoints alone are about 300 GB
 
 #### Alternative Configurations
-If 4x H100 is unavailable:
-- **8x NVIDIA H100**
-- **8x NVIDIA A100**
+- **Hosted endpoints only**: any instance, no GPU required
+- **8x NVIDIA A100 80GB**: the same layout, without native FP8 for the video safety model
 
 3. Click **Next** to review your configuration
 
@@ -225,12 +224,12 @@ Access the retail shopping assistant through your secure tunnel.
 
 Allow the system to complete initialization before use.
 
-1. **Monitor Initialization**: The system automatically creates embeddings for products and images
+1. **Monitor Initialization**: The system automatically creates embeddings for the product catalog
 2. **Check Progress**: Observe initialization in the deployment notebook output or terminal logs
 3. **Wait for Completion**: Process typically takes **2-5 minutes** depending on GPU configuration
 4. **Watch for Completion Indicators**:
-   - "Processing image batch" (image embeddings)
-   - "Milvus database ready" (vector database initialization)
+   - "Processing text chunk batch" (catalog embeddings)
+   - "CATALOG INDEXER | index is current" (catalog index built)
    - "Uvicorn running" (web server ready)
 
 ![Step 15: System Initialization](images/step15.png)

@@ -413,6 +413,27 @@ pay-as-you-go GPU instances, and [BREV.md](BREV.md) has a walkthrough.
 
 ## 🏭 Production Deployment
 
+### Before Exposing This Publicly
+
+The Compose stack is built for a developer machine or a trusted network. It has
+no login, and the cart and conversation IDs the UI generates are the only thing
+that separates one shopper from another. Before shoppers can reach it:
+
+- **Put authentication in front of `/api`.** The UI proxies `/api/*` to the
+  chain server unchanged. Anyone who can reach port 3000 or 8009 can start
+  turns, and anyone who learns a `cart_id` can read and change that cart.
+- **Keep internal services off public interfaces.** The memory service (8011)
+  and PostgreSQL (5432) bind to loopback. The chain server (8009), catalog
+  retriever (8010), rails (8012), Milvus (19530, 9091) and Phoenix (6006)
+  publish on every interface for local convenience. Bind them to `127.0.0.1`
+  or firewall them; only the UI needs to be reachable.
+- **Leave image embedding off for untrusted input.** With
+  `CATALOG_IMAGE_EMBEDDING_ENABLED` unset, the catalog retriever refuses image
+  queries before it fetches anything. Turning it on makes the retriever fetch
+  caller-supplied image URLs, so restrict the hosts it may reach first.
+- **Leave `GUARDRAILS_CLIENT_CAN_DISABLE` unset.** It lets a request turn
+  guardrails off and is meant for evaluation runs only.
+
 ### Kubernetes
 
 No Kubernetes manifests or Helm chart ship with this repository. These notes

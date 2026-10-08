@@ -429,7 +429,7 @@ RAIL_API_KEY=$NVIDIA_API_KEY
 Locally deployed models are vLLM serving Hugging Face checkpoints from
 `docker-compose-model-local.yaml`.
 
-**Option A: Local Deployment** (8x H100 by default: 4 for the LLM, then 1 each for embedding, content safety, topic control and video safety):
+**Option A: Local Deployment** (6x 80 GB GPUs by default: 4 for the LLM, 1 shared by embedding, content safety and topic control, 1 for video safety):
 ```bash
 cp .env.local-models.example .env.local-models  # add HF_TOKEN
 source .env.local-models

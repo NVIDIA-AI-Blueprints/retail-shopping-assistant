@@ -39,7 +39,7 @@ deployed models are vLLM serving Hugging Face checkpoints from
 - **CPU**: 16+ cores
 - **RAM**: 128GB+ system memory
 - **Storage**: 100GB+ available disk space
-- **GPUs**: 8x H100 (for locally deployed models; all 8 are used by default)
+- **GPUs**: 6x H100 80 GB for locally deployed models (see [GPU Sizing](#gpu-sizing))
 - **Network**: High-speed internet connection
 
 ### Software Dependencies
@@ -183,16 +183,19 @@ photo and video uploads, Nemotron 3 Embed 1B embeds the catalog, and three
 guardrail judges check each turn. All are locally deployed models: Hugging
 Face checkpoints served by vLLM from `docker-compose-model-local.yaml`:
 
-| Service | Role | Checkpoint | GPUs |
-|---------|------|------------|------|
-| `local-llm` | `app_llm`, `vlm` | `nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026`, BF16, tensor parallel 4 | `LOCAL_LLM_GPUS`, default `0,1,2,3` |
-| `local-embedding` | `text_embedding` | `nvidia/Nemotron-3-Embed-1B-BF16` | `LOCAL_EMBED_GPU`, default `4` |
-| `local-content-safety` | `content_safety` | `nvidia/Nemotron-3.5-Content-Safety` | `LOCAL_CONTENT_SAFETY_GPU`, default `5` |
-| `local-topic-control` | `topic_control` | `nvidia/llama-3.1-nemoguard-8b-topic-control` LoRA on `meta-llama/Llama-3.1-8B-Instruct` | `LOCAL_TOPIC_CONTROL_GPU`, default `6` |
-| `local-video-safety` | `multimodal_safety` | `nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8` | `LOCAL_VIDEO_SAFETY_GPU`, default `7` |
+| Service | Role | Checkpoint | Weights | GPU memory in use | Default GPU |
+|---------|------|------------|---------|-------------------|-------------|
+| `local-llm` | `app_llm`, `vlm` | [`nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026`](https://docs.nvidia.com/nemo/automodel/model-coverage/omni/nvidia/nemotron-3-5-super-vl), BF16, tensor parallel 4 | ~227 GB | ~70 GB on each of 4 GPUs | 0-3, its own |
+| `local-embedding` | `text_embedding` | [`nvidia/Nemotron-3-Embed-1B-BF16`](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16) | ~2 GB | ~4 GB | 4, shared |
+| `local-content-safety` | `content_safety` | [`nvidia/Nemotron-3.5-Content-Safety`](https://huggingface.co/nvidia/Nemotron-3.5-Content-Safety) | ~9 GB | ~22 GB | 4, shared |
+| `local-topic-control` | `topic_control` | [`nvidia/llama-3.1-nemoguard-8b-topic-control`](https://huggingface.co/nvidia/llama-3.1-nemoguard-8b-topic-control) LoRA on `meta-llama/Llama-3.1-8B-Instruct` | ~15 GB | ~28 GB | 4, shared |
+| `local-video-safety` | `multimodal_safety` | [`nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8`](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8) | ~35 GB | ~72 GB | 5, its own |
 
-The defaults fit an 8x H100 80 GB machine. `.env.local-models.example` points
-every role at them through the environment, so `models.yaml` does not change,
+Memory in use was measured on H100 80 GB GPUs. It is more than the weights
+because vLLM also reserves a KV cache, plus a few GB of working memory.
+
+The default layout needs six 80 GB GPUs. `.env.local-models.example` points
+every role at these services through the environment, so `models.yaml` does not change,
 and adds video to the guarded modalities. Guardrails stay off by default, as on
 the hosted path; turn them on per session with the UI's Guardrails toggle, or
 for the deployment with `GUARDRAILS_ENABLED=true`.
@@ -205,32 +208,27 @@ match; keep them if you change a checkpoint.
 
 ### GPU Sizing
 
-How many GPUs you need depends on which models you run and at what precision,
-and each model publishes its own footprint. Taking H100 80GB as the example:
+Two models fill their GPUs: the chat model reserves most of four, and Omni
+most of one. The other three are small, so they share one GPU, GPU 4, using
+about 54 of its 80 GB. Each reserves its weights plus a fixed 8 GiB KV cache
+(`--kv-cache-memory-bytes`) rather than a share of the GPU, which vLLM would
+misjudge while its neighbours load at the same time.
 
-| Model | Role | On H100 80GB | Footprint |
-|-------|------|--------------|---------------------|
-| Nemotron 3.5 Super | Shopping agent, photo and video | 4 GPUs at BF16 | [121B MoE, ~227 GB BF16](https://docs.nvidia.com/nemo/automodel/model-coverage/omni/nvidia/nemotron-3-5-super-vl) |
-| Nemotron 3 Embed 1B | Catalog and query embedding | 1 GPU | [1B, ~2 GB BF16](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16) |
-| Nemotron 3.5 Content Safety | Text and image moderation | 1 GPU | [4B, 8 GB VRAM and up](https://huggingface.co/blog/nvidia/nemotron-3-5-content-safety) |
-| Llama 3.1 NemoGuard 8B Topic Control | Off-topic checks | 1 GPU | [LoRA on an 8B base, ~16 GB BF16](https://huggingface.co/nvidia/llama-3.1-nemoguard-8b-topic-control) |
-| Nemotron 3 Nano Omni 30B | Video safety, with audio | 1 GPU at FP8 | [~35 GB FP8, ~66 GB BF16](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8) |
+| Layout | GPUs (80 GB) | Placement | Set |
+|--------|--------------|-----------|-----|
+| Every model local (default) | 6 | 0-3 chat; 4 embedding, content safety and topic control; 5 video safety | nothing |
+| Every model local, one GPU each | 8 | 0-3 chat; 4 embedding; 5 content safety; 6 topic control; 7 video safety | `LOCAL_CONTENT_SAFETY_GPU=5 LOCAL_TOPIC_CONTROL_GPU=6 LOCAL_VIDEO_SAFETY_GPU=7` |
+| Guardrails hosted | 5 | 0-3 chat; 4 embedding | leave out the three guardrail services ([Step 4](#step-4-start-the-models-then-the-app)) |
+| Guardrails and embedding hosted | 4 | 0-3 chat | start only `local-llm` ([Step 4](#step-4-start-the-models-then-the-app)) |
 
-`docker-compose-model-local.yaml` serves all five, which is the eight-GPU
-default layout: four for the agent's tensor parallel group
-(`LOCAL_LLM_TP=4`, `LOCAL_LLM_GPUS=0,1,2,3`), then one each for embedding
-(`LOCAL_EMBED_GPU=4`), content safety (`LOCAL_CONTENT_SAFETY_GPU=5`), topic
-control (`LOCAL_TOPIC_CONTROL_GPU=6`) and video safety
-(`LOCAL_VIDEO_SAFETY_GPU=7`).
+`LOCAL_LLM_GPUS` (with `LOCAL_LLM_TP` set to as many GPUs), `LOCAL_EMBED_GPU`,
+`LOCAL_CONTENT_SAFETY_GPU`, `LOCAL_TOPIC_CONTROL_GPU` and
+`LOCAL_VIDEO_SAFETY_GPU` move any model to other GPU ids.
 
 Omni runs at FP8, which leaves about 32 GB of KV cache on one 80 GB card. Its
 BF16 checkpoint (~66 GB) leaves little room on that card; on a larger GPU, set
 `LOCAL_VIDEO_SAFETY_HF_MODEL` to
 `nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16`.
-
-Those figures assume a model has the card to itself, since vLLM
-reserves most of it for the KV cache. Putting the smaller models together on
-one GPU means capping `--gpu-memory-utilization` for each.
 
 **You need**
 
@@ -239,7 +237,8 @@ one GPU means capping `--gpu-memory-utilization` for each.
   out and back in), or `sudo` in front of each `docker` command
 - Python 3 with PyYAML on the host, for the deploy helpers (see
   [Software Dependencies](#software-dependencies))
-- **Eight GPUs** for the default layout above, as on an 8x H100 80 GB machine
+- **Six 80 GB GPUs** for the default layout, such as H100 80 GB; see
+  [GPU Sizing](#gpu-sizing) for the other layouts
 - About 300 GB of disk for the checkpoints, most of it the chat model's BF16 weights
 - A Hugging Face token with access to the two gated checkpoints: the
   Nemotron 3.5 Super chat model, and `meta-llama/Llama-3.1-8B-Instruct`, the
@@ -318,9 +317,8 @@ To keep text embedding on the hosted endpoint, comment out the
 `local-embedding`.
 To keep guardrails hosted, comment out the guardrails block there, leave out
 the three guardrail services, and set `RAIL_API_KEY` and
-`MULTIMODAL_SAFETY_API_KEY` to build.nvidia.com keys. `LOCAL_LLM_GPUS`,
-`LOCAL_LLM_TP`, `LOCAL_EMBED_GPU`, `LOCAL_CONTENT_SAFETY_GPU`,
-`LOCAL_TOPIC_CONTROL_GPU` and `LOCAL_VIDEO_SAFETY_GPU` change the placement.
+`MULTIMODAL_SAFETY_API_KEY` to build.nvidia.com keys. [GPU Sizing](#gpu-sizing)
+lists the GPUs each of these layouts needs and the variables that move models.
 
 ### Step 5: Index the catalog
 
@@ -374,9 +372,10 @@ shoes like the ones in this video"; the turn should proceed and report
 "Video safety and retail relevance" as used. Two limits apply to video, which
 [Guardrails](GUARDRAILS.md#media) describes as not yet vetted:
 
-- The first video after `local-video-safety` starts can take longer than
-  `GUARDRAILS_TIMEOUT_SECONDS` (15 s), so that turn stops with the
-  guardrails-unavailable message. Later videos are judged in a few seconds.
+- For about a minute after `local-video-safety` starts, the first videos take
+  longer than `GUARDRAILS_TIMEOUT_SECONDS` (15 s) to judge, so those turns stop
+  with the guardrails-unavailable message. Once one has been judged, later
+  videos take about 2 s.
 - The judge includes the video's audio, and a video with no audio track
   cannot be judged: it is an `error`, which stops the turn under the default
   `closed` failure mode.
@@ -573,9 +572,9 @@ set there; a unit test fails if the two differ, so change both together.
 | `LOCAL_LLM_VLLM_IMAGE` | vLLM image serving the local LLM | Local only | `vllm/vllm-openai:v0.30.0` |
 | `LOCAL_EMBED_GPU` | GPU id for the local embedding model | Local only | `4` |
 | `LOCAL_EMBED_VLLM_IMAGE` | vLLM image serving local embeddings | Local only | `vllm/vllm-openai:v0.24.0` |
-| `LOCAL_CONTENT_SAFETY_GPU` | GPU id for the local content safety model | Local only | `5` |
-| `LOCAL_TOPIC_CONTROL_GPU` | GPU id for the local topic control model | Local only | `6` |
-| `LOCAL_VIDEO_SAFETY_GPU` | GPU id for the local video safety model | Local only | `7` |
+| `LOCAL_CONTENT_SAFETY_GPU` | GPU id for the local content safety model | Local only | `4` |
+| `LOCAL_TOPIC_CONTROL_GPU` | GPU id for the local topic control model | Local only | `4` |
+| `LOCAL_VIDEO_SAFETY_GPU` | GPU id for the local video safety model | Local only | `5` |
 | `LOCAL_VIDEO_SAFETY_HF_MODEL` | Checkpoint the local video safety server loads; the `-BF16` variant needs about twice the memory | Local only | `nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8` |
 | `LOCAL_CONTENT_SAFETY_VLLM_IMAGE` / `LOCAL_TOPIC_CONTROL_VLLM_IMAGE` / `LOCAL_VIDEO_SAFETY_VLLM_IMAGE` | vLLM images serving the local guardrail models | Local only | `vllm/vllm-openai:v0.20.0` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
@@ -960,10 +959,12 @@ curl -I https://nvcr.io
 # Check GPU memory usage
 nvidia-smi
 
-# Pick free GPUs for the local models (LOCAL_LLM_GPUS must hold LOCAL_LLM_TP
-# IDs), or lower --gpu-memory-utilization in docker-compose-model-local.yaml
-LOCAL_LLM_GPUS=4,5,6,7 LOCAL_EMBED_GPU=3 \
-  docker compose -f docker-compose-model-local.yaml up -d --wait local-llm local-embedding
+# Move the local models to free GPUs (LOCAL_LLM_GPUS must hold LOCAL_LLM_TP
+# IDs); for example, everything two GPUs up from the default layout:
+LOCAL_LLM_GPUS=2,3,4,5 LOCAL_EMBED_GPU=6 LOCAL_CONTENT_SAFETY_GPU=6 \
+LOCAL_TOPIC_CONTROL_GPU=6 LOCAL_VIDEO_SAFETY_GPU=7 \
+  docker compose -f docker-compose-model-local.yaml up -d --wait \
+  local-llm local-embedding local-content-safety local-topic-control local-video-safety
 
 # Or return to hosted endpoints: source .env instead of .env.local-models
 ```

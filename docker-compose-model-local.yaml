@@ -6,7 +6,13 @@
 # text embedding, and the three guardrail judges.
 #
 # .env.local-models.example points the app at these services; see
-# docs/DEPLOYMENT.md, Local Deployment.
+# docs/DEPLOYMENT.md, Locally Hosted Models.
+#
+# Default layout, six 80 GB GPUs: local-llm on 0-3; local-embedding,
+# local-content-safety and local-topic-control sharing 4; local-video-safety
+# on 5. The three sharing GPU 4 each reserve their weights plus a fixed KV
+# cache (--kv-cache-memory-bytes) rather than a fraction of the GPU, which
+# vLLM would measure wrongly while the others load beside it.
 
 services:
 
@@ -92,6 +98,8 @@ services:
       - --model=nvidia/Nemotron-3-Embed-1B-BF16
       - --host=0.0.0.0
       - --port=8000
+      # Shares a GPU with content safety and topic control; it needs ~4 GB.
+      - --gpu-memory-utilization=0.08
     volumes:
       - ${HF_CACHE}:/root/.cache/huggingface
     ipc: host
@@ -130,7 +138,10 @@ services:
       - --host=0.0.0.0
       - --port=8000
       - --max-model-len=16384
-      - --gpu-memory-utilization=0.85
+      # Shares a GPU with embedding and topic control: ~9 GB of weights
+      # plus an 8 GiB KV cache.
+      - --gpu-memory-utilization=0.25
+      - --kv-cache-memory-bytes=8589934592
     volumes:
       - ${HF_CACHE}:/root/.cache/huggingface
     ipc: host
@@ -139,7 +150,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['${LOCAL_CONTENT_SAFETY_GPU:-5}']
+              device_ids: ['${LOCAL_CONTENT_SAFETY_GPU:-4}']
               capabilities: [gpu]
     restart: "no"
     networks:
@@ -174,7 +185,10 @@ services:
       - --host=0.0.0.0
       - --port=8000
       - --max-model-len=16384
-      - --gpu-memory-utilization=0.85
+      # Shares a GPU with embedding and content safety: ~15 GB of weights
+      # plus an 8 GiB KV cache.
+      - --gpu-memory-utilization=0.35
+      - --kv-cache-memory-bytes=8589934592
     volumes:
       - ${HF_CACHE}:/root/.cache/huggingface
     ipc: host
@@ -183,7 +197,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['${LOCAL_TOPIC_CONTROL_GPU:-6}']
+              device_ids: ['${LOCAL_TOPIC_CONTROL_GPU:-4}']
               capabilities: [gpu]
     restart: "no"
     networks:
@@ -236,7 +250,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['${LOCAL_VIDEO_SAFETY_GPU:-7}']
+              device_ids: ['${LOCAL_VIDEO_SAFETY_GPU:-5}']
               capabilities: [gpu]
     restart: "no"
     networks:

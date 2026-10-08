@@ -77,7 +77,7 @@ Configure the GPU compute resources for optimal performance.
 
 #### Recommended Configuration
 1. **Select GPU Type**: Choose **H100** from the available options
-2. **Select Configuration**: Choose **8x NVIDIA H100** to serve every model locally
+2. **Select Configuration**: Choose **8x NVIDIA H100** to serve every model locally; the default layout uses six of them
    - **Specifications**: 8x H100 GPUs with 80GB VRAM each
    - **Memory**: High-RAM configuration (varies by provider)
    - **Storage**: At least 500 GB; the model checkpoints alone are about 300 GB
@@ -90,7 +90,7 @@ Configure the GPU compute resources for optimal performance.
 
 ![Step 5: Compute Resources](images/step1.png)
 
-> **Performance Note**: You only need GPUs here if you intend to serve the models yourself. The default layout for locally hosted models uses eight: four for the shopping model's tensor parallel group, one for embedding, and one each for the content safety, topic control and video safety guardrails. Against NVIDIA-hosted endpoints, no GPU is required.
+> **Performance Note**: You only need GPUs here if you intend to serve the models yourself. The default layout for locally hosted models uses six 80 GB GPUs: four for the shopping model's tensor parallel group, one shared by the embedding, content safety and topic control models, and one for the video safety model. [GPU Sizing](DEPLOYMENT.md#gpu-sizing) lists what each model needs and the other layouts. Against NVIDIA-hosted endpoints, no GPU is required.
 
 ### Step 6: Review Configuration Summary
 

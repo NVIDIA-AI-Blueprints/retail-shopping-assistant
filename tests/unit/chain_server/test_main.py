@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import pathlib
+import re
 import sys
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -1034,7 +1035,11 @@ class TestSystemPrompt:
         assert "USER QUERY: Show me a dress." in user_message
         # The cart ID alone authorizes the cart routes; the model provider and
         # prompt traces must never see it, nor the conversation that keys memory.
-        assert user_message.startswith("REQUEST ID: request-a\n")
+        header = user_message.split("\n")[:4]
+        assert header[0] == "REQUEST ID: request-a"
+        assert re.fullmatch(r"SESSION ID: session-ref-[0-9a-f]{16}", header[1])
+        assert re.fullmatch(r"CONVERSATION ID: conversation-ref-[0-9a-f]{16}", header[2])
+        assert re.fullmatch(r"CART ID: cart-ref-[0-9a-f]{16}", header[3])
         for handle in ("cart-a", "conversation-a", "session-a"):
             assert handle not in user_message
         # Wiring, not formatting. The formatter had its own tests and every one

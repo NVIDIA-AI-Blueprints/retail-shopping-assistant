@@ -230,6 +230,7 @@ Key env vars:
 - `RAIL_API_KEY` / `NVIDIA_API_KEY` (guardrails container)
 - `NGC_API_KEY` (for `docker login nvcr.io`)
 - `HF_TOKEN`, `HF_CACHE` (for locally deployed models)
+- `GUARDRAILS_AVAILABLE` (`false`: no guardrails, hosted or local; no guardrail model is started or called)
 - `LLM_BASE_URL`, `LLM_MODEL`
 - `TEXT_EMBED_BASE_URL`, `TEXT_EMBED_MODEL`
 - `VLM_BASE_URL`, `VLM_MODEL`

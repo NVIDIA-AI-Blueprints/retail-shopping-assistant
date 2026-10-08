@@ -36,6 +36,10 @@ set -a && source .env && set +a
 docker compose -f docker-compose.yaml up -d --build --force-recreate --remove-orphans
 ```
 
+If the locally hosted models are running (`.env.local-models`), source that
+profile instead and leave out `--remove-orphans`: both compose files share one
+project, so it would stop the models.
+
 Then verify:
 
 ```bash

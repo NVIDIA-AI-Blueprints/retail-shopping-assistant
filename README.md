@@ -114,7 +114,8 @@ Then open **http://localhost:3000**, and continue with
 
 **Running the models on your own GPUs instead?** The default layout needs six
 80 GB GPUs, such as H100s: four for the chat model, one shared by the
-embedding, content safety and topic control models, and one for video safety. See
+embedding, content safety and topic control models, and one for video safety;
+five without guardrails (`GUARDRAILS_AVAILABLE=false`). See
 [Locally Hosted Models](docs/DEPLOYMENT.md#-locally-hosted-models) for the GPU
 sizing, setup, and model metrics. No GPUs of your own?
 [NVIDIA Brev](https://developer.nvidia.com/brev) offers pay-as-you-go GPU

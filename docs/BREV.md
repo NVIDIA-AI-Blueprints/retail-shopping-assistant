@@ -90,7 +90,7 @@ Configure the GPU compute resources for optimal performance.
 
 ![Step 5: Compute Resources](images/step1.png)
 
-> **Performance Note**: You only need GPUs here if you intend to serve the models yourself. The default layout for locally hosted models uses six 80 GB GPUs: four for the shopping model's tensor parallel group, one shared by the embedding, content safety and topic control models, and one for the video safety model. [GPU Sizing](DEPLOYMENT.md#gpu-sizing) lists what each model needs and the other layouts. Against NVIDIA-hosted endpoints, no GPU is required.
+> **Performance Note**: You only need GPUs here if you intend to serve the models yourself. The default layout for locally hosted models uses six 80 GB GPUs: four for the shopping model's tensor parallel group, one shared by the embedding, content safety and topic control models, and one for the video safety model. Without guardrails (`GUARDRAILS_AVAILABLE=false`) it uses five. [GPU Sizing](DEPLOYMENT.md#gpu-sizing) lists what each model needs and the other layouts. Against NVIDIA-hosted endpoints, no GPU is required.
 
 ### Step 6: Review Configuration Summary
 

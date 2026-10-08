@@ -194,8 +194,18 @@ def create_initial_state(request: QueryRequest) -> State:
         media=media,
         context=request.context or "",
         cart=request.cart or Cart(),
-        guardrails=config.guardrails_enabled if request.guardrails is None else request.guardrails,
+        guardrails=_requested_guardrails(request.guardrails),
     )
+
+
+def _requested_guardrails(requested: bool | None) -> bool:
+    """A request may add guardrails, but not remove ones the deployment enabled."""
+
+    if requested is None:
+        return config.guardrails_enabled
+    if not requested and config.guardrails_enabled and not config.guardrails_client_can_disable:
+        return True
+    return requested
 
 @app.post("/query/stream")
 async def process_query_stream(request: QueryRequest):
@@ -367,6 +377,7 @@ async def capabilities():
             "speculative_main_model_scope": "text_only",
             "supported_modalities": config.guardrails_supported_modalities,
             "request_override_supported": True,
+            "client_can_disable": config.guardrails_client_can_disable,
         },
         "catalog": catalog.model_dump(),
     }

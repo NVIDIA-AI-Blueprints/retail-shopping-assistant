@@ -217,8 +217,16 @@ class ChainServerConfig(BaseModel):
     guardrails_enabled: bool = Field(
         default=False,
         description=(
-            "Default guardrails setting for requests that omit it. The request "
-            "field remains authoritative when present."
+            "Default guardrails setting for requests that omit it. A request "
+            "may turn guardrails on; it may turn them off only when "
+            "guardrails_client_can_disable is true."
+        ),
+    )
+    guardrails_client_can_disable: bool = Field(
+        default=False,
+        description=(
+            "Whether a request may turn guardrails off when guardrails_enabled "
+            "is true. A request can always turn them on."
         ),
     )
     guardrails_failure_mode: Literal["open", "closed"] = Field(
@@ -404,6 +412,7 @@ def load_config(config_path: str | None = None) -> ChainServerConfig:
         "relay_enabled": _env_bool("RELAY_ENABLED"),
         "guardrails_available": _env_bool("GUARDRAILS_AVAILABLE"),
         "guardrails_enabled": _env_bool("GUARDRAILS_ENABLED"),
+        "guardrails_client_can_disable": _env_bool("GUARDRAILS_CLIENT_CAN_DISABLE"),
         "guardrails_failure_mode": os.environ.get("GUARDRAILS_FAILURE_MODE"),
         "guardrails_timeout_seconds": os.environ.get("GUARDRAILS_TIMEOUT_SECONDS"),
         "guardrails_speculative_main_model_enabled": _env_bool(

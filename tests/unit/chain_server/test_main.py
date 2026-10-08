@@ -239,11 +239,28 @@ class TestCreateInitialState:
         assert state.cart.contents == []
         assert state.guardrails is True
 
-    def test_guardrails_request_overrides_config_default(self, main_module) -> None:
+    def test_request_cannot_turn_off_enabled_guardrails(self, main_module) -> None:
         request = main_module.QueryRequest(user_id=1, query="hi", guardrails=False)
         state = main_module.create_initial_state(request)
 
-        assert state.guardrails is False
+        assert state.guardrails is True
+
+    def test_request_turns_off_guardrails_when_deployment_allows(
+        self, main_module, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(main_module.config, "guardrails_client_can_disable", True)
+        request = main_module.QueryRequest(user_id=1, query="hi", guardrails=False)
+
+        assert main_module.create_initial_state(request).guardrails is False
+
+    @pytest.mark.parametrize("requested, expected", [(None, False), (False, False), (True, True)])
+    def test_request_decides_when_deployment_default_is_off(
+        self, main_module, monkeypatch, requested, expected
+    ) -> None:
+        monkeypatch.setattr(main_module.config, "guardrails_enabled", False)
+        request = main_module.QueryRequest(user_id=1, query="hi", guardrails=requested)
+
+        assert main_module.create_initial_state(request).guardrails is expected
 
     def test_guardrails_cannot_be_requested_when_unavailable(
         self, main_module, monkeypatch
@@ -330,6 +347,7 @@ class TestHealthAndRoot:
             "speculative_main_model_scope": "text_only",
             "supported_modalities": ["text", "image", "video"],
             "request_override_supported": True,
+            "client_can_disable": False,
         }
         assert body["catalog"]["catalog_id"] == "test_catalog"
         assert body["catalog"]["filters"]["category"]["values"] == ["bag", "dress"]

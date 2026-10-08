@@ -24,7 +24,7 @@ The Retail Shopping Assistant API provides a comprehensive interface for an AI-p
 - **Shopping Cart Management**: Add, remove, and view cart items
 - **Representative Shoppers**: Read five immutable eval-derived shopper
   profiles for the bundled UI picker
-- **Content Safety**: Optional guardrails for safe interactions, off by default
+- **Content Safety**: Optional guardrails for safe interactions, on by default
 - **Performance Monitoring**: Detailed timing information
 
 ## 🌐 Base URL
@@ -782,7 +782,7 @@ turns are not cut off before the SSE response is emitted.
   },
   "guardrails": {
     "available": true,
-    "default_enabled": false,
+    "default_enabled": true,
     "failure_mode": "closed",
     "speculative_main_model_enabled": false,
     "speculative_main_model_scope": "text_only",
@@ -1750,8 +1750,9 @@ print(f"Timing: {response['timings']}")
     and can be set to `disabled`; image embedding search is separately controlled
     by the `image_embedding` model role and `CATALOG_IMAGE_EMBEDDING_ENABLED`,
     which is off by default
-  - Content safety is off by default. Enable it per deployment with
-    `GUARDRAILS_ENABLED`, or per request with the request's own `guardrails` flag
+  - Content safety is on by default. Turn it off per deployment with
+    `GUARDRAILS_ENABLED=false`, or per request with the request's own
+    `guardrails` flag
 - `/query/stream` uses SSE framing. Token-level Deep Agents streaming is a
   known follow-up after the harness migration; this slice emits completed turn
   events rather than live model chunks. The stream includes `products` frames

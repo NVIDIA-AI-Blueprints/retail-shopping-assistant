@@ -59,7 +59,7 @@ Run it on NVIDIA-hosted endpoints with no GPU, or serve the models yourself.
 - **Skills with enforced tool grants** — each skill declares its tools, and the grant is rechecked at dispatch
 - **Durable conversation turns** — a turn's outcome and the products it showed survive a restart
 - **Representative shopper profiles** — five database-backed shoppers, or Guest
-- **Optional content safety and topic control** — separate guard models, off by default
+- **Optional content safety and topic control** — separate guard models, on by default
 - **SSE response streaming** — products, images, text, and metrics as discrete events
 - **Per-turn observability** — which skill ran, what the model was told, and why a tool was refused
 

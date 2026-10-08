@@ -215,11 +215,12 @@ class ChainServerConfig(BaseModel):
         ),
     )
     guardrails_enabled: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Default guardrails setting for requests that omit it. A request "
             "may turn guardrails on, and off unless "
-            "guardrails_client_can_disable is false."
+            "guardrails_client_can_disable is false. Always false when "
+            "guardrails_available is false."
         ),
     )
     guardrails_client_can_disable: bool = Field(
@@ -351,12 +352,10 @@ class ChainServerConfig(BaseModel):
             raise ValueError("guardrails_timeout_seconds must be finite and positive")
         return v
 
-    @validator('guardrails_enabled')
+    @validator('guardrails_enabled', always=True)
     def validate_guardrails_enabled(cls, v, values):
-        if v and values.get("guardrails_available") is False:
-            raise ValueError(
-                "GUARDRAILS_ENABLED cannot be true when GUARDRAILS_AVAILABLE is false"
-            )
+        if values.get("guardrails_available") is False:
+            return False
         return v
 
     class Config:
@@ -427,6 +426,10 @@ def load_config(config_path: str | None = None) -> ChainServerConfig:
             if value is not None and value != ""
         }
     )
+    if env_overrides["guardrails_enabled"] and config_data.get("guardrails_available") is False:
+        raise ValueError(
+            "GUARDRAILS_ENABLED cannot be true when GUARDRAILS_AVAILABLE is false"
+        )
     supported_guardrail_modalities = os.environ.get("GUARDRAILS_SUPPORTED_MODALITIES")
     if supported_guardrail_modalities:
         config_data["guardrails_supported_modalities"] = [

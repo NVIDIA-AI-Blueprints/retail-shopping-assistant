@@ -196,9 +196,9 @@ because vLLM also reserves a KV cache, plus a few GB of working memory.
 
 The default layout needs six 80 GB GPUs. `.env.local-models.example` points
 every role at these services through the environment, so `models.yaml` does not change,
-and adds video to the guarded modalities. Guardrails stay off by default, as on
-the hosted path; turn them on per session with the UI's Guardrails toggle, or
-for the deployment with `GUARDRAILS_ENABLED=true`. To deploy without them, set
+and adds video to the guarded modalities. Guardrails are on by default, as on
+the hosted path; turn them off per session with the UI's Guardrails toggle, or
+for the deployment with `GUARDRAILS_ENABLED=false`. To deploy without them, set
 `GUARDRAILS_AVAILABLE=false` in `.env.local-models`: the three guardrail
 models are not started, which frees GPU 5 and 50 GB of GPU 4, and the UI has
 no Guardrails toggle. The same setting works on the hosted path
@@ -431,8 +431,8 @@ that separates one shopper from another. Before shoppers can reach it:
   `CATALOG_IMAGE_EMBEDDING_ENABLED` unset, the catalog retriever refuses image
   queries before it fetches anything. Turning it on makes the retriever fetch
   caller-supplied image URLs, so restrict the hosts it may reach first.
-- **Set `GUARDRAILS_CLIENT_CAN_DISABLE=false` if guardrails are on.** By
-  default a request, such as the UI toggle, may still turn them off, which is
+- **Set `GUARDRAILS_CLIENT_CAN_DISABLE=false`.** Guardrails are on by default,
+  but a request, such as the UI toggle, may still turn them off, which is
   what a before-and-after demo needs and what an untrusted caller should not
   have.
 
@@ -492,7 +492,7 @@ the service at startup with the names of the missing variables.
 | `app_llm` | Answers the shopper and drives tool use | `inference-api.nvidia.com` | `LLM_BASE_URL`, `LLM_MODEL` | `LLM_API_KEY` |
 | `vlm` | Reads photo and video uploads | `inference-api.nvidia.com` | `VLM_BASE_URL`, `VLM_MODEL` | `VLM_API_KEY` |
 | `text_embedding` | Embeds the catalog and text queries | `inference-api.nvidia.com` | `TEXT_EMBED_BASE_URL`, `TEXT_EMBED_MODEL` | `EMBED_API_KEY` |
-| `content_safety` | Checks text and images for unsafe content (guardrails, off by default) | `integrate.api.nvidia.com` | `RAILS_CONTENT_BASE_URL`, `RAILS_CONTENT_MODEL` | `RAIL_API_KEY` |
+| `content_safety` | Checks text and images for unsafe content (guardrails, on by default) | `integrate.api.nvidia.com` | `RAILS_CONTENT_BASE_URL`, `RAILS_CONTENT_MODEL` | `RAIL_API_KEY` |
 | `topic_control` | Checks whether a request is on topic (guardrails) | `integrate.api.nvidia.com` | `RAILS_TOPIC_BASE_URL`, `RAILS_TOPIC_MODEL` | `RAIL_API_KEY` |
 | `multimodal_safety` | Checks video, including embedded audio (guardrails) | `integrate.api.nvidia.com` | `MULTIMODAL_SAFETY_BASE_URL`, `MULTIMODAL_SAFETY_MODEL` | `MULTIMODAL_SAFETY_API_KEY` |
 
@@ -502,10 +502,10 @@ variables in your profile.
 
 **The two hosts issue different keys, and they are not interchangeable.** A key
 that works against `inference-api.nvidia.com` will be rejected by
-`integrate.api.nvidia.com` and vice versa. The roles that are on by default all
-use `inference-api.nvidia.com`, so one key in `NVIDIA_API_KEY` runs them.
-Turning guardrails on adds the `integrate.api.nvidia.com` roles, which need a
-build.nvidia.com key in `RAIL_API_KEY` and `MULTIMODAL_SAFETY_API_KEY`. A
+`integrate.api.nvidia.com` and vice versa. The app roles use
+`inference-api.nvidia.com`, so one key in `NVIDIA_API_KEY` runs them.
+Guardrails, on by default, add the `integrate.api.nvidia.com` roles, which need
+a build.nvidia.com key in `RAIL_API_KEY` and `MULTIMODAL_SAFETY_API_KEY`. A
 mismatch is the most common first-deploy failure: the language model answers
 normally while catalog search or guardrails return authentication errors, which
 looks like a broken service rather than a key problem.
@@ -561,7 +561,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `MULTIMODAL_SAFETY_VIDEO_FPS` | Temporal sampling rate sent to Nemotron Omni. The complete video object and embedded audio are submitted, but the model evaluates sampled frames | No | `rails.py` (2.0) |
 | `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the content and topic input rails in `parallel` or `sequential` mode | No | `rails.py` (parallel) |
 | `GUARDRAILS_AVAILABLE` | `false` deploys without guardrails: no guardrail model is called or needs a key, `.env.local-models` starts no guardrail model, the UI hides the Guardrails toggle, and a request with `guardrails: true` gets a 400. Cannot be combined with `GUARDRAILS_ENABLED=true`. Read from the environment only, as both services and `.env.local-models` need it | No | true |
-| `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Guardrails is opt-in: set this to enable it | No | `config.yaml`: `guardrails_enabled` (off) |
+| `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Set false to turn guardrails off by default | No | `config.yaml`: `guardrails_enabled` (on; off when `GUARDRAILS_AVAILABLE=false`) |
 | `GUARDRAILS_CLIENT_CAN_DISABLE` | With guardrails enabled, whether a request's `guardrails: false` is honoured. On by default, so the UI toggle can show before and after; set `false` to lock guardrails on | No | true |
 | `GUARDRAILS_FAILURE_MODE` | Required-check error/timeout behavior: `open` bypasses and `closed` stops the turn. Explicit unsafe decisions always block in either mode | No | `config.yaml`: `guardrails_failure_mode` (closed) |
 | `GUARDRAILS_TIMEOUT_SECONDS` | Timeout for each isolated guardrail service decision. Both services read it: the chain server bounds its call, the guardrail service bounds the judges behind it | No | `config.yaml`: `guardrails_timeout_seconds`, and `rails.py` (15.0) |
@@ -765,7 +765,7 @@ memory_length: 16384
 deepagents_recursion_limit: 24
 max_catalog_searches_per_turn: 3
 max_product_detail_reads_per_turn: 2
-guardrails_enabled: false
+guardrails_enabled: true
 guardrails_failure_mode: closed
 guardrails_timeout_seconds: 15.0
 guardrails_speculative_main_model_enabled: false

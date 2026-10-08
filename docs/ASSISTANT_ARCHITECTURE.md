@@ -22,7 +22,7 @@ from one of them.
 | Deep Agents runtime | Semantic intent, skill selection, tool selection, styling judgment | Product facts, policy facts, cart truth |
 | Memory service | Durable turns, cart truth, presented-product index, the shopper registry | Catalog facts, model reasoning, cross-conversation memory |
 | Graph checkpointer | Request-scoped graph state inside one process | Durable transcript, cross-turn memory, cross-replica context |
-| Guardrails (optional, off by default) | Content safety and topic checks on input and output | Product facts, or authorization of any tool |
+| Guardrails (optional, on by default) | Content safety and topic checks on input and output | Product facts, or authorization of any tool |
 | Weather (optional, off by default) | Forecast evidence for a place the shopper named | Looking up the saved ZIP on its own, or any persistence |
 
 Both optional boundaries are configured in

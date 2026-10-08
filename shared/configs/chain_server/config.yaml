@@ -81,8 +81,9 @@ media_input:
   max_video_bytes: 52428800
   max_video_duration_seconds: 120
 # Deployment default. A request may turn guardrails on, and off unless
-# guardrails_client_can_disable is false.
-guardrails_enabled: false
+# guardrails_client_can_disable is false. GUARDRAILS_AVAILABLE=false turns
+# this off.
+guardrails_enabled: true
 # Lets the UI toggle switch enabled guardrails off, to show before and after.
 # Set false to lock them on wherever untrusted callers can reach the API.
 guardrails_client_can_disable: true

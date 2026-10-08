@@ -515,8 +515,11 @@ right one for its host.
 
 Compose chains sensible fallbacks so a single-key deployment works: `VLM_API_KEY`
 falls back to `NVIDIA_API_KEY`, and `MULTIMODAL_SAFETY_API_KEY` falls back to
-`VLM_API_KEY` and then `NVIDIA_API_KEY`. Set the specific variables when the
-roles live on different hosts.
+`VLM_API_KEY` and then `NVIDIA_API_KEY`. `.env.example` points video safety at
+`integrate.api.nvidia.com`, so it falls back to `RAIL_API_KEY` instead. Set the
+specific variables when the roles live on different hosts: `RAIL_API_KEY` for
+the guardrail models, `NVIDIA_API_KEY` (or `LLM_API_KEY`, `EMBED_API_KEY`,
+`VLM_API_KEY`) for the rest. Each model uses only its own key.
 
 To repoint a role, set its `*_BASE_URL` and `*_MODEL` variables in your
 profile, together: hosts name the same model differently
@@ -555,7 +558,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `GUARDRAILS_URL` | Chain-server URL for the guardrail service | No | `http://rails:8012` |
 | `RAILS_CONTENT_BASE_URL` / `RAILS_CONTENT_MODEL` | Endpoint and model for current text/image content safety | With guardrails | `.env.example` |
 | `RAILS_TOPIC_BASE_URL` / `RAILS_TOPIC_MODEL` | Topic-control endpoint and model. The dedicated Topic Control model is preferred; selecting Content Safety applies the configured retail policy through `custom_policy` | With guardrails | `.env.example` |
-| `MULTIMODAL_SAFETY_API_KEY` | Key for the independently routed video safety judge; Compose falls back to the VLM/NVIDIA key | When the video safety endpoint requires authentication | `VLM_API_KEY` |
+| `MULTIMODAL_SAFETY_API_KEY` | Key for the independently routed video safety judge; Compose falls back to the VLM/NVIDIA key | When the video safety endpoint requires authentication | `RAIL_API_KEY` in `.env.example`; `VLM_API_KEY` in Compose alone |
 | `MULTIMODAL_SAFETY_BASE_URL` | OpenAI-compatible endpoint for the video safety judge | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_MODEL` | Video safety model, independent of perception | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_VIDEO_FPS` | Temporal sampling rate sent to Nemotron Omni. The complete video object and embedded audio are submitted, but the model evaluates sampled frames | No | `rails.py` (2.0) |

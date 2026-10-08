@@ -41,9 +41,11 @@ def apply_model_config(config, config_dir: str = "/app/shared/configs/rails"):
             model.parameters = {}
         model.parameters["base_url"] = endpoint.base_url
 
+        # Per model, not through the shared NVIDIA_API_KEY, so the guard models
+        # and the main model can use keys from different hosts.
         api_key = os.environ.get(endpoint.api_key_env, "") if endpoint.api_key_env else ""
         if api_key:
-            os.environ["NVIDIA_API_KEY"] = api_key
+            model.api_key_env_var = endpoint.api_key_env
         elif not endpoint.api_key_env:
             os.environ.setdefault("NVIDIA_API_KEY", "not-needed")
 

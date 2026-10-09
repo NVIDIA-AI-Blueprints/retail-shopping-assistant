@@ -120,7 +120,7 @@ Copy the template rather than editing it: every `.env.*` is gitignored except
 the templates, so your filled-in copy stays out of git along with its keys.
 
 For an existing deployment, restart the catalog service when changing the
-text/image embedding model or catalog data source. Its fingerprint reuses only
+embedding model or catalog data source. Its fingerprint reuses only
 matching complete collections and rebuilds mismatches. After the catalog is
 healthy, restart the chain server so its process-lifetime cached capability
 contract matches the active catalog.
@@ -160,20 +160,12 @@ That is correct behavior, not a failure. Start the models yourself first, as
 Every model role can move to your own GPUs: the language, media,
 text-embedding and guardrail roles each have a local service in
 `docker-compose-model-local.yaml`, and `.env.local-models.example` points all
-of them there. Image embedding is the exception; it has no role or local
-service and stays off.
+of them there.
 
-Image embedding is off by default: catalog indexing populates the text
-collection only, and needs just the text embedding endpoint. Set
-`CATALOG_IMAGE_EMBEDDING_ENABLED=true` in the sourced profile to also build
-image embedding clients and populate the image collection, which additionally
-requires a reachable `image_embedding` endpoint.
-
-That default is declared in one place, `shared/configs/catalog_retriever/config.yaml`,
-as `image_embedding_enabled`. Compose and the env profiles pass the environment
-variable through without a default of their own, so an empty value means "not
-set" and the config file decides. Guardrails works the same way, with its
-default in `shared/configs/chain_server/config.yaml`.
+Feature defaults are declared once, in the service's config file. Compose and
+the env profiles pass the environment variable through without a default of
+their own, so an empty value means "not set" and the config file decides; for
+guardrails, that is `shared/configs/chain_server/config.yaml`.
 
 ## 🏠 Locally Hosted Models
 
@@ -544,10 +536,6 @@ the service at startup with the names of the missing variables.
 | `topic_control` | Checks whether a request is on topic (guardrails) | `integrate.api.nvidia.com` | `RAILS_TOPIC_BASE_URL`, `RAILS_TOPIC_MODEL` | `RAIL_API_KEY` |
 | `multimodal_safety` | Checks video, including embedded audio (guardrails) | `integrate.api.nvidia.com` | `MULTIMODAL_SAFETY_BASE_URL`, `MULTIMODAL_SAFETY_MODEL` | `MULTIMODAL_SAFETY_API_KEY` |
 
-Image embedding is not shipped as a role; to turn it on, add an
-`image_embedding` role to `models.yaml` with the same shape and set its
-variables in your profile.
-
 **The two hosts issue different keys, and they are not interchangeable.** A key
 that works against `inference-api.nvidia.com` will be rejected by
 `integrate.api.nvidia.com` and vice versa. The app roles use
@@ -627,7 +615,6 @@ set there; a unit test fails if the two differ, so change both together.
 | `EXPOSE_AGENT_DIAGNOSTICS` | Expose detailed agent/tool traces in query responses; enable only behind a trusted operator or evaluation surface | No | `config.yaml`: `expose_agent_diagnostics` (off) |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
 | `CATALOG_RETRIEVER_URL` / `MEMORY_RETRIEVER_URL` | Where the chain server reaches the retrieval services | No | `config.yaml`: `retriever_port`, `memory_port` |
-| `CATALOG_IMAGE_EMBEDDING_ENABLED` | Build image embeddings and the image collection at index time, enabling visual search | No | `catalog_retriever/config.yaml`: `image_embedding_enabled` (off) |
 | `CATALOG_VECTOR_INDEX_TYPE` | Vector index for both catalog collections: `AUTOINDEX` (CPU) or `GPU_CAGRA` (needs the Milvus `-gpu` image); see [Vector Search](VECTOR_SEARCH.md) | No | `catalog_retriever/config.yaml`: `vector_index.type` (`AUTOINDEX`) |
 | `CATALOG_GPU_SEARCH` | With `GPU_CAGRA`, search on the GPU too rather than building on the GPU and searching on the CPU | No | `catalog_retriever/config.yaml`: `vector_index.gpu_search` (off) |
 | `CATALOG_DATA_SOURCE` / `CATALOG_SCHEMA_SOURCE` | Catalog JSONL and schema sidecar paths; see [Catalog Architecture](CATALOG_ARCHITECTURE.md#replace-the-catalog) | No | `catalog_retriever/config.yaml`: `data_source`, `schema_source` |
@@ -876,9 +863,7 @@ The `vlm` role controls image/video media perception for user uploads. By
 default it uses the same model as `app_llm`, Nemotron 3.5 Super VL, which reads
 photos and video. It is configured separately through `VLM_*`, so replacing the
 app LLM leaves media perception where it is; set `VLM_*` as well to move it.
-It can be set to `disabled` when media perception should be off. Image
-embedding search remains controlled separately by the `image_embedding` role
-and `CATALOG_IMAGE_EMBEDDING_ENABLED`.
+It can be set to `disabled` when media perception should be off.
 
 #### Applying a Routing Change
 

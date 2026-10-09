@@ -63,9 +63,9 @@ question at all.
 
 **Env profiles blend rather than switch.** Each `.env.*` file is sourced and
 uses `${VAR:-default}`, so an already-exported value wins and sourcing two
-profiles in one shell silently mixes them. `CATALOG_IMAGE_EMBEDDING_ENABLED`
-leaking in as `true` changes indexing and per-turn latency, so runs you meant
-to compare are not comparable. Measure from a clean shell:
+profiles in one shell silently mixes them. A model URL or feature flag leaking
+in from another profile changes per-turn latency, so runs you meant to compare
+are not comparable. Measure from a clean shell:
 
 ```bash
 env -i HOME="$HOME" PATH="$PATH" bash -c 'set -a; . ./.env.local-models; set +a; docker compose up -d'

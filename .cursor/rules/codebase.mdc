@@ -99,7 +99,7 @@ has been removed; `runtime/runtime.py` is the only serving path.
 
 **Registered Tool Types** (twelve shopping tools, assembled in `runtime/runtime.py`;
 `docs/TOOLS.md` is the full list):
-- **Catalog**: describe the catalog, search (semantic/image retrieval with
+- **Catalog**: describe the catalog, search (semantic retrieval with
   capability-validated hard filters), product details for a known search ref
 - **Conversation**: exact resolver for products shown earlier in the conversation
 - **Cart reads and totals**: Authoritative state and code-based arithmetic
@@ -121,7 +121,6 @@ has been removed; `runtime/runtime.py` is the only serving path.
 
 **API Endpoints**:
 - `POST /query/text`: Text-based product search
-- `POST /query/image`: Image + text search
 - `GET /capabilities`: Active fields, values, ranges, and taxonomy scopes
 - `GET /products/{product_id}`: Deterministic detail fields
 
@@ -207,9 +206,7 @@ request again.
    ↓
 2. Model emits semantic text and structured required constraints
    ↓
-3. Chain server validates constraints, then calls Catalog Retriever
-   ├─ Text Search: /query/text
-   └─ Image Search: /query/image  
+3. Chain server validates constraints, then calls Catalog Retriever /query/text
    ↓
 4. Milvus similarity search plus deterministic hard filtering
    ↓
@@ -244,7 +241,6 @@ request again.
 
 ### Catalog Retriever (Port 8010)
 - `POST /query/text`: Text-based search
-- `POST /query/image`: Image + text search
 - `GET /capabilities`: Active catalog query contract
 - `GET /products/{product_id}`: Deterministic product details
 - `GET /health`, `GET /ready`: Liveness and readiness
@@ -353,7 +349,6 @@ The frontend handles multiple message types:
 
 **Collections**:
 - **Text Collection**: Product text embeddings
-- **Image Collection**: Product image embeddings, only when `image_embedding_enabled` is on (off by default)
 
 Both collections use an auto-generated integer `pk`, a `text` payload, and a
 runtime-dimension `vector`. Dynamic metadata carries the source product fields

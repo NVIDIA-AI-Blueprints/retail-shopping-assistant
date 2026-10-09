@@ -280,12 +280,9 @@ commerce effect may already have committed.
 
 ### Multi-modal Input
 
-Uploaded images can be used in two ways:
-
-- Image embedding search through the catalog retriever when image embeddings
-  are configured.
-- Optional VLM media perception when the `vlm` model role is enabled in
-  `shared/configs/models.yaml`.
+Uploaded images and video go through VLM media perception when the `vlm` model
+role is enabled in `shared/configs/models.yaml`; the catalog search then runs
+on text.
 
 Uploaded videos require VLM media perception. If VLM is disabled, video
 understanding is unavailable and the assistant should not invent visual
@@ -654,8 +651,7 @@ data: [DONE]
 ```
 
 `model_usage.text_embedding.calls` counts embedding attempts made for the
-agent's single semantic query. A hybrid request that attempts its text fallback
-adds one more text-embedding call.
+agent's semantic queries.
 
 ### POST `/query/timing`
 
@@ -794,8 +790,8 @@ turns are not cut off before the SSE response is emitted.
   "catalog": {
     "catalog_id": "fashion_products",
     "product_count": 215,
-    "retrieval_modes": ["text", "image", "hybrid"],
-    "image_search_enabled": true,
+    "retrieval_modes": ["text"],
+    "image_search_enabled": false,
     "filters": {
       "category": {
         "type": "enum",
@@ -852,8 +848,8 @@ catalog retriever derives them from the loaded JSONL.
 {
   "catalog_id": "fashion_products",
   "product_count": 215,
-  "retrieval_modes": ["text", "image", "hybrid"],
-  "image_search_enabled": true,
+  "retrieval_modes": ["text"],
+  "image_search_enabled": false,
   "filters": {
     "category": {
       "type": "enum",
@@ -1054,19 +1050,6 @@ also ambiguous and returns HTTP 422.
   "no_result_reason": null
 }
 ```
-
-### Catalog Retriever POST `/query/image`
-
-Accepts the same fields as `/query/text`, plus `image_base64`: the image itself,
-as base64 or a data URL. A URL is refused with HTTP 422, and the retriever never
-fetches a URL or opens a file for a query. Explicit category
-and price filters are hard filters for image and hybrid retrieval too.
-Image and hybrid results retain pooled similarity-score ordering.
-When the active capabilities do not advertise image or hybrid retrieval, an
-image-only assistant request asks the shopper for a text description instead
-of issuing an empty text search. An explicit image/hybrid mode is never silently
-downgraded to text and requires an attached image; unsupported or incomplete
-mode requests stop before retrieval.
 
 Request models reject unknown fields, including client-supplied embedding
 vectors.
@@ -1744,9 +1727,7 @@ print(f"Timing: {response['timings']}")
   `mime_type: "video/mp4"` and is sent through `media[]`
 - The API is the same whether models run on your own GPUs or on NVIDIA-hosted endpoints
   - The `vlm` model role is enabled by default for image/video media perception
-    and can be set to `disabled`; image embedding search is separately controlled
-    by the `image_embedding` model role and `CATALOG_IMAGE_EMBEDDING_ENABLED`,
-    which is off by default
+    and can be set to `disabled`
   - Content safety is on by default. Turn it off per deployment with
     `GUARDRAILS_ENABLED=false`, or per request with the request's own
     `guardrails` flag

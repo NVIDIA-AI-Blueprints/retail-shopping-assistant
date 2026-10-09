@@ -19,7 +19,7 @@ basis of whether you have GPUs.
 | **Managed cloud GPU** | An NVIDIA Brev account | [Deploy on Brev](BREV.md) |
 
 The self-hosted path moves the language, text-embedding and guardrail models
-onto your GPUs. Image embedding has no local service and ships off. [Deployment Options](DEPLOYMENT.md#%EF%B8%8F-deployment-options)
+onto your GPUs. [Deployment Options](DEPLOYMENT.md#%EF%B8%8F-deployment-options)
 explains which roles can move and which cannot.
 
 ## Where to go by role

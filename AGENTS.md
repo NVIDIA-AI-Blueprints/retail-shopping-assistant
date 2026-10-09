@@ -6,7 +6,7 @@ This file is a working guide for coding agents and contributors in this reposito
 
 Retail Shopping Assistant is a multi-service application with:
 - `chain_server`: FastAPI + Deep Agents SDK orchestration over deterministic catalog and cart tools.
-- `catalog_retriever`: FastAPI service for text/image embedding retrieval against Milvus.
+- `catalog_retriever`: FastAPI service for text embedding retrieval against Milvus.
 - `memory_retriever`: FastAPI + single-replica SQLite service for an immutable representative-shopper registry, ordered durable conversation turns, exact finalized-turn replay, stable cart-line IDs, and atomically idempotent add/remove/quantity mutations.
 - `guardrails`: FastAPI wrapper around NeMo Guardrails input/output safety checks.
 - `ui`: React + TypeScript chat UI using SSE streaming.
@@ -29,8 +29,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional locally deployed 
    - Optional output guardrails run, then the memory service finalizes the durable turn as completed, blocked, or failed before products, images, content, and metrics are emitted over SSE. An exact retry of a finalized request replays its stored response without model/tool work. Internal diagnostics include bounded current-turn product evidence from successful catalog search and detail results plus bounded `catalog_scope_outcomes` for zero-result scopes; each search scope remains attached to its own products. A rejected tool call reports the gate that refused it; a multi-scope call refused for only some roles remains a completed call and reports those roles under `scope_rejections`. Public query responses contain an empty diagnostics object by default. `EXPOSE_AGENT_DIAGNOSTICS=true` exposes the detailed trace only for a trusted operator or evaluation deployment. Final-text extraction skips tool, tool-calling, and internal activation messages; if no shopper-facing answer exists, the runtime returns a safe fallback with `incomplete_agent_response`. On graph failure, bounded current-turn messages are captured before checkpoint cleanup.
    - Weather is optional and off by default (`WEATHER_ENABLED=false`). Enabled, `get_weather_forecast_tool` is registered with Deep Agents and granted only by the `destination-weather` skill; its forecast rules reach only a model request granted the tool. It accepts a city, town or postal code the shopper named in the conversation plus one exact date or a complete inclusive range within 15 days, at most twice per turn, and a reply that uses it carries the provider attribution. It has no FastAPI route or UI of its own. Disabled, it is not registered, and startup, health checks, and shopper turns make no weather request.
 4. For product discovery, chain server calls catalog retriever:
-   - `/query/text` for text-only.
-   - `/query/image` for text + image.
+   - `/query/text` for search.
    - `/products/{product_id}` for deterministic details after a search ref is known.
    - `/capabilities` once per successful chain-server process lifecycle for the catalog-owned query contract.
 

@@ -137,8 +137,7 @@ If the same GPU also serves self-hosted models, give Milvus a different
 
 Raw vectors take `products × dimension × 4` bytes per collection. A
 `GPU_CAGRA` index takes roughly 1.8 times that in GPU memory, because the graph
-is stored alongside the cached vectors. With image embeddings enabled there are
-two collections, and both are indexed the same way.
+is stored alongside the cached vectors.
 
 | Products | Dimension | Raw vectors | `GPU_CAGRA` (≈1.8×) |
 |----------|-----------|-------------|---------------------|

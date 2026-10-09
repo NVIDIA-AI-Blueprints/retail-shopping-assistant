@@ -145,7 +145,7 @@ and coverage while keeping the real taxonomy field names, every observed value,
 and whether a filter is also semantically searchable:
 
 ```text
-Retrieval modes: text, image, hybrid
+Retrieval modes: text
 Hard filters (enum values are exact; numbers use min/max):
 - neckline: enum; values boat, collared, crew, ..., v_neck; semantic yes
 - price: number; range 39.9 to 269.99; semantic no
@@ -192,9 +192,7 @@ Each search carries at most one category. A shopper-named type that is not
 separately advertised may be searched under one faithful parent category, with
 results presented as closest alternatives. If neither a direct type nor one
 faithful parent fits, the assistant asks a clarifying question instead of
-substituting or claiming the catalog has nothing. Image or hybrid intent is
-validated against the advertised modes and requires an attached image; it stops
-rather than quietly degrading into a text search.
+substituting or claiming the catalog has nothing.
 
 Search scope, repair attempts, and per-turn budgets are runtime concerns — see
 [Assistant Architecture](ASSISTANT_ARCHITECTURE.md).
@@ -217,15 +215,7 @@ the same text. Product ID, price, image, URL, and row bookkeeping never enter
 the embedding — they are exact-match or display concerns, and embedding them
 only adds noise.
 
-When the `image_embedding` model role is enabled, the service also creates one
-embedding per product image, in a separate collection carrying the same product
-ID and filter metadata so every search mode enforces identical hard filters. A
-missing local image fails startup. Text-only is the default
-(`image_embedding_enabled: false` in `shared/configs/catalog_retriever/config.yaml`;
-`CATALOG_IMAGE_EMBEDDING_ENABLED=true` turns it on); until it is on, image and hybrid
-modes are absent from `/capabilities`.
-
-Clients send raw text or raw image data and never send vectors. Candidates are
+Clients send raw text and never send vectors. Candidates are
 fused, deduplicated by product ID, hard-filtered, thresholded, and
 similarity-sorted; Milvus COSINE scores are normalized from `[-1, 1]` to
 `[0, 1]` before the configured threshold applies. The default candidate window
@@ -259,17 +249,6 @@ curl -sS -X POST http://localhost:8010/query/text \
   }'
 ```
 
-```bash
-curl -sS -X POST http://localhost:8010/query/image \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "text": ["similar style"],
-    "image_base64": "data:image/jpeg;base64,...",
-    "filters": {"price": {"lte": 200}},
-    "k": 4
-  }'
-```
-
 Unsupported fields, values, taxonomy values, and operators return HTTP 422
 instead of being ignored — the whole point is that a constraint is never
 quietly weakened. Numeric bounds must be finite, so booleans, `NaN`,
@@ -298,8 +277,7 @@ removed.
 ## Replace the catalog
 
 An internal fingerprint covers the JSONL, the sidecar's indexing-relevant
-parts, the text and image embedding model names, image-search state, the bytes
-of referenced local images, and the semantic-document template version. Each
+parts, the embedding model name, and the semantic-document template version. Each
 indexed row carries it, and an index counts as current only when both the
 fingerprint and the row count match the active snapshot.
 
@@ -381,10 +359,9 @@ integration Goldens — keep behavioral expectations stable, but reconcile froze
 inventory-absence claims with the new snapshot.
 
 Manual collection or volume removal is reserved for database corruption. If you
-do drop `shopping_advisor_text_db` or `shopping_advisor_image_db`, restarting
-will not bring them back: the service will load the snapshot, find no matching
+do drop `shopping_advisor_text_db`, restarting will not bring it back: the service will load the snapshot, find no matching
 index, and answer `/ready` with 503 indefinitely. Run the indexer to refill
-them.
+it.
 
 Hot reload, an ingestion API, LLM schema inference, versioned collection
 aliases, inventory, and variants are out of scope.

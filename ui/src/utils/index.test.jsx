@@ -2,12 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  clearUserSession,
   createApiRequest,
   getOrCreateUserSession,
   getSelectedShopperProfileId,
   parseShopperProfiles,
+  requestIdForTurn,
   rotateUserSession,
   setSelectedShopperProfileId,
+  settleTurn,
+  turnFingerprint,
 } from ".";
 
 const profile = {
@@ -129,15 +133,48 @@ test("Query payload overrides guardrails only after an explicit toggle", () => {
   expect(createApiRequest(session, "default")).not.toHaveProperty("guardrails");
 });
 
-test("Each message gets its own request ID, and a retry can reuse it", () => {
+test("A resend of an unfinished turn reuses its request ID", () => {
+  sessionStorage.clear();
   const session = getOrCreateUserSession();
-  const first = createApiRequest(session, "add one");
-  const second = createApiRequest(session, "add one");
+  const payload = createApiRequest(session, "remove one of the boots");
+  expect(payload).not.toHaveProperty("request_id");
 
-  expect(first.request_id).toMatch(/^request-[A-Za-z0-9][A-Za-z0-9._:-]*$/);
-  expect(first.request_id).not.toBe(second.request_id);
-  expect(
-    createApiRequest(session, "add one", "", undefined, [], null, first.request_id)
-      .request_id
-  ).toBe(first.request_id);
+  const first = requestIdForTurn(turnFingerprint(payload));
+  expect(first).toMatch(/^request-[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+  expect(requestIdForTurn(turnFingerprint(payload))).toBe(first);
+
+  settleTurn(first);
+  expect(requestIdForTurn(turnFingerprint(payload))).not.toBe(first);
+});
+
+test("A different message, profile or guardrail setting is a new turn", () => {
+  sessionStorage.clear();
+  const session = getOrCreateUserSession();
+  const base = turnFingerprint(createApiRequest(session, "add one", "", true));
+
+  for (const other of [
+    createApiRequest(session, "add two", "", true),
+    createApiRequest(session, "add one", "", false),
+    createApiRequest(session, "add one", "data:image/png;base64,AA", true),
+    createApiRequest(session, "add one", "", true, [], profile.shopper_profile_id),
+  ]) {
+    expect(turnFingerprint(other)).not.toBe(base);
+  }
+
+  const first = requestIdForTurn(base);
+  requestIdForTurn(turnFingerprint(createApiRequest(session, "add two", "", true)));
+  expect(requestIdForTurn(base)).not.toBe(first);
+});
+
+test("Settling a turn that is no longer pending leaves the pending one alone", () => {
+  sessionStorage.clear();
+  const session = getOrCreateUserSession();
+  const fingerprint = turnFingerprint(createApiRequest(session, "add one"));
+  const pending = requestIdForTurn(fingerprint);
+
+  settleTurn("request-older");
+  expect(requestIdForTurn(fingerprint)).toBe(pending);
+
+  clearUserSession();
+  expect(requestIdForTurn(fingerprint)).not.toBe(pending);
 });

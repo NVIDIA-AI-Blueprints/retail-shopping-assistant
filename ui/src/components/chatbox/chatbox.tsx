@@ -48,6 +48,9 @@ import {
   clearUserSession,
   createApiRequest,
   getOrCreateUserSession,
+  requestIdForTurn,
+  settleTurn,
+  turnFingerprint,
 } from "../../utils";
 import logo from "../../assets/nvidia-logo.png";
 
@@ -611,6 +614,8 @@ const Chatbox: React.FC<ChatboxProps> = ({
         media,
         selectedShopperProfileId
       );
+      const requestId = requestIdForTurn(turnFingerprint(payload));
+      payload.request_id = requestId;
       
       // Clear media immediately after preparing payload
       setImage("");
@@ -653,6 +658,11 @@ const Chatbox: React.FC<ChatboxProps> = ({
         } catch {
           errorMessage = response.statusText || errorMessage;
         }
+        // Refused before it ran, so a resend is a new turn. A 409 can mean the
+        // first attempt is still running; a resend must replay that one.
+        if (response.status >= 400 && response.status < 500 && response.status !== 409) {
+          settleTurn(requestId);
+        }
         throw new Error(errorMessage);
       }
 
@@ -677,6 +687,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
           
           if (raw === '[DONE]') {
             // Stream closed by server; enable submit immediately
+            settleTurn(requestId);
             setIsLoading(false);
             return;
           }

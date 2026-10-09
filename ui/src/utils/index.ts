@@ -17,6 +17,7 @@ import { config } from '../config/config';
 
 const SESSION_STORAGE_KEY = 'shopping_session_identity';
 const LEGACY_USER_ID_KEY = 'shopping_user_id';
+const PENDING_TURN_KEY = 'shopping_pending_turn';
 const SHOPPER_PROFILE_STORAGE_KEY = 'shopping_shopper_profile_id';
 const SHOPPER_PROFILE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const SHOPPER_TYPE_PATTERN = /^[a-z][a-z0-9_]*$/;
@@ -82,6 +83,7 @@ export const getOrCreateUserSession = (): UserSession => {
 export const clearUserSession = (): void => {
   sessionStorage.removeItem(SESSION_STORAGE_KEY);
   sessionStorage.removeItem(LEGACY_USER_ID_KEY);
+  sessionStorage.removeItem(PENDING_TURN_KEY);
 };
 
 /**
@@ -226,11 +228,10 @@ export const createApiRequest = (
   guardrails?: boolean,
   media: MediaAttachment[] = [],
   shopperProfileId: string | null = null,
-  requestId: string = createRequestId()
+  requestId: string | null = null
 ): ApiRequest => {
   const payload: ApiRequest = {
     user_id: userSession.userId,
-    request_id: requestId,
     session_id: userSession.sessionId,
     conversation_id: userSession.conversationId,
     cart_id: userSession.cartId,
@@ -244,6 +245,9 @@ export const createApiRequest = (
   }
   if (shopperProfileId !== null) {
     payload.shopper_profile_id = shopperProfileId;
+  }
+  if (requestId !== null) {
+    payload.request_id = requestId;
   }
   return payload;
 };
@@ -274,11 +278,71 @@ const createScopedId = (prefix: string): string => {
   return `${prefix}-${randomId}`;
 };
 
-/**
- * One ID per shopper message. A retry of that message must reuse it, so the
- * server recognises a cart change it has already applied.
- */
 export const createRequestId = (): string => createScopedId('request');
+
+/**
+ * The fields the server's replay digest covers, plus the conversation. Sending
+ * the same message again with a different ID would apply its cart changes
+ * twice; reusing an ID for a different message is a server-side conflict.
+ */
+export const turnFingerprint = (payload: ApiRequest): string =>
+  hashString(
+    JSON.stringify([
+      payload.conversation_id ?? '',
+      payload.query,
+      payload.image,
+      (payload.media ?? []).map((item) => [item.type, item.mime_type ?? '', item.data]),
+      payload.shopper_profile_id ?? null,
+      payload.guardrails ?? null,
+    ])
+  );
+
+const readPendingTurn = (): { fingerprint: string; requestId: string } | null => {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(PENDING_TURN_KEY) ?? 'null');
+    return typeof parsed?.fingerprint === 'string' && typeof parsed?.requestId === 'string'
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The request ID for a message: the pending one when this is a resend of a
+ * turn that never finished, otherwise a new one that stays pending until
+ * settleTurn. A new session clears it with the rest of the identity.
+ */
+export const requestIdForTurn = (fingerprint: string): string => {
+  const pending = readPendingTurn();
+  if (pending?.fingerprint === fingerprint) {
+    return pending.requestId;
+  }
+  const requestId = createRequestId();
+  sessionStorage.setItem(PENDING_TURN_KEY, JSON.stringify({ fingerprint, requestId }));
+  return requestId;
+};
+
+/** The turn reached an outcome the server recorded; a resend is a new turn. */
+export const settleTurn = (requestId: string): void => {
+  if (readPendingTurn()?.requestId === requestId) {
+    sessionStorage.removeItem(PENDING_TURN_KEY);
+  }
+};
+
+// cyrb53: a fast 53-bit string hash, so image data never goes into storage.
+const hashString = (value: string): string => {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    h1 = Math.imul(h1 ^ code, 2654435761);
+    h2 = Math.imul(h2 ^ code, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+};
 
 const readStoredUserSession = (): UserSession | null => {
   const storedSession = sessionStorage.getItem(SESSION_STORAGE_KEY);

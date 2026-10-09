@@ -84,6 +84,7 @@ export interface ChatMessageProps {
 
 export interface ApiRequest {
   user_id: number;
+  request_id?: string;
   query: string;
   guardrails?: boolean;
   image: string;

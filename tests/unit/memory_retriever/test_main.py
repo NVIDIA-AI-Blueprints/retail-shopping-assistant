@@ -174,6 +174,33 @@ def test_database_sessions_return_connections_after_each_request(
 
 
 class TestCartFlows:
+    def test_every_cart_mutation_takes_the_cart_lock_first(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        scopes: list[str] = []
+        real_replay = memory_main._replay_cart_mutation
+
+        def lock(db, scope: str) -> None:
+            scopes.append(scope)
+
+        def replay_after_lock(db, user_id, *args):
+            assert scopes and scopes[-1] == f"cart:{user_id}"
+            return real_replay(db, user_id, *args)
+
+        monkeypatch.setattr(memory_main, "begin_write_transaction", lock)
+        monkeypatch.setattr(memory_main, "_replay_cart_mutation", replay_after_lock)
+
+        _add_cart(client, 5, "Silk Dress", 2)
+        cart_line_id = client.get("/user/5/cart").json()["cart"][0]["cart_line_id"]
+        assert _remove_cart(client, 5, "Silk Dress", 1).status_code == 200
+        response = client.put(
+            f"/user/5/cart/{cart_line_id}/quantity",
+            json={"quantity": 3, "idempotency_key": "test-lock-quantity"},
+        )
+
+        assert response.status_code == 200
+        assert scopes == ["cart:5", "cart:5", "cart:5"]
+
     def test_empty_cart_returns_empty_list(self, client: TestClient) -> None:
         response = client.get("/user/1/cart")
         assert response.status_code == 200
@@ -871,6 +898,18 @@ class TestUserEndpoints:
         body = response.json()
         assert body["id"] == 7
         assert body["context"] == "hi"
+
+    def test_get_user_returns_only_that_users_cart(self, client: TestClient) -> None:
+        # The other shopper's line takes primary key 1, the id being read.
+        _add_cart(client, 2, "Someone Else's Coat", 1)
+        client.post("/user/1/context/add", json={"new_context": "hi"})
+
+        assert client.get("/user/1").json()["cart"] == []
+
+        _add_cart(client, 1, "Silk Dress", 1)
+        assert [line["item"] for line in client.get("/user/1").json()["cart"]] == [
+            "Silk Dress"
+        ]
 
     def test_clear_user_removes_record(self, client: TestClient) -> None:
         client.post("/user/1/context/add", json={"new_context": "will be gone"})

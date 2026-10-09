@@ -773,24 +773,41 @@ class TestStreamEndpoint:
 
 
 class TestRequestIdentity:
-    def test_missing_explicit_ids_keep_legacy_user_scope(self) -> None:
+    @pytest.mark.parametrize(
+        ("conversation_id", "cart_id"),
+        [("", "cart-a"), ("conversation-a", ""), ("  ", "cart-a"), ("conversation-a", " ")],
+    )
+    def test_missing_conversation_or_cart_is_refused(
+        self, conversation_id: str, cart_id: str
+    ) -> None:
         from chain_server.src.runtime.identity import create_request_identity
 
-        identity = create_request_identity(legacy_user_id=42)
+        with pytest.raises(ValueError, match="conversation_id and cart_id are required"):
+            create_request_identity(conversation_id=conversation_id, cart_id=cart_id)
 
-        assert identity.session_id == "legacy-session-42"
-        assert identity.conversation_id == "legacy-conversation-42"
-        assert identity.cart_id == "legacy-cart-42"
-        assert identity.context_user_id == 42
-        assert identity.cart_user_id == 42
-        assert identity.legacy_user_id == 42
+    def test_user_id_plays_no_part_in_the_scope(self) -> None:
+        import inspect
+
+        from chain_server.src.runtime.identity import create_request_identity
+
+        assert "legacy_user_id" not in inspect.signature(create_request_identity).parameters
+
+    def test_session_defaults_to_the_conversation(self) -> None:
+        from chain_server.src.runtime.identity import create_request_identity
+
+        identity = create_request_identity(
+            conversation_id="conversation-a", cart_id="cart-a"
+        )
+
+        assert identity.session_id == "conversation-a"
         assert identity.shopper_profile_id is None
 
     def test_explicit_request_id_is_preserved(self) -> None:
         from chain_server.src.runtime.identity import create_request_identity
 
         identity = create_request_identity(
-            legacy_user_id=42,
+            conversation_id="conversation-a",
+            cart_id="cart-a",
             request_id="request-a",
         )
 
@@ -800,7 +817,8 @@ class TestRequestIdentity:
         from chain_server.src.runtime.identity import create_request_identity
 
         identity = create_request_identity(
-            legacy_user_id=42,
+            conversation_id="conversation-a",
+            cart_id="cart-a",
             request_id="request-a",
             shopper_profile_id="shopper_morgan",
         )
@@ -810,8 +828,8 @@ class TestRequestIdentity:
     def test_missing_request_id_generates_a_new_value(self) -> None:
         from chain_server.src.runtime.identity import create_request_identity
 
-        first = create_request_identity(legacy_user_id=42)
-        second = create_request_identity(legacy_user_id=42)
+        first = create_request_identity(conversation_id="conversation-a", cart_id="cart-a")
+        second = create_request_identity(conversation_id="conversation-a", cart_id="cart-a")
 
         assert first.request_id != second.request_id
 
@@ -819,13 +837,13 @@ class TestRequestIdentity:
         from chain_server.src.runtime.identity import create_request_identity
 
         first = create_request_identity(
-            legacy_user_id=42,
             conversation_id="conversation-a",
+            cart_id="cart-a",
             request_id="request-a",
         )
         second = create_request_identity(
-            legacy_user_id=42,
             conversation_id="conversation-a",
+            cart_id="cart-a",
             request_id="request-b",
         )
 
@@ -833,13 +851,13 @@ class TestRequestIdentity:
         assert second.checkpoint_thread_id == '["conversation-a","request-b"]'
 
         collision_left = create_request_identity(
-            legacy_user_id=42,
             conversation_id="a:b",
+            cart_id="cart-a",
             request_id="c",
         )
         collision_right = create_request_identity(
-            legacy_user_id=42,
             conversation_id="a",
+            cart_id="cart-a",
             request_id="b:c",
         )
         assert collision_left.checkpoint_thread_id != (
@@ -847,38 +865,27 @@ class TestRequestIdentity:
         )
 
     def test_cart_scope_can_survive_across_conversations(self) -> None:
-        from chain_server.src.runtime.identity import create_request_identity
+        from chain_server.src.runtime.identity import (
+            cart_user_id_for,
+            create_request_identity,
+        )
 
         first = create_request_identity(
-            legacy_user_id=1,
             conversation_id="conversation-a",
             cart_id="cart-shared",
         )
         second = create_request_identity(
-            legacy_user_id=2,
             conversation_id="conversation-b",
             cart_id="cart-shared",
         )
         different_cart = create_request_identity(
-            legacy_user_id=1,
             conversation_id="conversation-a",
             cart_id="cart-other",
         )
 
         assert first.context_user_id != second.context_user_id
-        assert first.cart_user_id == second.cart_user_id
+        assert first.cart_user_id == second.cart_user_id == cart_user_id_for("cart-shared")
         assert first.cart_user_id != different_cart.cart_user_id
-
-    def test_missing_cart_id_keeps_cart_on_legacy_user_scope(self) -> None:
-        from chain_server.src.runtime.identity import create_request_identity
-
-        identity = create_request_identity(
-            legacy_user_id=42,
-            conversation_id="conversation-a",
-        )
-
-        assert identity.context_user_id != 42
-        assert identity.cart_user_id == 42
 
 
 class TestCheckpointerConfiguration:

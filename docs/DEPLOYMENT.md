@@ -428,10 +428,9 @@ that separates one shopper from another. Before shoppers can reach it:
   retriever (8010), rails (8012), Milvus (19530, 9091) and Phoenix (6006)
   publish on every interface for local convenience. Bind them to `127.0.0.1`
   or firewall them; only the UI needs to be reachable.
-- **Leave image embedding off for untrusted input.** With
-  `CATALOG_IMAGE_EMBEDDING_ENABLED` unset, the catalog retriever refuses image
-  queries before it fetches anything. Turning it on makes the retriever fetch
-  caller-supplied image URLs, so restrict the hosts it may reach first.
+- **Image queries carry the image itself.** The catalog retriever refuses an
+  image URL and never fetches one or opens a file for a query; only catalog
+  indexing loads the image URLs and `shared/` paths in your catalog data.
 - **Set `GUARDRAILS_CLIENT_CAN_DISABLE=false`.** Guardrails are on by default,
   but a request, such as the UI toggle, may still turn them off, which is
   what a before-and-after demo needs and what an untrusted caller should not

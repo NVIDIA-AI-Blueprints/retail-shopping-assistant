@@ -686,7 +686,9 @@ class TestImageEmbeddings:
             )
         )
 
-        embeddings = retriever.image_embeddings(["http://example.com/a.jpg"])
+        embeddings = retriever.image_embeddings(
+            ["http://example.com/a.jpg"], resolve_references=True
+        )
         assert embeddings == [[0.5]]
 
     def test_path_input_loaded_from_disk(
@@ -705,8 +707,35 @@ class TestImageEmbeddings:
             )
         )
 
-        embeddings = retriever.image_embeddings(["/app/shared/img.jpg"])
+        embeddings = retriever.image_embeddings(
+            ["/app/shared/img.jpg"], resolve_references=True
+        )
         assert embeddings == [[0.9]]
+
+    @pytest.mark.parametrize(
+        "reference", ["http://169.254.169.254/latest", "/../../etc/shadow"]
+    )
+    def test_query_images_never_fetch_or_open_references(
+        self, retriever: Retriever, monkeypatch: pytest.MonkeyPatch, reference: str
+    ) -> None:
+        def refuse(*_args, **_kwargs):
+            raise AssertionError("a query image must not be fetched or opened")
+
+        monkeypatch.setattr(retriever_mod, "image_url_to_base64", refuse)
+        monkeypatch.setattr(retriever_mod, "image_path_to_base64", refuse)
+        sent: list[list[str]] = []
+        retriever.image_client = SimpleNamespace(
+            embeddings=SimpleNamespace(
+                create=lambda **kwargs: sent.append(kwargs["input"])
+                or SimpleNamespace(
+                    data=[SimpleNamespace(embedding=[0.1]) for _ in kwargs["input"]]
+                )
+            )
+        )
+
+        retriever_mod.ImageEmbeddings(retriever).embed_query(reference)
+
+        assert sent == [[reference]]
 
     def test_too_large_image_resized_then_embedded(
         self, retriever: Retriever, monkeypatch: pytest.MonkeyPatch
@@ -797,7 +826,8 @@ class TestImageEmbeddings:
         )
 
         result = retriever.image_embeddings(
-            ["http://bad.example.com/a.jpg", "data:image/jpeg;base64,ok"]
+            ["http://bad.example.com/a.jpg", "data:image/jpeg;base64,ok"],
+            resolve_references=True,
         )
 
         assert result == [None, [0.42]]
@@ -933,6 +963,25 @@ class TestRetrieve:
             ]
             == 205
         )
+
+    async def test_requested_window_is_capped_at_the_catalog_size(
+        self, retriever: Retriever
+    ) -> None:
+        retriever.catalog_size = 205
+        retriever.text_db.similarity_search_with_relevance_scores = MagicMock(
+            return_value=[(_doc("Silk Dress"), 0.9)]
+        )
+
+        output = await retriever.retrieve(
+            query=["dress"],
+            categories=[],
+            k=4,
+            candidate_k=1_000_000_000,
+            image_bool=False,
+            verbose=False,
+        )
+
+        assert output.diagnostics["candidate_k"] == 205
 
     async def test_gpu_index_caps_the_candidate_window_at_its_search_limit(
         self, retriever: Retriever

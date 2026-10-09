@@ -24,11 +24,12 @@ def test_a_reused_label_gets_a_new_shopper_and_conversation() -> None:
 
     assert first["user_id"] != second["user_id"]
     assert first["conversation_id"] != second["conversation_id"]
+    assert first["cart_id"] != second["cart_id"]
 
 
 def test_ids_are_distinct_within_a_run() -> None:
     ids = {
-        scenario_identity("nightly", "0a1b2c3d", scenario, repeat)["user_id"]
+        scenario_identity("nightly", "0a1b2c3d", scenario, repeat)["cart_id"]
         for scenario in ("J01_wedding_abroad", "J02_video_look_full")
         for repeat in range(3)
     }

@@ -24,7 +24,7 @@ The Retail Shopping Assistant API provides a comprehensive interface for an AI-p
 - **Shopping Cart Management**: Add, remove, and view cart items
 - **Representative Shoppers**: Read five immutable eval-derived shopper
   profiles for the bundled UI picker
-- **Content Safety**: Optional guardrails for safe interactions, off by default
+- **Content Safety**: Optional guardrails for safe interactions, on by default
 - **Performance Monitoring**: Detailed timing information
 
 ## 🌐 Base URL
@@ -133,14 +133,14 @@ interface QueryRequest {
   image?: string;                     // Legacy base64/data-URL image (optional)
   media?: MediaAttachment[];          // Image/video attachments (optional)
   session_id?: string;                // Optional website/browser session identifier
-  conversation_id?: string;           // Optional chat thread identifier
-  cart_id?: string;                   // Optional cart identifier
+  conversation_id: string;            // Chat thread identifier (required)
+  cart_id: string;                    // Cart identifier (required)
   shopper_profile_id?: string;        // Optional fixed representative-shopper ID
   request_id?: string;                // Optional stable ID for exact whole-turn replay
   context?: string;                   // Previous conversation context
   cart?: Cart;                        // Current shopping cart state
   retrieved?: Record<string, string>; // Previously retrieved products
-  guardrails?: boolean;               // Explicit per-request override; omitted uses server default
+  guardrails?: boolean;               // Per-request override; omitted uses server default. false is ignored when GUARDRAILS_CLIENT_CAN_DISABLE=false
   image_bool?: boolean;               // Indicate if image is provided (default: false)
 }
 
@@ -181,12 +181,14 @@ interface MediaAttachment {
 }
 ```
 
-`session_id`, `conversation_id`, `cart_id`, `shopper_profile_id`, and
-`request_id` are optional for backward compatibility. `shopper_profile_id`
-accepts 1–64 ASCII letters, digits, `_`, and `-`, beginning with a letter or
-digit; omitted or `null` means Guest. When the scoped IDs are omitted, the
-server maps the legacy `user_id` to internal compatibility identifiers; when
-`request_id` is omitted, it generates a new UUID for the turn. A caller retrying
+`conversation_id` and `cart_id` are required; a turn without either is
+refused with `422` and `"conversation_id and cart_id are required"`. Generate
+them on the client as unguessable random strings: anyone holding a `cart_id`
+can read and change that cart. `user_id` does not select the cart or the
+conversation. `session_id`, `shopper_profile_id`, and `request_id` are
+optional. `shopper_profile_id` accepts 1–64 ASCII letters, digits, `_`, and
+`-`, beginning with a letter or digit; omitted or `null` means Guest. When
+`request_id` is omitted, the server generates a new UUID for the turn. A caller retrying
 the same exact turn should reuse its request ID. The memory service stores the
 selected profile in the request digest and on the durable turn: an identical
 finalized retry replays the stored response, products, retrieved images, and
@@ -197,7 +199,7 @@ turns from before migration 6 remain exactly replayable. The same request ID
 also derives stable cart-mutation idempotency keys.
 
 The bundled UI creates browser-session identifiers and sends them on every
-turn. When supplied, `conversation_id` scopes durable raw turns, presented-
+turn. `conversation_id` scopes durable raw turns, presented-
 product evidence, and historical resolution; `cart_id` scopes cart reads/writes.
 The Deep Agents working graph is request-scoped under a collision-safe pair of
 conversation ID and request ID, not used as durable shopper memory, and deleted
@@ -630,6 +632,8 @@ curl -X POST "http://localhost:8009/query/stream" \
   -H "Accept: text/event-stream" \
   -d '{
     "user_id": 123,
+    "conversation_id": "conversation_abc",
+    "cart_id": "cart_abc",
     "shopper_profile_id": "shopper_morgan",
     "query": "Show me red dresses under $100"
   }'
@@ -669,6 +673,8 @@ curl -X POST "http://localhost:8009/query/timing" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
+    "conversation_id": "conversation_abc",
+    "cart_id": "cart_abc",
     "query": "Show me red dresses under $100"
   }'
 ```
@@ -776,12 +782,13 @@ turns are not cut off before the SSE response is emitted.
   },
   "guardrails": {
     "available": true,
-    "default_enabled": false,
+    "default_enabled": true,
     "failure_mode": "closed",
     "speculative_main_model_enabled": false,
     "speculative_main_model_scope": "text_only",
     "supported_modalities": ["text", "image"],
-    "request_override_supported": true
+    "request_override_supported": true,
+    "client_can_disable": true
   },
   "catalog": {
     "catalog_id": "fashion_products",
@@ -1325,7 +1332,8 @@ starting a turn or writing anything: the bounded recent-turn window, the latest
 declared and assumed audiences, and the projection. Only
 `product_reference_index` in the projection is consumed by the runtime; the
 other projection lanes are returned as stored. The cart is deliberately absent
-because it belongs to the shopper; read it from `/user/{user_id}/cart`. An
+because it outlives the conversation; read it from the chain server's
+`GET /cart?cart_id=...`. An
 unknown conversation returns `404` with `conversation_not_found`.
 
 ```json
@@ -1462,6 +1470,8 @@ curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
+    "conversation_id": "conversation_abc",
+    "cart_id": "cart_abc",
     "query": "Show me summer dresses with floral patterns"
   }'
 ```
@@ -1472,6 +1482,8 @@ curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
+    "conversation_id": "conversation_abc",
+    "cart_id": "cart_abc",
     "query": "Find shoes under $50"
   }'
 ```
@@ -1484,6 +1496,8 @@ curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
+    "conversation_id": "conversation_abc",
+    "cart_id": "cart_abc",
     "query": "Add the black polka dot dress to my cart",
     "cart": {
       "contents": []
@@ -1497,6 +1511,8 @@ curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
+    "conversation_id": "conversation_abc",
+    "cart_id": "cart_abc",
     "query": "What is in my shopping cart?",
     "cart": {
       "contents": [
@@ -1515,6 +1531,8 @@ curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
+    "conversation_id": "conversation_abc",
+    "cart_id": "cart_abc",
     "query": "Remove the black polka dot dress from my cart",
     "cart": {
       "contents": [
@@ -1535,6 +1553,8 @@ curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
+    "conversation_id": "conversation_abc",
+    "cart_id": "cart_abc",
     "query": "Find products similar to this image",
     "image": "base64_encoded_image_data",
     "image_bool": true
@@ -1549,6 +1569,8 @@ curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
+    "conversation_id": "conversation_abc",
+    "cart_id": "cart_abc",
     "query": "What accessories would go well with a red dress?",
     "context": "Previous conversation about summer clothing"
   }'
@@ -1560,6 +1582,8 @@ curl -X POST "http://localhost:8009/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
+    "conversation_id": "conversation_abc",
+    "cart_id": "cart_abc",
     "query": "Help me build an outfit for a summer wedding"
   }'
 ```
@@ -1572,6 +1596,8 @@ curl -X POST "http://localhost:8009/query/timing" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
+    "conversation_id": "conversation_abc",
+    "cart_id": "cart_abc",
     "query": "Show me red dresses under $100"
   }'
 ```
@@ -1633,6 +1659,8 @@ const api = new ShoppingAssistantAPI();
 // Stream query
 const stream = await api.streamQuery({
   user_id: 123,
+  conversation_id: "conversation_abc",
+  cart_id: "cart_abc",
   query: "Show me red dresses under $100"
 });
 
@@ -1698,6 +1726,8 @@ api = ShoppingAssistantAPI()
 # Stream query
 request = {
     "user_id": 123,
+    "conversation_id": "conversation_abc",
+    "cart_id": "cart_abc",
     "query": "Show me red dresses under $100"
 }
 
@@ -1720,8 +1750,9 @@ print(f"Timing: {response['timings']}")
     and can be set to `disabled`; image embedding search is separately controlled
     by the `image_embedding` model role and `CATALOG_IMAGE_EMBEDDING_ENABLED`,
     which is off by default
-  - Content safety is off by default. Enable it per deployment with
-    `GUARDRAILS_ENABLED`, or per request with the request's own `guardrails` flag
+  - Content safety is on by default. Turn it off per deployment with
+    `GUARDRAILS_ENABLED=false`, or per request with the request's own
+    `guardrails` flag
 - `/query/stream` uses SSE framing. Token-level Deep Agents streaming is a
   known follow-up after the harness migration; this slice emits completed turn
   events rather than live model chunks. The stream includes `products` frames

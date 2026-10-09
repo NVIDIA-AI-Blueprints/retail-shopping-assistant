@@ -1,8 +1,10 @@
 # Guardrails
 
 An optional safety layer that runs as its own service and decides whether a
-turn may proceed. It ships disabled; nothing below happens until you turn it
-on.
+turn may proceed. It ships enabled for API requests that do not say otherwise.
+The UI's Guardrails toggle starts off, to show the same turn before and after,
+and turns it on for a session; with `GUARDRAILS_CLIENT_CAN_DISABLE=false` it
+starts on.
 
 ## How it decides
 
@@ -49,18 +51,22 @@ evaluator therefore reports action failures out of band and checks them before
 the dispatcher's status, because a judge whose model never answered has not
 found anything unsafe.
 
-## Turning it on
+## Turning it on and off
 
 ```bash
 export RAIL_API_KEY="..."          # the guard models' API key
-export GUARDRAILS_ENABLED=true     # or send `guardrails` per request
+export GUARDRAILS_ENABLED=false    # only to make off the default; or send `guardrails` per request
 docker compose up -d rails
 ```
 
 The service listens on port 8012 and the chain server reaches it at
-`GUARDRAILS_URL`. A request may carry its own `guardrails` value, which
-overrides the deployment default either way; `/capabilities` advertises this as
-`request_override_supported`.
+`GUARDRAILS_URL`. A request may carry its own `guardrails` value, as the UI
+toggle does, and by default it overrides the deployment default either way, so
+you can show the same turn with and without guardrails. Set
+`GUARDRAILS_CLIENT_CAN_DISABLE=false` to lock them on: `true` still turns them
+on, and `false` is ignored.
+`/capabilities` reports this as `request_override_supported` and
+`client_can_disable`.
 
 ## Deploying without guardrails
 
@@ -98,7 +104,7 @@ server at startup, as the two contradict each other.
 | `GUARDRAILS_AVAILABLE` | `false`: no guardrails in this deployment ([above](#deploying-without-guardrails)) | true |
 | `RAIL_API_KEY` | API key for the guard models | Required |
 | `GUARDRAILS_URL` | Where the chain server reaches the service | `http://rails:8012` |
-| `GUARDRAILS_ENABLED` | Deployment default for requests that omit `guardrails` | off |
+| `GUARDRAILS_ENABLED` | Deployment default for requests that omit `guardrails` | on (off when `GUARDRAILS_AVAILABLE=false`) |
 | `GUARDRAILS_FAILURE_MODE` | What an `error` costs | `closed` |
 | `GUARDRAILS_TIMEOUT_SECONDS` | Deadline for one decision | `15.0` |
 | `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the two text input rails `parallel` or `sequential` | `parallel` |

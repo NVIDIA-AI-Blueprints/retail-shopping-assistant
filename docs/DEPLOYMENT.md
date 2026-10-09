@@ -196,9 +196,10 @@ because vLLM also reserves a KV cache, plus a few GB of working memory.
 
 The default layout needs six 80 GB GPUs. `.env.local-models.example` points
 every role at these services through the environment, so `models.yaml` does not change,
-and adds video to the guarded modalities. Guardrails stay off by default, as on
-the hosted path; turn them on per session with the UI's Guardrails toggle, or
-for the deployment with `GUARDRAILS_ENABLED=true`. To deploy without them, set
+and adds video to the guarded modalities. As on the hosted path, guardrails
+are on by default for API requests, and the UI's Guardrails toggle starts off
+and turns them on per session; `GUARDRAILS_ENABLED=false` makes off the API
+default. To deploy without them, set
 `GUARDRAILS_AVAILABLE=false` in `.env.local-models`: the three guardrail
 models are not started, which frees GPU 5 and 50 GB of GPU 4, and the UI has
 no Guardrails toggle. The same setting works on the hosted path
@@ -413,6 +414,29 @@ pay-as-you-go GPU instances, and [BREV.md](BREV.md) has a walkthrough.
 
 ## 🏭 Production Deployment
 
+### Before Exposing This Publicly
+
+The Compose stack is built for a developer machine or a trusted network. It has
+no login, and the cart and conversation IDs the UI generates are the only thing
+that separates one shopper from another. Before shoppers can reach it:
+
+- **Put authentication in front of `/api`.** The UI proxies `/api/*` to the
+  chain server unchanged. Anyone who can reach port 3000 or 8009 can start
+  turns, and anyone who learns a `cart_id` can read and change that cart.
+- **Keep internal services off public interfaces.** The memory service (8011)
+  and PostgreSQL (5432) bind to loopback. The chain server (8009), catalog
+  retriever (8010), rails (8012), Milvus (19530, 9091) and Phoenix (6006)
+  publish on every interface for local convenience. Bind them to `127.0.0.1`
+  or firewall them; only the UI needs to be reachable.
+- **Leave image embedding off for untrusted input.** With
+  `CATALOG_IMAGE_EMBEDDING_ENABLED` unset, the catalog retriever refuses image
+  queries before it fetches anything. Turning it on makes the retriever fetch
+  caller-supplied image URLs, so restrict the hosts it may reach first.
+- **Set `GUARDRAILS_CLIENT_CAN_DISABLE=false`.** Guardrails are on by default,
+  but a request, such as the UI toggle, may still turn them off, which is
+  what a before-and-after demo needs and what an untrusted caller should not
+  have.
+
 ### Kubernetes
 
 No Kubernetes manifests or Helm chart ship with this repository. These notes
@@ -469,7 +493,7 @@ the service at startup with the names of the missing variables.
 | `app_llm` | Answers the shopper and drives tool use | `inference-api.nvidia.com` | `LLM_BASE_URL`, `LLM_MODEL` | `LLM_API_KEY` |
 | `vlm` | Reads photo and video uploads | `inference-api.nvidia.com` | `VLM_BASE_URL`, `VLM_MODEL` | `VLM_API_KEY` |
 | `text_embedding` | Embeds the catalog and text queries | `inference-api.nvidia.com` | `TEXT_EMBED_BASE_URL`, `TEXT_EMBED_MODEL` | `EMBED_API_KEY` |
-| `content_safety` | Checks text and images for unsafe content (guardrails, off by default) | `integrate.api.nvidia.com` | `RAILS_CONTENT_BASE_URL`, `RAILS_CONTENT_MODEL` | `RAIL_API_KEY` |
+| `content_safety` | Checks text and images for unsafe content (guardrails, on by default) | `integrate.api.nvidia.com` | `RAILS_CONTENT_BASE_URL`, `RAILS_CONTENT_MODEL` | `RAIL_API_KEY` |
 | `topic_control` | Checks whether a request is on topic (guardrails) | `integrate.api.nvidia.com` | `RAILS_TOPIC_BASE_URL`, `RAILS_TOPIC_MODEL` | `RAIL_API_KEY` |
 | `multimodal_safety` | Checks video, including embedded audio (guardrails) | `integrate.api.nvidia.com` | `MULTIMODAL_SAFETY_BASE_URL`, `MULTIMODAL_SAFETY_MODEL` | `MULTIMODAL_SAFETY_API_KEY` |
 
@@ -479,10 +503,10 @@ variables in your profile.
 
 **The two hosts issue different keys, and they are not interchangeable.** A key
 that works against `inference-api.nvidia.com` will be rejected by
-`integrate.api.nvidia.com` and vice versa. The roles that are on by default all
-use `inference-api.nvidia.com`, so one key in `NVIDIA_API_KEY` runs them.
-Turning guardrails on adds the `integrate.api.nvidia.com` roles, which need a
-build.nvidia.com key in `RAIL_API_KEY` and `MULTIMODAL_SAFETY_API_KEY`. A
+`integrate.api.nvidia.com` and vice versa. The app roles use
+`inference-api.nvidia.com`, so one key in `NVIDIA_API_KEY` runs them.
+Guardrails, on by default, add the `integrate.api.nvidia.com` roles, which need
+a build.nvidia.com key in `RAIL_API_KEY` and `MULTIMODAL_SAFETY_API_KEY`. A
 mismatch is the most common first-deploy failure: the language model answers
 normally while catalog search or guardrails return authentication errors, which
 looks like a broken service rather than a key problem.
@@ -492,8 +516,11 @@ right one for its host.
 
 Compose chains sensible fallbacks so a single-key deployment works: `VLM_API_KEY`
 falls back to `NVIDIA_API_KEY`, and `MULTIMODAL_SAFETY_API_KEY` falls back to
-`VLM_API_KEY` and then `NVIDIA_API_KEY`. Set the specific variables when the
-roles live on different hosts.
+`VLM_API_KEY` and then `NVIDIA_API_KEY`. `.env.example` points video safety at
+`integrate.api.nvidia.com`, so it falls back to `RAIL_API_KEY` instead. Set the
+specific variables when the roles live on different hosts: `RAIL_API_KEY` for
+the guardrail models, `NVIDIA_API_KEY` (or `LLM_API_KEY`, `EMBED_API_KEY`,
+`VLM_API_KEY`) for the rest. Each model uses only its own key.
 
 To repoint a role, set its `*_BASE_URL` and `*_MODEL` variables in your
 profile, together: hosts name the same model differently
@@ -532,13 +559,14 @@ set there; a unit test fails if the two differ, so change both together.
 | `GUARDRAILS_URL` | Chain-server URL for the guardrail service | No | `http://rails:8012` |
 | `RAILS_CONTENT_BASE_URL` / `RAILS_CONTENT_MODEL` | Endpoint and model for current text/image content safety | With guardrails | `.env.example` |
 | `RAILS_TOPIC_BASE_URL` / `RAILS_TOPIC_MODEL` | Topic-control endpoint and model. The dedicated Topic Control model is preferred; selecting Content Safety applies the configured retail policy through `custom_policy` | With guardrails | `.env.example` |
-| `MULTIMODAL_SAFETY_API_KEY` | Key for the independently routed video safety judge; Compose falls back to the VLM/NVIDIA key | When the video safety endpoint requires authentication | `VLM_API_KEY` |
+| `MULTIMODAL_SAFETY_API_KEY` | Key for the independently routed video safety judge; Compose falls back to the VLM/NVIDIA key | When the video safety endpoint requires authentication | `RAIL_API_KEY` in `.env.example`; `VLM_API_KEY` in Compose alone |
 | `MULTIMODAL_SAFETY_BASE_URL` | OpenAI-compatible endpoint for the video safety judge | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_MODEL` | Video safety model, independent of perception | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_VIDEO_FPS` | Temporal sampling rate sent to Nemotron Omni. The complete video object and embedded audio are submitted, but the model evaluates sampled frames | No | `rails.py` (2.0) |
 | `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the content and topic input rails in `parallel` or `sequential` mode | No | `rails.py` (parallel) |
 | `GUARDRAILS_AVAILABLE` | `false` deploys without guardrails: no guardrail model is called or needs a key, `.env.local-models` starts no guardrail model, the UI hides the Guardrails toggle, and a request with `guardrails: true` gets a 400. Cannot be combined with `GUARDRAILS_ENABLED=true`. Read from the environment only, as both services and `.env.local-models` need it | No | true |
-| `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Guardrails is opt-in: set this to enable it | No | `config.yaml`: `guardrails_enabled` (off) |
+| `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Set false to turn guardrails off by default | No | `config.yaml`: `guardrails_enabled` (on; off when `GUARDRAILS_AVAILABLE=false`) |
+| `GUARDRAILS_CLIENT_CAN_DISABLE` | With guardrails enabled, whether a request's `guardrails: false` is honoured. On by default, so the UI toggle can show before and after; set `false` to lock guardrails on | No | true |
 | `GUARDRAILS_FAILURE_MODE` | Required-check error/timeout behavior: `open` bypasses and `closed` stops the turn. Explicit unsafe decisions always block in either mode | No | `config.yaml`: `guardrails_failure_mode` (closed) |
 | `GUARDRAILS_TIMEOUT_SECONDS` | Timeout for each isolated guardrail service decision. Both services read it: the chain server bounds its call, the guardrail service bounds the judges behind it | No | `config.yaml`: `guardrails_timeout_seconds`, and `rails.py` (15.0) |
 | `GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` | For guarded text-only turns, overlap the first app-model step with input guardrails while holding every tool behind the allow decision. Reduces latency but blocked turns can still incur one app-model request. Media remains sequential | No | `config.yaml`: `guardrails_speculative_main_model_enabled` (off) |
@@ -741,7 +769,7 @@ memory_length: 16384
 deepagents_recursion_limit: 24
 max_catalog_searches_per_turn: 3
 max_product_detail_reads_per_turn: 2
-guardrails_enabled: false
+guardrails_enabled: true
 guardrails_failure_mode: closed
 guardrails_timeout_seconds: 15.0
 guardrails_speculative_main_model_enabled: false
@@ -904,7 +932,7 @@ than 1024 tokens.
 
 #### Guardrail Defaults
 
-Guardrails ships disabled and spans two services, so each default lives with
+Guardrails ships enabled and spans two services, so each default lives with
 whichever one reads it. [Guardrails](GUARDRAILS.md) owns that layout, along
 with what a failed check costs and what the shopper is told.
 
@@ -1023,6 +1051,27 @@ htop
 ```bash
 # Show which key variables each role needs and whether they are set
 python scripts/model_config.py show --validate
+```
+
+#### 6. Every Reply Says "I cannot safely validate this request right now"
+
+**Symptoms**: with guardrails on, every turn is refused; with the UI's
+Guardrails toggle off, the same turn works.
+
+**Cause**: the guardrail check errored, and `GUARDRAILS_FAILURE_MODE=closed`
+refuses the turn. Usually `RAIL_API_KEY` is not a build.nvidia.com key with
+access to the guard models, so `integrate.api.nvidia.com` answers 401 or 403.
+It falls back to `NVIDIA_API_KEY`, which works only if that is also a
+build.nvidia.com key.
+
+**Solutions**:
+```bash
+# Set a build.nvidia.com key for the guard models, then recreate the services
+export RAIL_API_KEY="..."
+docker compose -f docker-compose.yaml up -d --force-recreate rails chain-server
+
+# Or, until you have one, make guardrails off by default
+export GUARDRAILS_ENABLED=false
 ```
 
 ### Debug Mode

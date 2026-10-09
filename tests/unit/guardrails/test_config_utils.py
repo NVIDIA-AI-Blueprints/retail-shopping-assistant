@@ -101,7 +101,33 @@ class TestApplyModelConfig:
         assert config.models[1].parameters["base_url"] == "https://content.example/v1"
         assert config.models[2].model == "topic-model"
         assert config.models[2].parameters["base_url"] == "https://topic.example/v1"
-        assert os.environ["NVIDIA_API_KEY"] == "secret-value"
+        assert config.models[1].api_key_env_var == "RAIL_API_KEY"
+        assert config.models[2].api_key_env_var == "RAIL_API_KEY"
+
+    def test_main_and_guard_models_keep_their_own_keys(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        rails_dir = _write_model_config(tmp_path)
+        models_yaml = rails_dir.parent / "models.yaml"
+        data = yaml.safe_load(models_yaml.read_text())
+        data["models"]["app_llm"]["api_key_env"] = "LLM_API_KEY"
+        models_yaml.write_text(yaml.safe_dump(data))
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(rails_dir.parent))
+        monkeypatch.setenv("LLM_API_KEY", "app-key")
+        monkeypatch.setenv("RAIL_API_KEY", "rail-key")
+        monkeypatch.setenv("NVIDIA_API_KEY", "untouched")
+        config = _make_config(
+            [{"type": "main"}, {"type": "content_safety"}, {"type": "topic_control"}]
+        )
+
+        apply_model_config(config, config_dir=str(rails_dir))
+
+        assert [m.api_key_env_var for m in config.models] == [
+            "LLM_API_KEY",
+            "RAIL_API_KEY",
+            "RAIL_API_KEY",
+        ]
+        assert os.environ["NVIDIA_API_KEY"] == "untouched"
 
     def test_unrelated_model_type_is_ignored(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

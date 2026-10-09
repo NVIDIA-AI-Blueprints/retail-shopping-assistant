@@ -607,7 +607,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
         userSession,
         outgoing,
         image || "",
-        guardrailOverrideRef.current,
+        guardrailsAvailable ? isGuardrailsOn : undefined,
         media,
         selectedShopperProfileId
       );
@@ -932,7 +932,8 @@ const Chatbox: React.FC<ChatboxProps> = ({
         } else if (data.guardrails) {
           setGuardrailModalities(data.guardrails.supported_modalities);
           if (guardrailOverrideRef.current === undefined) {
-            setIsGuardrailsOn(data.guardrails.default_enabled);
+            // Off, to show before and after, unless the deployment locks them on.
+            setIsGuardrailsOn(data.guardrails.client_can_disable === false);
           }
         }
         setModelCapabilities(data.models ?? {});

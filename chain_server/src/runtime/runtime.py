@@ -8,12 +8,14 @@ from __future__ import annotations
 import asyncio
 import atexit
 import contextlib
+import hashlib
 import inspect
 import json
 import logging
 import os
 import sys
 import time
+import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -2193,12 +2195,15 @@ Rules:
         return prompt
 
     def _build_user_message(self, state: State, identity: RequestIdentity) -> str:
+        # The cart and conversation IDs authorize the cart routes, so the model
+        # provider and prompt traces see one-way stand-ins. The lines stay:
+        # without them the model hesitated over cart writes in replays.
         sections = [
             (
                 f"REQUEST ID: {identity.request_id}\n"
-                f"SESSION ID: {identity.session_id}\n"
-                f"CONVERSATION ID: {identity.conversation_id}\n"
-                f"CART ID: {identity.cart_id}"
+                f"SESSION ID: {_prompt_alias('session', identity.session_id)}\n"
+                f"CONVERSATION ID: {_prompt_alias('conversation', identity.conversation_id)}\n"
+                f"CART ID: {_prompt_alias('cart', identity.cart_id)}"
             )
         ]
         sections.append(_format_store_date())
@@ -2602,3 +2607,8 @@ async def _partial_graph_messages(
     values = _value(snapshot, "values")
     messages = _value(values, "messages")
     return (messages if isinstance(messages, list) else []), None
+
+
+def _prompt_alias(kind: str, value: str) -> str:
+    digest = hashlib.sha256(f"prompt-alias:{kind}:{value}".encode()).hexdigest()
+    return f"{kind}-{uuid.UUID(digest[:32])}"

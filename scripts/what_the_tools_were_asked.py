@@ -75,14 +75,15 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    # A fresh id per run, because the cart keys on the user when no cart id is
-    # sent: reusing one leaves the previous run's cart in place, and a turn
-    # that reads "already in your cart" is answering a question you did not
-    # ask. Cost a confusing transcript once.
+    # A fresh cart per run: reusing one leaves the previous run's cart in
+    # place, and a turn that reads "already in your cart" is answering a
+    # question you did not ask. Cost a confusing transcript once.
+    probe = f"probe-{int(time.time())}"
     identity = {
         "user_id": 900_000_000 + int(time.time()) % 10_000_000,
-        "session_id": f"probe-{int(time.time())}",
-        "conversation_id": f"probe-{int(time.time())}",
+        "session_id": probe,
+        "conversation_id": probe,
+        "cart_id": f"{probe}-cart",
     }
 
     for index, text in enumerate(args.turns, start=1):

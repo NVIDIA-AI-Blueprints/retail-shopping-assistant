@@ -146,7 +146,7 @@ docker compose up -d --build
 ```
 
 The profile sets `LLM_*`, `VLM_*`, `TEXT_EMBED_*`, `RAILS_*` and
-`MULTIMODAL_SAFETY_*` (guardrails stay off by default, as hosted), after sourcing
+`MULTIMODAL_SAFETY_*` (guardrails are on by default, as hosted), after sourcing
 `.env.example`, so tracked configuration does not change, and sets
 `LOCAL_MODEL_SERVICES` to the model services those roles point at.
 `GUARDRAILS_AVAILABLE=false`, hosted or local, deploys without guardrails: the

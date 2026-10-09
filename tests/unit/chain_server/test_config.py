@@ -346,20 +346,28 @@ class TestLoadConfig:
         with pytest.raises(ValueError, match="GUARDRAILS_AVAILABLE is false"):
             load_config(str(path))
 
-    def test_guardrails_is_off_unless_something_turns_it_on(
+    def test_guardrails_is_on_unless_something_turns_it_off(
         self, valid_config_dict: dict
     ) -> None:
-        """Guardrails is opt-in, so a config that says nothing means off.
-
-        It used to default on. A rails service that is down fails open -- the
-        chain server logs the 500 and continues -- so every turn silently paid
-        an input and an output round trip for a check that never ran.
-        """
-
         silent = dict(valid_config_dict)
         silent.pop("guardrails_enabled")
 
-        assert ChainServerConfig(**silent).guardrails_enabled is False
+        assert ChainServerConfig(**silent).guardrails_enabled is True
+        assert ChainServerConfig(**silent, guardrails_available=False).guardrails_enabled is False
+
+    def test_shipped_config_turns_guardrails_on_unless_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        shipped = str(REPO_ROOT / "shared/configs/chain_server/config.yaml")
+
+        assert load_config(shipped).guardrails_enabled is True
+        assert load_config(shipped).guardrails_client_can_disable is True
+
+        monkeypatch.setenv("GUARDRAILS_AVAILABLE", "false")
+        assert load_config(shipped).guardrails_enabled is False
 
     @pytest.mark.parametrize("raw_value", ["open", "closed"])
     def test_guardrails_failure_mode_env_override(

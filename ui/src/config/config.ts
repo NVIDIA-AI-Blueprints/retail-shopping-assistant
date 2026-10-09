@@ -75,8 +75,8 @@ const getConfig = (): AppConfig => {
     },
     features: {
       guardrails: {
-        // /capabilities supplies the deployment default after startup. Keep a
-        // local fallback for the brief period before that request completes.
+        // The toggle starts off; /capabilities turns it on only when the
+        // deployment locks guardrails on.
         enabled: true,
         defaultState: false,
       },

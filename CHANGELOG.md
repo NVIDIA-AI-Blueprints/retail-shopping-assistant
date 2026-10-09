@@ -25,7 +25,7 @@ below is historical; these are the current shapes.
 - 💾 **Durable conversation turns**, so a turn's cart effects and raw history
   survive a restart.
 - 🔒 **Optional guardrails** as an isolated service: content safety, topic
-  control, and video safety. Off by default, enabled per request or per
+  control, and video safety. On by default, disabled per request or per
   deployment, and reported back per turn. `GUARDRAILS_AVAILABLE=false` deploys
   without them, hosted or local: no guardrail model is started or called, and
   the UI hides the toggle.

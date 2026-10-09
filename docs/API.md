@@ -1008,7 +1008,7 @@ learned reranking.
 
 `candidate_k` is optional. When omitted, the current small-catalog default
 covers the complete active snapshot before hard filtering and final trimming to
-`k`.
+`k`. It may be at most 16384, and a larger value is cut to the catalog's size.
 
 Unknown filter fields, values, taxonomy values, or operators return HTTP 422
 with the catalog's validation message. The chain server treats that response as
@@ -1053,7 +1053,9 @@ also ambiguous and returns HTTP 422.
 
 ### Catalog Retriever POST `/query/image`
 
-Accepts the same fields as `/query/text`, plus `image_base64`. Explicit category
+Accepts the same fields as `/query/text`, plus `image_base64`: the image itself,
+as base64 or a data URL. A URL is refused with HTTP 422, and the retriever never
+fetches a URL or opens a file for a query. Explicit category
 and price filters are hard filters for image and hybrid retrieval too.
 Image and hybrid results retain pooled similarity-score ordering.
 When the active capabilities do not advertise image or hybrid retrieval, an

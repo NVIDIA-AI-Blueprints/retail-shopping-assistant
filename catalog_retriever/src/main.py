@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from shared.model_config import resolve_model_config, validate_model_config
 
 try:
@@ -203,6 +203,10 @@ def index_is_ready() -> bool:
     return _index_ready
 
 # Request bodies
+
+#: Milvus's own ceiling on a search's top-k.
+MAX_CANDIDATE_K = 16384
+
 class TextQueryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -210,7 +214,7 @@ class TextQueryRequest(BaseModel):
     categories: list[str] = Field(default_factory=list)
     filters: dict[str, Any] = Field(default_factory=dict)
     k: int = Field(default=4, ge=1, le=50)
-    candidate_k: int | None = Field(default=None, ge=1)
+    candidate_k: int | None = Field(default=None, ge=1, le=MAX_CANDIDATE_K)
 
 class ImageQueryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -220,7 +224,14 @@ class ImageQueryRequest(BaseModel):
     categories: list[str] = Field(default_factory=list)
     filters: dict[str, Any] = Field(default_factory=dict)
     k: int = Field(default=4, ge=1, le=50)
-    candidate_k: int | None = Field(default=None, ge=1)
+    candidate_k: int | None = Field(default=None, ge=1, le=MAX_CANDIDATE_K)
+
+    @field_validator("image_base64")
+    @classmethod
+    def _image_not_a_url(cls, value: str) -> str:
+        if value.strip().lower().startswith(("http://", "https://")):
+            raise ValueError("image_base64 must be image data, not a URL")
+        return value
 
 # Handles queries only containing text.
 @app.post("/query/text")

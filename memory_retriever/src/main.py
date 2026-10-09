@@ -16,6 +16,7 @@ from .database import (
     DATABASE_URL,
     Base,
     SessionLocal,
+    begin_write_transaction,
     build_engine,
     configured_max_concurrent_requests,
     engine,
@@ -154,6 +155,12 @@ def _cart_item_dict(item: CartItem) -> dict:
     return result
 
 
+def _lock_cart(db, user_id: int) -> None:
+    """Serialise mutations of one cart: each reads a line, then writes it."""
+
+    begin_write_transaction(db, f"cart:{user_id}")
+
+
 def _replay_cart_mutation(
     db,
     user_id: int,
@@ -237,7 +244,7 @@ def _cart_item_for_add(
 @app.get("/user/{user_id}")
 def get_user(user_id: int, db=Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
-    cart_items = db.query(CartItem).filter(CartItem.id == user_id).all()
+    cart_items = db.query(CartItem).filter(CartItem.user_id == user_id).all()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return {"id": user.id, "context": user.context, "cart": [_cart_item_dict(item) for item in cart_items]}
@@ -289,6 +296,7 @@ def add_to_cart(
         {"amount": amount, "item": item, "price": price, "size": size},
     )
     try:
+        _lock_cart(db, user_id)
         replay = _replay_cart_mutation(
             db,
             user_id,
@@ -350,6 +358,7 @@ def remove_cart(
         {"amount": amount},
     )
     try:
+        _lock_cart(db, user_id)
         replay = _replay_cart_mutation(
             db,
             user_id,
@@ -408,6 +417,7 @@ def update_cart_quantity(
         {"quantity": quantity_update.quantity},
     )
     try:
+        _lock_cart(db, user_id)
         replay = _replay_cart_mutation(
             db,
             user_id,

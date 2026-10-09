@@ -125,6 +125,9 @@ class ImageEmbeddings(Embeddings):
     def embed_query(self, text: str) -> list[float]:
         """Generate image embedding for a single image"""
         logging.info(f"ImageEmbeddings | embed_query() | called.\n\t| input: {text[:50]}")
+        # A query image is embedded as sent. Only catalog indexing resolves
+        # URLs and shared paths, so a caller cannot make this service fetch a
+        # URL or open a file.
         embeddings = self.retriever.image_embeddings([text], verbose=True)
         if embeddings and embeddings[0] is not None:
             logging.info(f"ImageEmbeddings | embed_query() | embedding output:\n\t| {embeddings[0][:50]}")
@@ -136,7 +139,7 @@ class ImageEmbeddings(Embeddings):
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Generate image embeddings for multiple images"""
         logging.info("ImageEmbeddings | embed_query() | called.")
-        return self.retriever.image_embeddings(texts)
+        return self.retriever.image_embeddings(texts, resolve_references=True)
 
 
 class Milvus:
@@ -543,10 +546,13 @@ class Retriever:
     def image_embeddings(
         self,
         texts: list[str],
-        verbose: bool = False
+        verbose: bool = False,
+        resolve_references: bool = False,
     ) -> list[list[float] | None]:
         """
-        Generate image embeddings from a list of base64 image strings or image URLs using batching.
+        Generate image embeddings from a list of base64 image strings using batching.
+        With resolve_references, image URLs and shared-folder paths are loaded
+        first; only catalog indexing sets it.
         Returns a list of embeddings, with None for failures, to maintain 1:1 mapping with input.
         """
         if not self.image_enabled or self.image_client is None or not self.image_model_name:
@@ -568,9 +574,9 @@ class Retriever:
             for text in batch_texts:
                 try:
                     input_data = text
-                    if is_url(text):
+                    if resolve_references and is_url(text):
                         input_data = image_url_to_base64(text)
-                    elif is_path(text):
+                    elif resolve_references and is_path(text):
                         input_data = image_path_to_base64(text)
 
                     MAX_VARCHAR_LENGTH = 65535
@@ -730,7 +736,9 @@ class Retriever:
                 str(product[snapshot.schema.record.image])
                 for product in snapshot.products
             ]
-            image_embeddings = self.image_embeddings(image_references, verbose=verbose)
+            image_embeddings = self.image_embeddings(
+                image_references, verbose=verbose, resolve_references=True
+            )
             if len(image_embeddings) != snapshot.product_count or any(
                 embedding is None for embedding in image_embeddings
             ):
@@ -768,6 +776,8 @@ class Retriever:
         Asynchronously retrieve relevant items from both text and image databases.
         """
         candidate_limit = max(k, candidate_k or self.catalog_size or (k * 5))
+        if self.catalog_size:
+            candidate_limit = min(candidate_limit, max(k, self.catalog_size))
         if self.vector_index.max_limit is not None:
             # Past this Milvus rejects the search outright. A larger catalog
             # then ranks within the top max_limit, not the whole snapshot;

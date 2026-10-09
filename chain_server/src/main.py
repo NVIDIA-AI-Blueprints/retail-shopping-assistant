@@ -28,7 +28,7 @@ from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, Cart, State
 from .commerce_tools import get_cart, update_cart_item
 from .config import load_config
 from .media_perception import MEDIA_ONLY_QUERY
-from .runtime.identity import create_request_identity
+from .runtime.identity import cart_user_id_for, create_request_identity
 from .runtime.runtime import DeepAgentsRuntime
 from .shopper_profiles import (
     ShopperProfile,
@@ -243,7 +243,6 @@ async def process_query_stream(request: QueryRequest):
         # Create initial state
         state = create_initial_state(request)
         identity = create_request_identity(
-            legacy_user_id=request.user_id,
             session_id=request.session_id,
             conversation_id=request.conversation_id,
             cart_id=request.cart_id,
@@ -291,7 +290,6 @@ async def process_query_timing(request: QueryRequest):
         # Create initial state
         state = create_initial_state(request)
         identity = create_request_identity(
-            legacy_user_id=request.user_id,
             session_id=request.session_id,
             conversation_id=request.conversation_id,
             cart_id=request.cart_id,
@@ -448,18 +446,17 @@ class CartQuantityRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=128)
 
 
-def _cart_identity(cart_id: str):
+def _cart_user_id(cart_id: str) -> int:
     """Resolve the opaque cart handle the browser holds.
 
     The memory service keys carts on an integer derived from this string. The
     derivation stays on the server: an endpoint taking that integer directly
-    would let any caller read or mutate any cart, since the memory service has
-    no authentication at all.
+    would let any caller read or mutate any cart.
     """
 
     if not cart_id or not cart_id.strip():
         raise HTTPException(status_code=422, detail="cart_id is required")
-    return create_request_identity(legacy_user_id=0, cart_id=cart_id.strip())
+    return cart_user_id_for(cart_id.strip())
 
 
 def _cart_response(cart) -> CartReadResponse:
@@ -483,10 +480,10 @@ def _cart_response(cart) -> CartReadResponse:
 async def read_cart(cart_id: str) -> CartReadResponse:
     """Read the authoritative cart for a browser-held cart handle."""
 
-    identity = _cart_identity(cart_id)
+    cart_user_id = _cart_user_id(cart_id)
     result = await asyncio.to_thread(
         get_cart,
-        GetCartInput(user_id=str(identity.cart_user_id)),
+        GetCartInput(user_id=str(cart_user_id)),
         config.memory_port,
     )
     if not result.ok:
@@ -505,11 +502,11 @@ async def set_cart_line_quantity(
 ) -> CartReadResponse:
     """Set one line to an absolute quantity. Zero removes the line."""
 
-    identity = _cart_identity(cart_id)
+    cart_user_id = _cart_user_id(cart_id)
     result = await asyncio.to_thread(
         update_cart_item,
         UpdateCartItemInput(
-            user_id=str(identity.cart_user_id),
+            user_id=str(cart_user_id),
             cart_line_id=cart_line_id,
             quantity=request.quantity,
             idempotency_key=request.idempotency_key,
@@ -542,7 +539,7 @@ async def set_cart_line_quantity(
     # cart, and reading it back is also what proves the change landed.
     read_back = await asyncio.to_thread(
         get_cart,
-        GetCartInput(user_id=str(identity.cart_user_id)),
+        GetCartInput(user_id=str(cart_user_id)),
         config.memory_port,
     )
     if not read_back.ok:

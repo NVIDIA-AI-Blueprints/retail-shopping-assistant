@@ -225,10 +225,12 @@ export const createApiRequest = (
   image: string = '',
   guardrails?: boolean,
   media: MediaAttachment[] = [],
-  shopperProfileId: string | null = null
+  shopperProfileId: string | null = null,
+  requestId: string = createRequestId()
 ): ApiRequest => {
   const payload: ApiRequest = {
     user_id: userSession.userId,
+    request_id: requestId,
     session_id: userSession.sessionId,
     conversation_id: userSession.conversationId,
     cart_id: userSession.cartId,
@@ -271,6 +273,12 @@ const createScopedId = (prefix: string): string => {
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   return `${prefix}-${randomId}`;
 };
+
+/**
+ * One ID per shopper message. A retry of that message must reuse it, so the
+ * server recognises a cart change it has already applied.
+ */
+export const createRequestId = (): string => createScopedId('request');
 
 const readStoredUserSession = (): UserSession | null => {
   const storedSession = sessionStorage.getItem(SESSION_STORAGE_KEY);

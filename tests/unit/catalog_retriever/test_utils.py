@@ -139,6 +139,29 @@ class TestImagePathToBase64:
 
         assert result is None
 
+    @pytest.mark.parametrize("escape", ["/../outside.jpg", "/images/../../outside.jpg"])
+    def test_refuses_paths_outside_the_shared_root(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch, escape: str
+    ) -> None:
+        shared = tmp_path / "shared"
+        (shared / "images").mkdir(parents=True)
+        (tmp_path / "outside.jpg").write_bytes(_build_jpeg_bytes())
+        monkeypatch.setenv("SHARED_ROOT", str(shared))
+
+        with pytest.raises(ValueError, match="outside"):
+            image_path_to_base64(escape)
+
+    def test_follows_a_path_that_stays_inside(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "images").mkdir()
+        (tmp_path / "images" / "a.jpg").write_bytes(_build_jpeg_bytes())
+        monkeypatch.setenv("SHARED_ROOT", str(tmp_path))
+
+        assert image_path_to_base64("/images/../images/a.jpg").startswith(
+            "data:image/jpeg;base64,"
+        )
+
 
 # --------------------------------------------------------------------------->
 # image_url_to_base64

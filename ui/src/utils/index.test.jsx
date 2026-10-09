@@ -128,3 +128,16 @@ test("Query payload overrides guardrails only after an explicit toggle", () => {
   expect(createApiRequest(session, "bypass", "", false).guardrails).toBe(false);
   expect(createApiRequest(session, "default")).not.toHaveProperty("guardrails");
 });
+
+test("Each message gets its own request ID, and a retry can reuse it", () => {
+  const session = getOrCreateUserSession();
+  const first = createApiRequest(session, "add one");
+  const second = createApiRequest(session, "add one");
+
+  expect(first.request_id).toMatch(/^request-[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+  expect(first.request_id).not.toBe(second.request_id);
+  expect(
+    createApiRequest(session, "add one", "", undefined, [], null, first.request_id)
+      .request_id
+  ).toBe(first.request_id);
+});

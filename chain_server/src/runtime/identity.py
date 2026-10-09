@@ -37,31 +37,37 @@ class RequestIdentity:
 
 def create_request_identity(
     *,
-    legacy_user_id: int,
+    conversation_id: str,
+    cart_id: str,
     session_id: str | None = None,
-    conversation_id: str | None = None,
-    cart_id: str | None = None,
     request_id: str | None = None,
     shopper_profile_id: str | None = None,
 ) -> RequestIdentity:
-    """Create scoped request identity while preserving legacy user_id behavior."""
+    """Scope one turn to the caller's opaque conversation and cart handles.
 
-    session = session_id or f"legacy-session-{legacy_user_id}"
-    conversation = conversation_id or f"legacy-conversation-{legacy_user_id}"
-    cart = cart_id or f"legacy-cart-{legacy_user_id}"
+    There is no fallback to the request's user_id: it is guessable, and the
+    cart routes trust whoever holds a cart handle.
+    """
+
+    conversation = (conversation_id or "").strip()
+    cart = (cart_id or "").strip()
+    if not conversation or not cart:
+        raise ValueError("conversation_id and cart_id are required")
     return RequestIdentity(
-        session_id=session,
+        session_id=session_id or conversation,
         conversation_id=conversation,
         cart_id=cart,
-        context_user_id=(
-            _stable_numeric_id("conversation", conversation_id)
-            if conversation_id
-            else legacy_user_id
-        ),
-        cart_user_id=_stable_numeric_id("cart", cart_id) if cart_id else legacy_user_id,
+        context_user_id=_stable_numeric_id("conversation", conversation),
+        cart_user_id=cart_user_id_for(cart),
         request_id=request_id or str(uuid.uuid4()),
         shopper_profile_id=shopper_profile_id,
     )
+
+
+def cart_user_id_for(cart_id: str) -> int:
+    """The memory service's integer key for an opaque cart handle."""
+
+    return _stable_numeric_id("cart", cart_id)
 
 
 def _stable_numeric_id(namespace: str, value: str) -> int:

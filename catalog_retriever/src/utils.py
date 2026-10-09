@@ -26,8 +26,11 @@ def image_path_to_base64(
     """
     Converts an image to a base64 string.
     """
-    shared_root = os.environ.get("SHARED_ROOT", "/app/shared")
-    with open(os.path.join(shared_root, image_path.lstrip("/")), "rb") as image_file:
+    shared_root = os.path.realpath(os.environ.get("SHARED_ROOT", "/app/shared"))
+    target = os.path.realpath(os.path.join(shared_root, image_path.lstrip("/")))
+    if os.path.commonpath([shared_root, target]) != shared_root:
+        raise ValueError(f"Image path is outside {shared_root}: {image_path}")
+    with open(target, "rb") as image_file:
         img = Image.open(image_file).convert("RGB")
         img.thumbnail((max_width, max_height))  # Resize with aspect ratio
 

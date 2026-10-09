@@ -524,11 +524,11 @@ interface CartItem {
 
 ### Streaming Response
 
-For streaming endpoints, responses are sent as Server-Sent Events (SSE) with the following format:
+For streaming endpoints, responses are sent as Server-Sent Events (SSE) with the following format; the stream ends with a literal `data: [DONE]` line:
 
 ```typescript
 interface StreamingChunk {
-  type: 'progress' | 'media_analysis' | 'content' | 'images' | 'products' | 'metrics' | 'error' | 'done';
+  type: 'progress' | 'media_analysis' | 'content' | 'images' | 'products' | 'metrics' | 'error';
   payload:
     | string
     | Record<string, string>

@@ -353,7 +353,7 @@ The frontend handles multiple message types:
 
 **Collections**:
 - **Text Collection**: Product text embeddings
-- **Image Collection**: Product image embeddings
+- **Image Collection**: Product image embeddings, only when `image_embedding_enabled` is on (off by default)
 
 Both collections use an auto-generated integer `pk`, a `text` payload, and a
 runtime-dimension `vector`. Dynamic metadata carries the source product fields
@@ -433,7 +433,7 @@ docker compose -f docker-compose-model-local.yaml up -d --wait \
 docker compose up -d --build
 ```
 
-**Option B: Cloud Deployment** (uses NVIDIA API Catalog):
+**Option B: Hosted Deployment** (hosted NVIDIA endpoints):
 ```bash
 python scripts/model_config.py deploy --build
 ```

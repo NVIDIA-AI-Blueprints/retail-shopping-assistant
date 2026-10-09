@@ -43,9 +43,9 @@ the real ratio from your own deployment before sweeping anything.
 
 The same asymmetry is why **a capacity number is meaningless without a latency
 target attached**: running more requests at once finishes more work per second
-while making each one slower. Size against time to first token rather than
-total turn time, because on a streaming interface that is what the shopper
-actually experiences.
+while making each one slower. Size against total turn time: the reply text
+arrives when the turn finishes, since the stream carries progress frames rather
+than tokens.
 
 ## Traps specific to this application
 

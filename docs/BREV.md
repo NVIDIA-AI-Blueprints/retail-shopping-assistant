@@ -244,7 +244,7 @@ Allow the system to complete initialization before use.
 - **Conversational AI**: Chat with the intelligent shopping assistant
 - **Visual Search**: Upload images to find similar products
 - **Smart Cart**: Add and manage items in your shopping cart
-- **Multi-Agent System**: Experience the full AI-powered retail assistant
+- **Deep Agents Assistant**: Experience the full AI-powered retail assistant
 
 ![Retail Shopping Assistant](images/step16.jpg)
 

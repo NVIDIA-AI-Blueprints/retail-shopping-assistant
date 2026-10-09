@@ -181,14 +181,12 @@ the `pymilvus[bulk_writer]` extra, which pulls in `minio`, `pyarrow`, and
 
 ## Not done yet
 
-- **Filters in Milvus.** Hard filters are applied in Python after the vector
-  search. Numeric fields such as price are stored as text, so they cannot yet
-  be expressed in a Milvus filter expression. Pushing filters into the search
-  is what makes the 1024 cap harmless.
+- **Numeric filters in Milvus.** Enum filters are pushed into the Milvus
+  search; numeric fields such as price are stored as text, so they are still
+  applied in Python after the vector search. Pushing them down too is what
+  makes the 1024 cap harmless.
 - **Batched inserts and waiting for the index.** As described above, the
   indexer inserts each collection in one call and does not wait for the index
   build.
-- **Configurable candidate window.** The window is the whole catalog, or 1024
-  under `GPU_CAGRA`; it is not a setting.
 - **GPU verification.** The `GPU_CAGRA` path is covered by unit tests only. It
   has not run on a GPU host with the `-gpu` image.

@@ -55,7 +55,7 @@ found anything unsafe.
 ## Turning it on and off
 
 ```bash
-export RAIL_API_KEY="..."          # the guard models' API key
+export RAIL_API_KEY="..."          # content safety and topic control
 export GUARDRAILS_ENABLED=false    # only to make off the default; or send `guardrails` per request
 docker compose up -d rails
 ```
@@ -103,7 +103,8 @@ server at startup, as the two contradict each other.
 | Variable | What it controls | Default |
 | --- | --- | --- |
 | `GUARDRAILS_AVAILABLE` | `false`: no guardrails in this deployment ([above](#deploying-without-guardrails)) | true |
-| `RAIL_API_KEY` | API key for the guard models | Required |
+| `RAIL_API_KEY` | API key for content safety and topic control | Required |
+| `MULTIMODAL_SAFETY_API_KEY` | API key for video safety; falls back to `VLM_API_KEY`, then `NVIDIA_API_KEY` | Required for video |
 | `GUARDRAILS_URL` | Where the chain server reaches the service | `http://rails:8012` |
 | `GUARDRAILS_ENABLED` | Deployment default for requests that omit `guardrails` | on (off when `GUARDRAILS_AVAILABLE=false`) |
 | `GUARDRAILS_FAILURE_MODE` | What an `error` costs | `closed` |

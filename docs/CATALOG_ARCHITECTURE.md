@@ -221,8 +221,8 @@ When the `image_embedding` model role is enabled, the service also creates one
 embedding per product image, in a separate collection carrying the same product
 ID and filter metadata so every search mode enforces identical hard filters. A
 missing local image fails startup. Text-only is the default
-(`image_embedding_enabled` in `shared/configs/catalog_retriever/config.yaml`,
-or `CATALOG_IMAGE_EMBEDDING_ENABLED=true`); until it is on, image and hybrid
+(`image_embedding_enabled: false` in `shared/configs/catalog_retriever/config.yaml`;
+`CATALOG_IMAGE_EMBEDDING_ENABLED=true` turns it on); until it is on, image and hybrid
 modes are absent from `/capabilities`.
 
 Clients send raw text or raw image data and never send vectors. Candidates are

@@ -168,7 +168,8 @@ against its live snapshot and fails closed on anything stale.
 > Show me beige skirts under $100, preferably cotton.
 
 With `subcategory`, `primary_color`, and `price` advertised as filters and
-`composition` semantic-only, the agent emits:
+`composition` semantic-only, the agent emits this scope (one entry in the
+tool's `scopes` list):
 
 ```json
 {
@@ -240,8 +241,8 @@ field, any-overlap for `enum_list`, and bounds for numbers.
 
 ### Querying the service directly
 
-The agent-facing tool takes one `semantic_query`, a capability-derived
-`taxonomy` envelope, and `required_constraints`; the chain maps that envelope
+The agent-facing tool takes a list of `scopes`, each with a `semantic_query`, a
+capability-derived `taxonomy` envelope, and `required_constraints`; the chain maps that envelope
 onto the real taxonomy field names and merges it with validated must-haves into
 `filters`. The internal API below is that mapped shape. Semantic meaning goes
 in `text`, exact requirements in `filters`. The serving agent sends a singleton

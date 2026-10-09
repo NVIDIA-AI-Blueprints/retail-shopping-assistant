@@ -56,7 +56,7 @@ does not infer preferences or sentiment from what you said earlier.
 
 ## Image search
 
-Click the camera icon and choose a file. JPEG and PNG, up to 10MB.
+Click the paperclip icon and choose a file. JPEG and PNG, up to 10MB.
 
 Clear, well-lit shots of a single product on an uncluttered background work
 best. Group shots, heavy filtering, and screenshots work poorly, because the

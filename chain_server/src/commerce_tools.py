@@ -4,8 +4,8 @@
 """Internal commerce tool wrappers used by agent runtimes.
 
 These functions are deliberately small adapters around existing services. They
-return shared commerce contracts so current LangGraph agents, future Deep
-Agents tools, and later protocol adapters can share the same typed boundary.
+return shared commerce contracts so the Deep Agents tools and any later
+protocol adapters share the same typed boundary.
 """
 
 # Cart reads expose the memory service's opaque CartItem.cart_line_id as

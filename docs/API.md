@@ -528,7 +528,7 @@ For streaming endpoints, responses are sent as Server-Sent Events (SSE) with the
 
 ```typescript
 interface StreamingChunk {
-  type: 'content' | 'images' | 'products' | 'metrics' | 'error' | 'done';
+  type: 'progress' | 'media_analysis' | 'content' | 'images' | 'products' | 'metrics' | 'error' | 'done';
   payload:
     | string
     | Record<string, string>
@@ -547,6 +547,7 @@ interface StreamingChunk {
           calls: number;
           detail?: string;
         }>;
+        guardrail_report: GuardrailReport;
         agent_diagnostics?: AgentDiagnostics;
       };
   timestamp: number;
@@ -609,7 +610,7 @@ another model/tool turn. The public SSE frame shapes are unchanged.
 Every unblocked Deep Agents turn includes one bounded activation model step
 before normal shopping-tool selection. That step selects registered shopper
 skills; the runtime injects their complete instructions before exposing the
-eleven shopping tools. It is included in `token_usage.model_calls` and
+shopping tools their grants allow. It is included in `token_usage.model_calls` and
 `agent_diagnostics`.
 
 Token-level Deep Agents streaming is a known limitation for this PR and is
@@ -908,8 +909,9 @@ catalog retriever derives them from the loaded JSONL.
 Executes a structured text catalog search on the catalog service port, usually
 `http://localhost:8010/query/text`.
 
-The model-facing `search_catalog_tool` exposes one flat executable schema with
-`semantic_query`, pre-retrieval product-agnostic `shopper_guidance`,
+The model-facing `search_catalog_tool` takes a list of `scopes`, one per
+advertised category (up to `max_search_scopes_per_call`), and an optional
+`not_covered`. Each scope carries `semantic_query`, pre-retrieval product-agnostic `shopper_guidance`,
 `requested_product_type`, capability-derived `taxonomy` and
 `required_constraints`, `scope_complete`, and optional `search_mode`. It
 contains no model-authored taxonomy relationship or catalog-absence field. The
@@ -921,12 +923,12 @@ handler translates it into the existing strict semantic search model.
 umbrella from the shopper's current turn or direct antecedent. It excludes
 color, material, fit, occasion, weather, and style modifiers. For a genuinely
 open role, it is the one advertised subcategory selected for that role. It is
-`null` only for image-only search. The semantic query supplies soft ranking direction
+`null` for image-only search and for a request that names no product type. The semantic query supplies soft ranking direction
 independently of taxonomy; it need not repeat the selected taxonomy noun.
 Taxonomy and hard constraints are enforced through their structured fields.
 `shopper_guidance` is authored under the active skill before results are known
 and is not sent to the catalog service.
-Each call accepts at most one category. For a broad request that names no type,
+Each scope accepts at most one category. For a broad request that names no type,
 the model selects exactly one advertised subcategory as the focused starting
 role and names it in `requested_product_type`. That open-role path is forbidden
 when the shopper named the role's type, including an alternative, confirmation,
@@ -971,7 +973,8 @@ Deterministic code does not parse shopper prose. The
 repair cannot replace a shopper-stated product-scope noun. A successful partial
 search may continue to another valid role with its own one-repair opportunity;
 no scope receives two repairs. Completed scopes and deterministic stop results
-close the loop, and the configured turn cap remains three successful searches.
+close the loop, and the turn cap is `max_catalog_searches_per_turn` product
+roles (default 10).
 For multi-role output, each pre-retrieval guidance sentence remains grouped with
 products from its originating search. Completed turns get one tools-disabled
 synthesis from collected evidence; search-only drafts pass through grounding,
@@ -1008,7 +1011,8 @@ learned reranking.
 
 `candidate_k` is optional. When omitted, the current small-catalog default
 covers the complete active snapshot before hard filtering and final trimming to
-`k`. It may be at most 16384, and a larger value is cut to the catalog's size.
+`k`. A value above 16384 returns HTTP 422; an accepted value larger than the
+catalog is cut to the catalog's size.
 
 Unknown filter fields, values, taxonomy values, or operators return HTTP 422
 with the catalog's validation message. The chain server treats that response as
@@ -1394,13 +1398,7 @@ Health check endpoint to verify service status.
 {
   "status": "healthy",
   "timestamp": 1716400000.0,
-  "version": "1.0.0",
-  "services": {
-    "chain_server": "healthy",
-    "catalog_retriever": "healthy",
-    "memory_retriever": "healthy",
-    "guardrails": "healthy"
-  }
+  "version": "1.0.0"
 }
 ```
 
@@ -1418,6 +1416,7 @@ Root endpoint with API information.
     "stream": "/query/stream",
     "timing": "/query/timing",
     "capabilities": "/capabilities",
+    "shopper_profiles": "/shopper-profiles",
     "health": "/health",
     "docs": "/docs"
   }
@@ -1430,9 +1429,7 @@ Root endpoint with API information.
 
 ```typescript
 interface ErrorResponse {
-  detail: string;                     // Error message
-  status_code: number;                // HTTP status code
-  timestamp: string;                  // Error timestamp
+  detail: string | object;            // Error message; 422 validation errors carry a list
 }
 ```
 
@@ -1448,9 +1445,7 @@ interface ErrorResponse {
 **Example Error Response:**
 ```json
 {
-  "detail": "Invalid request format: missing required field 'user_id'",
-  "status_code": 422,
-  "timestamp": "2024-01-15T10:30:00Z"
+  "detail": "conversation_id and cart_id are required"
 }
 ```
 

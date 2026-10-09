@@ -80,7 +80,7 @@
     <text x="207" y="557" text-anchor="middle" class="box-text">
       <tspan x="207" dy="0">Query + conversation_id</tspan>
       <tspan x="207" dy="24">Session + cart identity</tspan>
-      <tspan x="207" dy="24">Optional input guardrails</tspan>
+      <tspan x="207" dy="24">Input guardrails on</tspan>
     </text>
   </g>
 
@@ -163,5 +163,5 @@
   <path d="M 1104 797 L 1080 797 Q 1070 797 1070 842 L 207 842 Q 162 842 162 797 L 162 628" class="flow"/>
   <text x="260" y="836" class="arrow-label">grounded response · next turn retains conversation scope</text>
 
-  <text x="70" y="892" class="note">Built: exact same-conversation product resolution. Not built: cross-conversation memory, fuzzy matching, preferences, or multi-replica durable state.</text>
+  <text x="70" y="892" class="note">Built: exact same-conversation product resolution. Not built: cross-conversation memory, fuzzy matching, or inferred preferences. One memory replica on SQLite; see Taking to Production to scale.</text>
 </svg>

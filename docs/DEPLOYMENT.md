@@ -7,7 +7,7 @@
 - [Hosted Endpoints](#-hosted-endpoints)
 - [Deployment Options](#%EF%B8%8F-deployment-options)
 - [Locally Hosted Models](#-locally-hosted-models)
-- [Production Deployment](#-production-deployment)
+- [Taking to Production](#-taking-to-production)
 - [Configuration](#%EF%B8%8F-configuration)
   - [Model Sampling and Output Limits](#model-sampling-and-output-limits): where each model call's temperature and max tokens are set
 - [Monitoring](#-monitoring)
@@ -120,7 +120,7 @@ Copy the template rather than editing it: every `.env.*` is gitignored except
 the templates, so your filled-in copy stays out of git along with its keys.
 
 For an existing deployment, restart the catalog service when changing the
-text/image embedding model or catalog data source. Its fingerprint reuses only
+embedding model or catalog data source. Its fingerprint reuses only
 matching complete collections and rebuilds mismatches. After the catalog is
 healthy, restart the chain server so its process-lifetime cached capability
 contract matches the active catalog.
@@ -160,20 +160,12 @@ That is correct behavior, not a failure. Start the models yourself first, as
 Every model role can move to your own GPUs: the language, media,
 text-embedding and guardrail roles each have a local service in
 `docker-compose-model-local.yaml`, and `.env.local-models.example` points all
-of them there. Image embedding is the exception; it has no role or local
-service and stays off.
+of them there.
 
-Image embedding is off by default: catalog indexing populates the text
-collection only, and needs just the text embedding endpoint. Set
-`CATALOG_IMAGE_EMBEDDING_ENABLED=true` in the sourced profile to also build
-image embedding clients and populate the image collection, which additionally
-requires a reachable `image_embedding` endpoint.
-
-That default is declared in one place, `shared/configs/catalog_retriever/config.yaml`,
-as `image_embedding_enabled`. Compose and the env profiles pass the environment
-variable through without a default of their own, so an empty value means "not
-set" and the config file decides. Guardrails works the same way, with its
-default in `shared/configs/chain_server/config.yaml`.
+Feature defaults are declared once, in the service's config file. Compose and
+the env profiles pass the environment variable through without a default of
+their own, so an empty value means "not set" and the config file decides; for
+guardrails, that is `shared/configs/chain_server/config.yaml`.
 
 ## 🏠 Locally Hosted Models
 
@@ -412,29 +404,77 @@ docker compose -f docker-compose-model-local.yaml down   # if you started them
 No GPUs of your own? [NVIDIA Brev](https://developer.nvidia.com/brev) offers
 pay-as-you-go GPU instances, and [BREV.md](BREV.md) has a walkthrough.
 
-## 🏭 Production Deployment
+## 🏭 Taking to Production
 
-### Before Exposing This Publicly
+The Compose stack runs everything on one machine for development, demos and
+trusted networks. It has no login, and the cart and conversation IDs the UI
+generates are the only thing that separates one shopper from another. This
+section lists what changes before shoppers can reach it and as traffic grows.
 
-The Compose stack is built for a developer machine or a trusted network. It has
-no login, and the cart and conversation IDs the UI generates are the only thing
-that separates one shopper from another. Before shoppers can reach it:
+### Secure the Deployment
 
 - **Put authentication in front of `/api`.** The UI proxies `/api/*` to the
   chain server unchanged. Anyone who can reach port 3000 or 8009 can start
   turns, and anyone who learns a `cart_id` can read and change that cart.
+  Serve the UI and API over HTTPS.
 - **Keep internal services off public interfaces.** The memory service (8011)
-  and PostgreSQL (5432) bind to loopback. The chain server (8009), catalog
-  retriever (8010), rails (8012), Milvus (19530, 9091) and Phoenix (6006)
-  publish on every interface for local convenience. Bind them to `127.0.0.1`
-  or firewall them; only the UI needs to be reachable.
-- **Image queries carry the image itself.** The catalog retriever refuses an
-  image URL and never fetches one or opens a file for a query; only catalog
-  indexing loads the image URLs and `shared/` paths in your catalog data.
+  binds to loopback. The chain server (8009), catalog retriever (8010), rails
+  (8012), Milvus (19530, 9091) and Phoenix (6006) publish on every interface
+  for local convenience. Bind them to `127.0.0.1` or firewall them; only the
+  UI needs to be reachable.
 - **Set `GUARDRAILS_CLIENT_CAN_DISABLE=false`.** Guardrails are on by default,
   but a request, such as the UI toggle, may still turn them off, which is
   what a before-and-after demo needs and what an untrusted caller should not
   have.
+- **Image queries carry the image itself.** The catalog retriever refuses an
+  image URL and never fetches one or opens a file for a query; only catalog
+  indexing loads the image URLs and `shared/` paths in your catalog data.
+- **Keep keys in a secret store**, not in env files on disk, and give each role
+  its own key ([Model Endpoints and API Keys](#model-endpoints-and-api-keys)).
+- **Treat conversation turns and replay diagnostics as customer data.**
+  Restrict access to the memory database and its backups, and set a retention
+  and deletion policy; turns are kept until deleted.
+- **Harden the images:** scan them for vulnerabilities, run as non-root, set
+  resource limits and rebuild for security updates.
+
+### Host the Models
+
+Hosted endpoints suit development. For production traffic, data residency or
+cost control, serve the models on your own GPUs with vLLM:
+[Locally Hosted Models](#-locally-hosted-models) covers the services and
+[GPU Sizing](#gpu-sizing) the layouts, from four GPUs to eight.
+
+### Scale Out
+
+- **Chain server:** any replica can serve any turn. A turn's graph checkpoint
+  is keyed on `(conversation_id, request_id)`, and the durable record of the
+  conversation lives in the memory service, so nothing ties a conversation to
+  one worker.
+- **Memory service:** SQLite is one file with one writer, so the service runs
+  as a single replica. To run more than one, move it to PostgreSQL first. The
+  service also accepts a `postgresql+psycopg://` URL in `MEMORY_DATABASE_URL`,
+  and `scripts/copy_memory_to_postgres.py` copies an existing SQLite database
+  across. To try it with Compose, `docker compose --profile postgres up -d
+  memory-db` starts PostgreSQL on loopback port 5432 with the credentials in
+  `MEMORY_DB_USER`, `MEMORY_DB_PASSWORD` and `MEMORY_DB_NAME`; all three default
+  to `memory`, so change them before any shared deployment.
+- **Catalog:** the index is built once per catalog and read by every replica;
+  see [Kubernetes](#kubernetes) for running indexing as a Job.
+- **Load balancing:** the bundled UI sends uploaded media as base64 JSON. Keep
+  any reverse proxy request-body limit aligned with
+  `media_input.max_video_bytes` after base64 expansion; with the default
+  50 MiB raw video cap, `nginx.conf` uses `client_max_body_size 80m`. Keep
+  proxy read and send timeouts above the turn budget; the bundled `nginx.conf`
+  uses 300 seconds, and turns stream as server-sent events, so turn off
+  response buffering.
+
+### Back Up and Monitor
+
+- Back up the memory database before upgrades and teardown;
+  [Data Recovery](#data-recovery) has the commands for the SQLite volume.
+- Wire `/health` (liveness) and `/ready` (readiness) into your orchestrator
+  ([Health Checks](#health-checks)) and export traces to your collector
+  ([Observability](OBSERVABILITY.md)).
 
 ### Kubernetes
 
@@ -468,9 +508,9 @@ are for whoever writes them.
   `command: ["python", "-m", "app.index_catalog"]`. Run it before the pods that
   read the index; they will sit unready until it succeeds, which is correct and
   needs no coordination.
-- **More than one memory replica requires PostgreSQL.** SQLite is a
-  single-writer file on a single-mount volume. Set `MEMORY_DATABASE_URL` and
-  move existing data with `scripts/copy_memory_to_postgres.py` first.
+- **The memory service stays at one replica** on SQLite, on a volume one pod
+  mounts, unless you move it to PostgreSQL first; see
+  [Scale Out](#scale-out).
 - **`shared/` is still a bind mount.** All four services read configuration,
   data, images, and Python modules from it, and a hostPath does not exist on
   another node. It is read-only at runtime, so the fix is
@@ -495,10 +535,6 @@ the service at startup with the names of the missing variables.
 | `content_safety` | Checks text and images for unsafe content (guardrails, on by default) | `integrate.api.nvidia.com` | `RAILS_CONTENT_BASE_URL`, `RAILS_CONTENT_MODEL` | `RAIL_API_KEY` |
 | `topic_control` | Checks whether a request is on topic (guardrails) | `integrate.api.nvidia.com` | `RAILS_TOPIC_BASE_URL`, `RAILS_TOPIC_MODEL` | `RAIL_API_KEY` |
 | `multimodal_safety` | Checks video, including embedded audio (guardrails) | `integrate.api.nvidia.com` | `MULTIMODAL_SAFETY_BASE_URL`, `MULTIMODAL_SAFETY_MODEL` | `MULTIMODAL_SAFETY_API_KEY` |
-
-Image embedding is not shipped as a role; to turn it on, add an
-`image_embedding` role to `models.yaml` with the same shape and set its
-variables in your profile.
 
 **The two hosts issue different keys, and they are not interchangeable.** A key
 that works against `inference-api.nvidia.com` will be rejected by
@@ -531,8 +567,9 @@ unrelated to inference: it authenticates `nvcr.io` image pulls.
 A default written as a `config.yaml` key lives only in
 `shared/configs/chain_server/config.yaml`; look it up there. The variable
 overrides it, and left empty it leaves the key in place. `docker-compose.yaml`
-and `.env.example` pass these variables through empty, so change a default in
-`config.yaml`, not in either of them. The exception is the model URL and model
+passes these variables through empty and `.env.example` leaves most of them
+empty, so change a default in `config.yaml`. A few guardrails variables are set
+in `.env.example` to the same values as `config.yaml`; change those there too. The exception is the model URL and model
 name variables, whose values live only in `.env.example`.
 
 The memory service has no config file; a default written as a constant lives
@@ -562,7 +599,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `MULTIMODAL_SAFETY_BASE_URL` | OpenAI-compatible endpoint for the video safety judge | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_MODEL` | Video safety model, independent of perception | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_VIDEO_FPS` | Temporal sampling rate sent to Nemotron Omni. The complete video object and embedded audio are submitted, but the model evaluates sampled frames | No | `rails.py` (2.0) |
-| `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the content and topic input rails in `parallel` or `sequential` mode | No | `rails.py` (parallel) |
+| `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the content and topic input rails in `parallel` or `sequential` mode | No | `shared/configs/rails/config.yml`: `rails.input.parallel` (parallel) |
 | `GUARDRAILS_AVAILABLE` | `false` deploys without guardrails: no guardrail model is called or needs a key, `.env.local-models` starts no guardrail model, the UI hides the Guardrails toggle, and a request with `guardrails: true` gets a 400. Cannot be combined with `GUARDRAILS_ENABLED=true`. Read from the environment only, as both services and `.env.local-models` need it | No | true |
 | `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Set false to turn guardrails off by default | No | `config.yaml`: `guardrails_enabled` (on; off when `GUARDRAILS_AVAILABLE=false`) |
 | `GUARDRAILS_CLIENT_CAN_DISABLE` | With guardrails enabled, whether a request's `guardrails: false` is honoured. On by default, so the UI toggle can show before and after; set `false` to lock guardrails on | No | true |
@@ -578,7 +615,6 @@ set there; a unit test fails if the two differ, so change both together.
 | `EXPOSE_AGENT_DIAGNOSTICS` | Expose detailed agent/tool traces in query responses; enable only behind a trusted operator or evaluation surface | No | `config.yaml`: `expose_agent_diagnostics` (off) |
 | `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
 | `CATALOG_RETRIEVER_URL` / `MEMORY_RETRIEVER_URL` | Where the chain server reaches the retrieval services | No | `config.yaml`: `retriever_port`, `memory_port` |
-| `CATALOG_IMAGE_EMBEDDING_ENABLED` | Build image embeddings and the image collection at index time, enabling visual search | No | `catalog_retriever/config.yaml`: `image_embedding_enabled` (off) |
 | `CATALOG_VECTOR_INDEX_TYPE` | Vector index for both catalog collections: `AUTOINDEX` (CPU) or `GPU_CAGRA` (needs the Milvus `-gpu` image); see [Vector Search](VECTOR_SEARCH.md) | No | `catalog_retriever/config.yaml`: `vector_index.type` (`AUTOINDEX`) |
 | `CATALOG_GPU_SEARCH` | With `GPU_CAGRA`, search on the GPU too rather than building on the GPU and searching on the CPU | No | `catalog_retriever/config.yaml`: `vector_index.gpu_search` (off) |
 | `CATALOG_DATA_SOURCE` / `CATALOG_SCHEMA_SOURCE` | Catalog JSONL and schema sidecar paths; see [Catalog Architecture](CATALOG_ARCHITECTURE.md#replace-the-catalog) | No | `catalog_retriever/config.yaml`: `data_source`, `schema_source` |
@@ -586,7 +622,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-plus-hard-constraint scope executions in one assistant turn; a repeated scope is stopped even when semantic wording changes | No | `config.yaml`: `max_catalog_searches_per_turn` |
 | `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `config.yaml`: `max_product_detail_reads_per_turn` |
 | `CHECKPOINT_STORE` | Deep Agents conversation checkpoint store; currently supports only `memory` | No | `memory` |
-| `MEMORY_DATABASE_URL` | SQLite URL for durable raw turns and cart state; Compose supplies the named-volume path | No | Compose: `sqlite:////data/context.db` |
+| `MEMORY_DATABASE_URL` | SQLite database for conversation turns, product cards and cart state; Compose puts it on the `memory-data` volume. For more than one memory replica see [Scale Out](#scale-out) | No | Compose: `sqlite:////data/context.db` |
 | `MEMORY_SQLITE_BUSY_TIMEOUT_MS` | SQLite lock wait for the single memory-service writer | No | `DEFAULT_BUSY_TIMEOUT_MS` in `memory_retriever/src/database.py` |
 | `MEMORY_MAX_CONCURRENT_REQUESTS` | Requests the memory service works on at once; sizes its connection pool, its threadpool and uvicorn's admission limit together | No | `DEFAULT_MAX_CONCURRENT_REQUESTS` in `memory_retriever/src/database.py`, and `memory_retriever/Dockerfile` |
 | `MEMORY_TURN_ABANDON_SECONDS` | Age at which startup or the next turn start marks an unfinished `started` turn abandoned | No | `DEFAULT_ABANDONED_SECONDS` in `memory_retriever/src/conversations.py` |
@@ -595,12 +631,11 @@ set there; a unit test fails if the two differ, so change both together.
 | `WEATHER_API_KEY` | Visual Crossing server-side credential, read indirectly from the variable named by chain-server weather config | Only when directly constructing an enabled weather client | empty |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Where traces are exported; unset disables export. See [Observability](OBSERVABILITY.md) | No | unset |
 | `OTEL_SERVICE_NAME` | Service name traces are attributed to | No | `chain-server` |
-| `RELAY_ENABLED` | Route model calls through NeMo Relay for richer LLM spans | No | `config.yaml`: `relay_enabled` (off) |
+| `RELAY_ENABLED` | Route model calls through NeMo Relay for richer LLM spans | No | `config.py`: `relay_enabled` (off); `.env.example` turns it on |
 | `RELAY_OTLP_ENDPOINT` | Where the in-container Relay sends its spans | No | `http://127.0.0.1:4318` |
 | `INSTALL_RELAY` | Build argument that installs the Relay dependency into the chain-server image; required before `RELAY_ENABLED` can work | No | `false` |
 | `SHUTDOWN_GRACE_SECONDS` | Time the chain server and memory service drain in-flight turns before exiting | No | image default |
 | `CHAIN_SERVER_RELOAD` | Reload the chain server on source changes; development only | No | off |
-| `MEMORY_DB_USER` / `MEMORY_DB_PASSWORD` / `MEMORY_DB_NAME` | PostgreSQL credentials under the `postgres` Compose profile. **Change these before any shared deployment**; the defaults are `memory` for all three | No | `memory` |
 | `HF_TOKEN` | Hugging Face token with access to the gated local checkpoints: the LLM and Llama 3.1 8B Instruct | Local only | - |
 | `HF_CACHE` | Hugging Face cache the locally deployed models download into | Local only | `~/.cache/huggingface` |
 | `LOCAL_LLM_HF_MODEL` | Checkpoint the local vLLM server loads | Local only | `nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026` |
@@ -693,8 +728,7 @@ succeeds. This live deadline is separate from
 `MEMORY_TURN_ABANDON_SECONDS`, which handles unfinished turns left by a crash or
 process loss.
 
-`MEMORY_DATABASE_URL` accepts SQLite URLs only. The busy timeout must be
-non-negative, the abandoned-turn threshold must be positive, and
+The busy timeout must be non-negative, the abandoned-turn threshold must be positive, and
 `MEMORY_RECENT_TURNS` is bounded by the service to 1–50 records.
 
 SQLite uses WAL mode, foreign-key enforcement, and the configured busy timeout.
@@ -741,8 +775,8 @@ product-reference authorization.
 fails during chain-server initialization instead of silently falling back to
 process-local state. The durable memory-service turn record, not the graph
 checkpoint, supplies cross-turn continuity. A shared graph backend is therefore
-not required for this request-scoped design; production durability and scale
-remain bounded by the single-replica SQLite memory service.
+not required for this request-scoped design; durability and scale are those of
+the memory service ([Scale Out](#scale-out)).
 
 ### Store Policy Content
 
@@ -761,22 +795,19 @@ Chain-server service behavior is configured in
 separately; see [Model Routing](#model-routing):
 
 ```yaml
-retriever_port: "http://localhost:8010"
-memory_port: "http://localhost:8011"
-guardrails_url: "http://localhost:8012"
+retriever_port: "http://catalog-retriever:8010"
+memory_port: "http://memory-retriever:8011"
+guardrails_url: "http://rails:8012"
 memory_length: 16384
-deepagents_recursion_limit: 24
-max_catalog_searches_per_turn: 3
-max_product_detail_reads_per_turn: 2
+deepagents_recursion_limit: 48
+max_catalog_searches_per_turn: 10
+max_product_detail_reads_per_turn: 10
 guardrails_enabled: true
 guardrails_failure_mode: closed
 guardrails_timeout_seconds: 15.0
 guardrails_speculative_main_model_enabled: false
 guardrails_supported_modalities: [text, image]
 ```
-
-The legacy routing and chatter prompt keys remain in that file for compatibility
-paths; they do not configure the serving Deep Agents runtime.
 
 ### Updating Catalog Filter Metadata
 
@@ -832,9 +863,7 @@ The `vlm` role controls image/video media perception for user uploads. By
 default it uses the same model as `app_llm`, Nemotron 3.5 Super VL, which reads
 photos and video. It is configured separately through `VLM_*`, so replacing the
 app LLM leaves media perception where it is; set `VLM_*` as well to move it.
-It can be set to `disabled` when media perception should be off. Image
-embedding search remains controlled separately by the `image_embedding` role
-and `CATALOG_IMAGE_EMBEDDING_ENABLED`.
+It can be set to `disabled` when media perception should be off.
 
 #### Applying a Routing Change
 
@@ -1121,49 +1150,6 @@ docker compose start memory-retriever
 
 `docker compose down -v` removes `memory-data`; back it up first when durable
 turns or carts must survive teardown.
-
-## 🔒 Security Considerations
-
-### Network Security
-
-- Use HTTPS in production
-- Implement API authentication
-- Configure firewall rules
-- Use VPN for remote access
-
-### Data Security
-
-- Encrypt sensitive data at rest
-- Use secure API keys
-- Implement access controls
-- Treat durable shopper/assistant turns and replay diagnostics as customer data;
-  restrict database and backup access and define retention/deletion policy
-- Regular security updates
-
-### Container Security
-
-- Scan images for vulnerabilities
-- Use non-root users
-- Implement resource limits
-- Regular image updates
-
-## 📈 Scaling
-
-### Horizontal Scaling
-
-The request-scoped MemorySaver does not carry shopper memory between turns, so
-it does not itself block additional chain-server workers. Each in-flight request
-still completes on one worker. The remaining durable-state limit is the memory
-service's single local SQLite writer. Replace it with a validated shared/
-multi-writer store before increasing memory-service replicas.
-
-### Load Balancing
-
-The bundled UI sends uploaded media as base64 JSON. Keep any reverse proxy
-request-body limit aligned with `media_input.max_video_bytes` after base64
-expansion. With the default 50 MiB raw video cap, `nginx.conf` uses
-`client_max_body_size 80m`. Keep API proxy read/send timeouts high enough for
-media analysis and retrieval; the bundled `nginx.conf` uses 300 seconds.
 
 ---
 

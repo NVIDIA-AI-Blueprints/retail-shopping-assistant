@@ -1,6 +1,6 @@
 ---
 name: retail-test-runner
-description: Run the Retail Shopping Assistant test suites and evaluation workflows under tests/, including offline pytest unit tests, live integration scripts, replaying fixed shopper conversations against the cart (tests.evaluation.src.replay, J01-J20 journeys and P01-P25 probes), and tests/evaluation Challenger/Judge runs with one-scenario, all-scenario, latest-run, and report-result workflows.
+description: Run the Retail Shopping Assistant test suites and evaluation workflows under tests/, including offline pytest unit tests, live integration scripts, replaying fixed shopper conversations against the cart (tests.evaluation.src.replay journeys, probes and regressions), and tests/evaluation Challenger/Judge runs with one-scenario, all-scenario, latest-run, and report-result workflows.
 metadata:
   short-description: Run retail unit and integration tests
 ---
@@ -133,7 +133,7 @@ the newest working-tree run.
 
 ## Replaying Fixed Conversations
 
-**Use this before a merge.** Forty-five scripted conversations whose words never
+**Use this before a merge.** Scripted conversations whose words never
 change, checked against the cart the service holds rather than the wording of
 the reply.
 
@@ -145,9 +145,8 @@ python -m tests.evaluation.src.replay --label nightly --parallel
 python -m tests.evaluation.src.replay --only J04 --repeat 8  # a flaky turn
 ```
 
-Twenty journeys of six to twenty turns (`J01`-`J20`; `J01` and `J02` are the two
-demo conversations) and twenty-five short probes (`P01`-`P25`), in
-`tests/evaluation/datasets/val/`. Transcripts land in
+Multi-turn journeys (`J*`; `J01` and `J02` are the two demo conversations),
+short probes (`P*`) and regressions, in `tests/evaluation/datasets/val/`. Transcripts land in
 `tests/evaluation/results/val/<label>/transcripts/`, with the cart printed after
 every turn, and are the thing to read or to hand to a judge.
 

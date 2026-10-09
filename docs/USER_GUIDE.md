@@ -56,15 +56,13 @@ does not infer preferences or sentiment from what you said earlier.
 
 ## Image search
 
-Click the camera icon and choose a file. JPEG and PNG, up to 10MB.
+Click the paperclip icon and choose a file. JPEG and PNG, up to 10MB.
 
-Clear, well-lit shots of a single product on an uncluttered background work
-best. Group shots, heavy filtering, and screenshots work poorly, because the
-search matches the whole image rather than isolating a product within it.
-
-Image and hybrid search appear only when the deployment has image embeddings
-built; otherwise the modes are absent from `/capabilities` and the assistant
-will say so.
+The assistant's vision model reads the photo and the catalog search runs on
+what it sees. Clear, well-lit shots of a single product on an uncluttered
+background work best; group shots, heavy filtering, and screenshots work
+poorly, because the description covers the whole image rather than one product
+within it.
 
 ## 🛠️ Troubleshooting
 

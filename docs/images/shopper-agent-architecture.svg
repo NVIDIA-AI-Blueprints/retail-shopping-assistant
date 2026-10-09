@@ -80,7 +80,7 @@
     <text x="207" y="557" text-anchor="middle" class="box-text">
       <tspan x="207" dy="0">Query + conversation_id</tspan>
       <tspan x="207" dy="24">Session + cart identity</tspan>
-      <tspan x="207" dy="24">Optional input guardrails</tspan>
+      <tspan x="207" dy="24">Input guardrails on</tspan>
     </text>
   </g>
 
@@ -97,13 +97,14 @@
   </g>
 
   <g>
-    <rect x="724" y="456" width="330" height="202" rx="14" class="built"/>
+    <rect x="724" y="456" width="330" height="214" rx="14" class="built"/>
     <rect x="724" y="456" width="330" height="9" rx="4" class="built-bar"/>
     <text x="889" y="497" text-anchor="middle" class="box-title">Mandatory skill activation</text>
     <text x="889" y="527" text-anchor="middle" class="box-text">
-      <tspan x="889" dy="0">Product discovery · Outfit styling</tspan>
-      <tspan x="889" dy="24">Budget shopping · Cart management</tspan>
-      <tspan x="889" dy="24">Store policy answers</tspan>
+      <tspan x="889" dy="0">Product discovery · Catalog questions</tspan>
+      <tspan x="889" dy="24">Outfit styling · Budget shopping</tspan>
+      <tspan x="889" dy="24">Cart management · Store policy</tspan>
+      <tspan x="889" dy="24">Destination weather (optional)</tspan>
       <tspan x="889" dy="24">Role + exact tools_granted</tspan>
       <tspan x="889" dy="24">Selected files + grant union</tspan>
     </text>
@@ -112,13 +113,13 @@
   <g>
     <rect x="1104" y="444" width="404" height="226" rx="14" class="built"/>
     <rect x="1104" y="444" width="404" height="9" rx="4" class="built-bar"/>
-    <text x="1306" y="485" text-anchor="middle" class="box-title">Eleven-tool registry · selected subset</text>
+    <text x="1306" y="485" text-anchor="middle" class="box-title">Tool registry · selected subset</text>
     <text x="1306" y="515" text-anchor="middle" class="box-text">
-      <tspan x="1306" dy="0">Catalog: search · details · availability</tspan>
+      <tspan x="1306" dy="0">Catalog: describe · search · details</tspan>
       <tspan x="1306" dy="24">Memory: exact product resolver</tspan>
       <tspan x="1306" dy="24">Cart: read · total · add · remove · update</tspan>
-      <tspan x="1306" dy="24">Read boundaries: promotions · policy</tspan>
-      <tspan x="1306" dy="24">Frontmatter + policy bind visibility</tspan>
+      <tspan x="1306" dy="24">Store: policy · availability · promotions</tspan>
+      <tspan x="1306" dy="24">Optional: weather forecast</tspan>
       <tspan x="1306" dy="24">Dispatch rechecks grants before handlers</tspan>
     </text>
   </g>
@@ -162,5 +163,5 @@
   <path d="M 1104 797 L 1080 797 Q 1070 797 1070 842 L 207 842 Q 162 842 162 797 L 162 628" class="flow"/>
   <text x="260" y="836" class="arrow-label">grounded response · next turn retains conversation scope</text>
 
-  <text x="70" y="892" class="note">Built: exact same-conversation product resolution. Not built: cross-conversation memory, fuzzy matching, preferences, or multi-replica durable state.</text>
+  <text x="70" y="892" class="note">Built: exact same-conversation product resolution. Not built: cross-conversation memory, fuzzy matching, or inferred preferences. One memory replica on SQLite; see Taking to Production to scale.</text>
 </svg>

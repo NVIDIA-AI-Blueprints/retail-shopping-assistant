@@ -25,7 +25,6 @@ tests/
 │   ├── time_breakdown.py
 │   └── quality_plots.py
 └── evaluation/             # Challenger/Judge evaluation workflows
-    ├── PLAN.md
     ├── eval_config.yaml
     ├── judge_rules.md
     └── datasets/
@@ -121,7 +120,7 @@ against a deployed stack.
 
 ## Replaying fixed conversations
 
-Forty-five scripted conversations whose words never change, checked against the
+Scripted conversations (journeys, probes and regressions) whose words never change, checked against the
 cart the service holds rather than the wording of the reply.
 
 ```bash

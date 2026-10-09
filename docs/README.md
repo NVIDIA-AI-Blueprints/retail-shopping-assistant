@@ -18,9 +18,8 @@ basis of whether you have GPUs.
 | **Self-hosted models (vLLM)** | GPUs, plus a Hugging Face token for gated checkpoints | [Deployment Guide - Locally Hosted Models](DEPLOYMENT.md#-locally-hosted-models) |
 | **Managed cloud GPU** | An NVIDIA Brev account | [Deploy on Brev](BREV.md) |
 
-The self-hosted path is a hybrid: the language and text-embedding models move
-onto your GPUs, while image embedding and the guardrail models stay on hosted
-endpoints. [Deployment Options](DEPLOYMENT.md#%EF%B8%8F-deployment-options)
+The self-hosted path moves the language, text-embedding and guardrail models
+onto your GPUs. [Deployment Options](DEPLOYMENT.md#%EF%B8%8F-deployment-options)
 explains which roles can move and which cannot.
 
 ## Where to go by role
@@ -31,7 +30,8 @@ the chat interface, product search, cart, and image upload, and check the
 
 **I want to turn on safety checks.** [Guardrails](GUARDRAILS.md) covers the
 whole feature: how it decides, what a failed check costs, what the shopper
-sees, and how to read a decision afterwards. It ships off.
+sees, and how to read a decision afterwards. It ships on for API requests; the UI toggle
+starts off.
 
 **I want to deploy it.** Work through the [Deployment Guide](DEPLOYMENT.md) end
 to end. It owns prerequisites, both deployment paths, every configuration
@@ -130,7 +130,7 @@ Every setting has exactly one home, and the
 - [Model Sampling and Output Limits](DEPLOYMENT.md#model-sampling-and-output-limits)
   covers temperature and token caps.
 - [Guardrails](GUARDRAILS.md) covers content safety, topic control, and
-  multimodal safety, which ship disabled.
+  multimodal safety, which ship enabled for API requests.
 
 Environment variables override the shipped defaults, so you do not have to edit
 YAML to change a setting. An unset or empty variable leaves the default in

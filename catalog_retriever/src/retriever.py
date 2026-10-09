@@ -3,9 +3,9 @@
 
 """
 A Retriever class that uses NVIDIA embedding models to retrieve relevant products from a database.
-The first model uses image embeddings to retrieve the most relevant products.
-The second model uses text embeddings to retrieve relevant products.
-Performs both of these in parallel and then re-ranks the results from bothmodels.
+Text embeddings drive retrieval. When image embeddings are enabled and a query
+carries an image, image and text retrieval run in parallel and their results are
+re-ranked together.
 """
 
 import asyncio

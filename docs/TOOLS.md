@@ -30,7 +30,7 @@ where these calls sit inside it; [Skills](SKILLS.md) covers who grants what.
 | `get_store_policy_tool` | `read_only_policy` | Operator-managed static policy file | Registered |
 | `check_product_availability_tool` | `read_only_catalog` | **An application stub. No live inventory source** | Registered |
 | `check_active_promotions_tool` | `read_only_promotions` | **An application stub. No live promotions source** | Registered |
-| `get_weather_forecast_tool` | `read_only_weather` | Visual Crossing Timeline; off by default, and returns a typed failure when disabled, unconfigured, or outside the ~15-day horizon | Registered |
+| `get_weather_forecast_tool` | `read_only_weather` | Visual Crossing Timeline; registered only when `WEATHER_ENABLED=true` (off by default), and returns a typed failure when unconfigured or outside the ~15-day horizon | Registered |
 
 ## Risk classes
 
@@ -98,13 +98,15 @@ in a catalog reaching $269.99.
 ### `search_catalog_tool`
 
 Product discovery over the catalog. Requires product text or an attached image.
+The call takes `scopes`, one per advertised category (up to
+`max_search_scopes_per_call`), and an optional `not_covered`. Each scope has:
 
 | Field | Meaning |
 | --- | --- |
 | `semantic_query` | Soft ranking direction only; it cannot change the selected taxonomy |
 | `shopper_guidance` | One product-agnostic sentence authored before retrieval; empty only for image-only search |
-| `requested_product_type` | The shortest product noun or true umbrella from this turn or its direct antecedent; `null` only for image-only search |
-| `taxonomy` | Capability-derived category and subcategory; at most one category per call |
+| `requested_product_type` | The shortest product noun or true umbrella from this turn or its direct antecedent; `null` for image-only search and for a request that names no product type |
+| `taxonomy` | Capability-derived category and subcategory; at most one category per scope |
 | `required_constraints` | Capability-derived hard filters, plus the explicit `unadvertised_requirements` lane |
 | `scope_complete` | Whether this search finishes the request |
 | `search_mode` | Optional, from the advertised modes |
@@ -118,7 +120,8 @@ no keyword router. The rules worth knowing:
   the shopper's wording.
 - **One normalized taxonomy-plus-constraints scope runs once per turn.**
   Repeating it returns `STOP_TOOL_USE` even if `semantic_query` is reworded.
-  Three searches per turn, and one repair attempt per scope.
+  Up to `max_catalog_searches_per_turn` product roles per turn (default 10), and
+  one repair attempt per scope.
 - **A zero-result search proves absence only for its own exact scope,** never
   for another product type or the catalog as a whole.
 - A shopper-named type that is not separately advertised may be searched under
@@ -131,7 +134,8 @@ available; those refs become this turn's evidence for detail, availability, and
 cart-add calls. Products actually presented to the shopper become a durable
 `candidate_set_presented` event; candidates that were not presented do not.
 
-Granted by `product-discovery`, `outfit-styling`, and `cart-management`.
+Granted by `product-discovery`, `outfit-styling`, `catalog-questions`, and
+`cart-management`.
 Returned IDs are the feed's own `record_id` values, which the current feed does
 not guarantee across catalog replacements.
 

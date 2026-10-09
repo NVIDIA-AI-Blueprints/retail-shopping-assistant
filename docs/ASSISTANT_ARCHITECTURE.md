@@ -48,7 +48,8 @@ a health check.
    turn requires a typed resolver call first, which is deterministic and makes
    no model or catalog call; only a unique match becomes usable evidence.
 5. **Search.** Requests pass a capability-derived schema and deterministic
-   validation. Three searches per turn, and one repair attempt per scope, in an
+   validation. Up to `max_catalog_searches_per_turn` product roles per turn
+   (default 10), and one repair attempt per scope, in an
    isolated context that sees only the current message and sanitized validator
    feedback. A repair may correct the request or signal that clarification is
    needed; it may not invent taxonomy or constraints.

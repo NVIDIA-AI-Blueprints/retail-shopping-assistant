@@ -82,8 +82,8 @@ All services communicate via HTTP REST APIs:
 
 ### 1. Chain Server (`/chain_server/`)
 
-**Purpose**: Main orchestrator using `DeepAgentsRuntime` and registered catalog,
-product-detail, and cart tools. The older planner/retriever/cart/chatter graph
+**Purpose**: Main orchestrator using `DeepAgentsRuntime` and the registered
+shopping tools a turn's activated skills grant. The older planner/retriever/cart/chatter graph
 has been removed; `runtime/runtime.py` is the only serving path.
 
 **Key Files**:
@@ -97,11 +97,16 @@ has been removed; `runtime/runtime.py` is the only serving path.
 - `commerce_tools.py`: Typed catalog and cart service adapters
 - `media_perception.py`: Image/video analysis before the assistant turn
 
-**Registered Tool Types**:
-- **Catalog search**: Semantic/image retrieval with capability-validated hard filters
-- **Product details**: Deterministic lookup for a known search ref
+**Registered Tool Types** (twelve shopping tools, assembled in `runtime/runtime.py`;
+`docs/TOOLS.md` is the full list):
+- **Catalog**: describe the catalog, search (semantic retrieval with
+  capability-validated hard filters), product details for a known search ref
+- **Conversation**: exact resolver for products shown earlier in the conversation
 - **Cart reads and totals**: Authoritative state and code-based arithmetic
-- **Cart mutations**: Explicit product/cart-line refs with service-side confirmation
+- **Cart mutations**: add, remove and set quantity, with explicit product/cart-line
+  refs and service-side confirmation
+- **Store**: policy answers, availability and promotions (the last two are stubs)
+- **Weather forecast**: registered only when `WEATHER_ENABLED=true`
 
 ### 2. Catalog Retriever (`/catalog_retriever/`)
 
@@ -116,24 +121,20 @@ has been removed; `runtime/runtime.py` is the only serving path.
 
 **API Endpoints**:
 - `POST /query/text`: Text-based product search
-- `POST /query/image`: Image + text search
 - `GET /capabilities`: Active fields, values, ranges, and taxonomy scopes
 - `GET /products/{product_id}`: Deterministic detail fields
 
 ### 3. Memory Retriever (`/memory_retriever/`)
 
-**Purpose**: User context and shopping cart persistence
+**Purpose**: Durable conversation turns, presented products and shopping cart
+persistence in a single-replica SQLite database
 
-**Data Storage**:
-- **Users Table**: `id`, `context` (conversation history)
-- **CartItems Table**: `user_id`, `item`, `amount`
+**Data Storage** (`memory_retriever/src/models.py`): `conversation_turns`,
+`conversation_events` and `conversation_projection` for turns and presented
+products; `cart_items`, `cart_mutations` and `cart_quantity_idempotency` for the
+cart; plus `users`, `shopper_profiles` and `schema_migrations`.
 
-**API Endpoints**:
-- `GET /user/{user_id}/context`: Retrieve user context
-- `POST /user/{user_id}/context/add`: Add to context
-- `GET /user/{user_id}/cart`: Get cart contents
-- `POST /user/{user_id}/cart/add`: Add items to cart
-- `POST /user/{user_id}/cart/remove`: Remove items from cart
+**API Endpoints**: see [Memory Retriever (Port 8011)](#memory-retriever-port-8011).
 
 ### 4. Guardrails (`/guardrails/`)
 
@@ -153,7 +154,8 @@ has been removed; `runtime/runtime.py` is the only serving path.
 - `App.tsx`: Main application container
 - `chatbox/`: Chat interface with streaming support
 - `Navbar.tsx`: Navigation header
-- `Apparel.tsx`: Product image display
+- `CartPanel.tsx`, `ProductDetailPanel.tsx`, `ShopperPicker.tsx`: Cart, product
+  detail and shopper profile panels
 - `hooks/useChat.ts`: Chat state management
 
 **Features**:
@@ -179,13 +181,13 @@ has been removed; `runtime/runtime.py` is the only serving path.
    ↓
 5. Load scoped memory/cart; run optional input safety and media analysis
    ↓
-6. Deep Agents model selects registered catalog/detail/cart tools
+6. Skill activation, then the model calls the shopping tools those skills grant
    ↓
 7. Ground final text against tool evidence and current cart
    ↓
 8. Optional output safety check
    ↓
-9. Persist bounded conversation context
+9. Finalize the durable conversation turn
    ↓
 10. Streaming Response to Frontend
 ```
@@ -204,9 +206,7 @@ request again.
    ↓
 2. Model emits semantic text and structured required constraints
    ↓
-3. Chain server validates constraints, then calls Catalog Retriever
-   ├─ Text Search: /query/text
-   └─ Image Search: /query/image  
+3. Chain server validates constraints, then calls Catalog Retriever /query/text
    ↓
 4. Milvus similarity search plus deterministic hard filtering
    ↓
@@ -235,32 +235,32 @@ request again.
 - `POST /query/stream`: Streaming query processing
 - `POST /query/timing`: Query with timing information
 - `GET /capabilities`: UI/model roles plus cached catalog contract
-- `GET /health`: Health check
+- `GET /cart`: Cart for a `cart_id`
+- `GET /shopper-profiles`: Shopper profiles for the picker
+- `GET /health`, `GET /ready`: Liveness and readiness
 
 ### Catalog Retriever (Port 8010)
 - `POST /query/text`: Text-based search
-- `POST /query/image`: Image + text search
 - `GET /capabilities`: Active catalog query contract
 - `GET /products/{product_id}`: Deterministic product details
-- `GET /health`: Health check
+- `GET /health`, `GET /ready`: Liveness and readiness
 
 ### Memory Retriever (Port 8011)
-- `GET /user/{user_id}`: Get user data
-- `GET /user/{user_id}/context`: Get conversation context
-- `POST /user/{user_id}/context/add`: Add to context
-- `GET /user/{user_id}/cart`: Get cart contents
-- `POST /user/{user_id}/cart/add`: Add cart item
-- `POST /user/{user_id}/cart/remove`: Remove cart item
-- `POST /user/{user_id}/cart/clear`: Clear cart
+- `POST /conversations/{conversation_id}/turn/start`: Start (or replay) a turn
+- `POST /conversations/{conversation_id}/turns/{turn_id}/finalize`: Finalize a turn
+- `POST /conversations/{conversation_id}/products/resolve`: Exact resolver for presented products
+- `GET /conversations/{conversation_id}/memory`: Turns and presented products
 - `DELETE /conversations/{conversation_id}`: Delete one conversation, leaving the cart
 - `POST /conversations/{conversation_id}/reset`: Return the conversation and its cart, then delete both
-- `GET /health`: Health check
+- `GET /user/{user_id}`, `GET /user/{user_id}/cart`: Cart contents
+- `POST /user/{user_id}/cart/add`, `/cart/remove`, `/cart/clear`: Cart mutations
+- `PUT /user/{user_id}/cart/{cart_line_id}/quantity`: Set a line's quantity
+- `GET /health`, `GET /ready`: Liveness and readiness
 
 ### Guardrails (Port 8012)
-- `POST /rail/input/check`: Check input safety
-- `POST /rail/output/check`: Check output safety
-- `POST /rail/input/timing`: Input check with timing
-- `POST /rail/output/timing`: Output check with timing
+- `POST /v1/checks`: Input or output safety check
+- `GET /capabilities`: Configured roles and modalities
+- `GET /health`: Health check
 
 ## Configuration System
 
@@ -268,14 +268,15 @@ request again.
 
 Each service has YAML configurations in `/shared/configs/`:
 
-**Chain Server** (`chain_server/config.yaml`):
+**Chain Server** (`shared/configs/chain_server/config.yaml`, excerpt; the file
+is the source of truth):
 ```yaml
 retriever_port: "http://catalog-retriever:8010"
 memory_port: "http://memory-retriever:8011"
-rails_port: "http://rails:8012"
-deepagents_recursion_limit: 24
-max_catalog_searches_per_turn: 3
-max_product_detail_reads_per_turn: 2
+guardrails_url: "http://rails:8012"
+deepagents_recursion_limit: 48
+max_catalog_searches_per_turn: 10
+max_product_detail_reads_per_turn: 10
 ```
 
 **Catalog Retriever** (`catalog_retriever/config.yaml`):
@@ -348,7 +349,6 @@ The frontend handles multiple message types:
 
 **Collections**:
 - **Text Collection**: Product text embeddings
-- **Image Collection**: Product image embeddings
 
 Both collections use an auto-generated integer `pk`, a `text` payload, and a
 runtime-dimension `vector`. Dynamic metadata carries the source product fields
@@ -359,23 +359,11 @@ sidecars cannot map or declare `pk`, `text`, `vector`, or
 
 ### SQLite Storage (Memory Retriever)
 
-**Users Table**:
-```sql
-CREATE TABLE users (
-    id INTEGER PRIMARY KEY,
-    context TEXT DEFAULT ""
-);
-```
-
-**CartItems Table**:
-```sql
-CREATE TABLE cart_items (
-    id INTEGER PRIMARY KEY,
-    user_id INTEGER,
-    item TEXT,
-    amount INTEGER
-);
-```
+One SQLite file on the `memory-data` volume (`MEMORY_DATABASE_URL`), so the
+memory service runs as a single replica. `memory_retriever/src/models.py` defines
+the tables and `migrations.py` applies schema changes in order. A cart line
+(`cart_items`) carries `cart_line_id`, `user_id`, `product_id`, `item`, `size`,
+`amount` and `price`.
 
 ### Product Catalog
 
@@ -404,7 +392,8 @@ The system uses multi-container Docker deployment:
 **Core Services**:
 - `chain-server`: Main orchestrator
 - `catalog-retriever`: Product search
-- `memory-retriever`: User data
+- `catalog-indexer`: One-shot catalog indexing before the retriever starts
+- `memory-retriever`: Conversation turns and cart
 - `rails`: Content safety
 - `frontend`: React UI
 - `nginx`: Reverse proxy
@@ -413,6 +402,7 @@ The system uses multi-container Docker deployment:
 - `milvus`: Vector database
 - `etcd`: Coordination service
 - `seaweedfs`: Object storage for Milvus segments and indexes
+- `phoenix`, `otel-collector`, `relay-collector`: Tracing
 
 ### Environment Variables
 
@@ -438,7 +428,7 @@ docker compose -f docker-compose-model-local.yaml up -d --wait \
 docker compose up -d --build
 ```
 
-**Option B: Cloud Deployment** (uses NVIDIA API Catalog):
+**Option B: Hosted Deployment** (hosted NVIDIA endpoints):
 ```bash
 python scripts/model_config.py deploy --build
 ```
@@ -499,7 +489,7 @@ retail-shopping-assistant/
 
 This NVIDIA Retail Shopping Assistant demonstrates sophisticated AI application architecture combining:
 
-- **Multi-agent coordination** via LangGraph
+- **A single Deep Agents runtime** with skill-granted tools
 - **Vector similarity search** for intelligent product discovery
 - **Real-time streaming** for responsive user experience
 - **Microservices design** for scalability and maintainability

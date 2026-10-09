@@ -69,7 +69,8 @@ cannot bypass the instructions meant to govern it.
 General search, browsing, and filter-driven discovery where no styling
 judgment is wanted.
 
-- One focused search per category scope, at most one category per call.
+- One focused search per category scope; a call may carry several scopes, each
+  with at most one category.
 - Maps the shopper's words onto exact advertised taxonomy and filter values.
   It does not invent them, and repeating a scope is a duplicate even when the
   wording changes.
@@ -161,8 +162,8 @@ procedure and so could not see the tool.
   horizon, or a region with no single answer, it names the one thing it is
   missing and asks.
 - Granting one tool keeps a weather-only turn far cheaper than a product one.
-- Not selected when the turn also asks what to wear or pack — `outfit-styling`
-  covers that and holds the same grant.
+- Selected beside `outfit-styling` when the turn also asks what to wear or pack
+  there; it is the only skill that grants the forecast tool.
 
 ## Changing a skill
 

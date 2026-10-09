@@ -43,9 +43,9 @@ the real ratio from your own deployment before sweeping anything.
 
 The same asymmetry is why **a capacity number is meaningless without a latency
 target attached**: running more requests at once finishes more work per second
-while making each one slower. Size against time to first token rather than
-total turn time, because on a streaming interface that is what the shopper
-actually experiences.
+while making each one slower. Size against total turn time: the reply text
+arrives when the turn finishes, since the stream carries progress frames rather
+than tokens.
 
 ## Traps specific to this application
 
@@ -63,9 +63,9 @@ question at all.
 
 **Env profiles blend rather than switch.** Each `.env.*` file is sourced and
 uses `${VAR:-default}`, so an already-exported value wins and sourcing two
-profiles in one shell silently mixes them. `CATALOG_IMAGE_EMBEDDING_ENABLED`
-leaking in as `true` changes indexing and per-turn latency, so runs you meant
-to compare are not comparable. Measure from a clean shell:
+profiles in one shell silently mixes them. A model URL or feature flag leaking
+in from another profile changes per-turn latency, so runs you meant to compare
+are not comparable. Measure from a clean shell:
 
 ```bash
 env -i HOME="$HOME" PATH="$PATH" bash -c 'set -a; . ./.env.local-models; set +a; docker compose up -d'

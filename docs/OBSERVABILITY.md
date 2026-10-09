@@ -417,8 +417,8 @@ addition:
 - It sees prompts, completions and cart contents. That is shopper data leaving
   the process; it belongs in a backend you control.
 - It brings its own dependency set, including `langchain-anthropic` and
-  `langchain-google-genai`, and pins `deepagents<0.7.0` -- so taking it means
-  not taking a deepagents 0.7 upgrade until that pin moves.
+  `langchain-google-genai`, and requires `deepagents>=0.7.4,<0.8` -- so the
+  app's deepagents pin and Relay's move together.
 - It adds a second OTLP exporter to the process.
 - It attaches through middleware, which sits in the execution path rather than
   beside it. The runtime guards that seam — see below.

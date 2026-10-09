@@ -30,9 +30,6 @@ export EXPOSE_AGENT_DIAGNOSTICS=true   # development only: each turn reports its
 jupyter lab notebook/
 ```
 
-`1_Deploy_Retail_Shopping_Assistant.ipynb` is the previous deploy notebook,
-kept unchanged because the QA workflow runs it. Start with Getting Started.
-
 `helpers.py` holds the shared plumbing: HTTP calls, the chat stream, and paging
 through Phoenix. `trace_capture.py` turns Phoenix's model-call spans into
 AIPerf's trace format for Notebook 4. `stress_replay.py` runs and reads AIPerf

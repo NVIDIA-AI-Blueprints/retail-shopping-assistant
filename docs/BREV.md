@@ -88,7 +88,7 @@ Configure the GPU compute resources for optimal performance.
 
 3. Click **Next** to review your configuration
 
-![Step 5: Compute Resources](images/step1.png)
+![Step 5: Compute Resources](images/step5.png)
 
 > **Performance Note**: You only need GPUs here if you intend to serve the models yourself. The default layout for locally hosted models uses six 80 GB GPUs: four for the shopping model's tensor parallel group, one shared by the embedding, content safety and topic control models, and one for the video safety model. Without guardrails (`GUARDRAILS_AVAILABLE=false`) it uses five. [GPU Sizing](DEPLOYMENT.md#gpu-sizing) lists what each model needs and the other layouts. Against NVIDIA-hosted endpoints, no GPU is required.
 
@@ -202,8 +202,6 @@ Use the included deployment notebook to automate the setup process.
    - Configure environment variables
    - Start Docker services
    - Verify deployment status and tour each component
-
-![Step 13: Deploy Notebook](images/step12.png)
 
 > **Critical**: Execute each notebook cell sequentially to ensure proper setup. The notebook contains all necessary commands and explanations.
 

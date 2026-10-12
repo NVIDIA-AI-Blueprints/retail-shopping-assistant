@@ -49,7 +49,7 @@ deployment the whole way: stand it up, read a single turn's traces, replay
 conversations to tell flaky from broken, then serve the model on your own GPUs
 and measure time to first token and throughput under load.
 
-Run it on NVIDIA-hosted endpoints with no GPU, or serve the models yourself.
+Run it on NVIDIA-hosted endpoints with no local GPU, or serve the models yourself.
 
 ## Key Features
 
@@ -87,17 +87,15 @@ including the catalog data foundation and the memory boundaries.
 
 ## Get Started
 
-Every model runs on a hosted NVIDIA endpoint, so this path needs **no GPU**.
+Every model runs on a hosted NVIDIA endpoint, so this path needs **no local GPU**.
 
 **You need** Docker 20.10+ with the Compose plugin, Python on the host, an
-NVIDIA API key from [build.nvidia.com](https://build.nvidia.com), and an
-[NGC account](https://ngc.nvidia.com/) to pull the UI base image.
+NVIDIA API key from [build.nvidia.com](https://build.nvidia.com).
 
 ```bash
 git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
 cd retail-shopping-assistant
 
-docker login nvcr.io                 # username: $oauthtoken, password: NGC API key
 python -m pip install --user -r requirements-deploy.txt
 
 cp .env.example .env
@@ -187,7 +185,6 @@ suites see [Testing and Evaluation](tests/README.md).
 
 ### NVIDIA AI Blueprints
 - [NVIDIA AI Blueprints](https://github.com/NVIDIA-AI-Blueprints): Collection of AI application blueprints
-- [NVIDIA NGC](https://ngc.nvidia.com/): AI platform and container registry
 - [build.nvidia.com](https://build.nvidia.com): Hosted model endpoints and API keys
 
 ### Technologies Used

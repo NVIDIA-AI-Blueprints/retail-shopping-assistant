@@ -12,7 +12,7 @@ you see something else.
 | [4 · Capture Traces](4_Capture_Traces.ipynb) | record every model call of the journeys as an AIPerf trace in `traces/`, for Notebook 5 to replay on a GPU machine running only the model | ~35 min |
 | [5 · Performance Measurement](5_Performance_Measurement.ipynb) | on a GPU machine alone, serve Nemotron with vLLM ([`gpu/`](gpu/README.md)), replay the trace with AIPerf, and measure prefix-cache hit rate, TTFT and throughput by concurrency, caching on and off | hours |
 
-Notebooks 1–4 need no GPU. Notebook 5 needs about 280 GB of GPU memory (4x H100
+Notebooks 1–4 need no local GPU. Notebook 5 needs about 280 GB of GPU memory (4x H100
 by default) and none of the assistant.
 
 ## Before you start
@@ -20,7 +20,7 @@ by default) and none of the assistant.
 - Docker with the Compose plugin
 - Python 3.10 or later, with Jupyter
 - An NVIDIA API key, from [build.nvidia.com](https://build.nvidia.com)
-- No GPU: every model runs on a hosted endpoint
+- No local GPU: every model runs on a hosted endpoint
 
 Start Jupyter from a shell that has the key, at the repo root:
 

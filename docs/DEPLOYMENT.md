@@ -61,35 +61,25 @@ deployed models are vLLM serving Hugging Face checkpoints from
   sudo apt-get install -y python3-yaml
   ```
 
-### NVIDIA Account Setup
+### Accounts and Keys
 
-1. **Create NVIDIA Account**:
-   - Visit [NVIDIA NGC](https://ngc.nvidia.com/)
-   - Sign up for a free account
-
-2. **Generate API Key**:
-   - Navigate to **API Keys** in your account settings
-   - Generate a new API key
-   - Copy the key (starts with `nvapi-`)
-
-3. **Accept Terms**:
-   - Ensure you have access to the NVIDIA Container Registry
-   - For locally hosted models, request access on Hugging Face to the Nemotron 3.5 Super
-     checkpoint and to `meta-llama/Llama-3.1-8B-Instruct`, then create an `HF_TOKEN`
+1. **NVIDIA API key** for the hosted endpoints: sign in at
+   [build.nvidia.com](https://build.nvidia.com) and generate a key (it starts
+   with `nvapi-`). No NGC account is needed; the `nvcr.io` images this project
+   uses pull without a login.
+2. **Hugging Face token**, for locally hosted models only: request access to the
+   Nemotron 3.5 Super checkpoint and to `meta-llama/Llama-3.1-8B-Instruct`, then
+   create an `HF_TOKEN`.
 
 ## 🚀 Hosted Endpoints
 
-Every model role runs on an NVIDIA-hosted endpoint, so this needs no GPU. It is
+Every model role runs on an NVIDIA-hosted endpoint, so this needs no local GPU. It is
 the shortest path for a new environment, and it is the same whether the machine
 is a laptop or a cloud VM.
 
 ```bash
 git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
 cd retail-shopping-assistant
-
-docker login nvcr.io
-# Username: $oauthtoken
-# Password: your NVIDIA API key
 
 python -m pip install --user -r requirements-deploy.txt
 
@@ -185,6 +175,11 @@ Face checkpoints served by vLLM from `docker-compose-model-local.yaml`:
 
 Memory in use was measured on H100 80 GB GPUs. It is more than the weights
 because vLLM also reserves a KV cache, plus a few GB of working memory.
+
+The chat model needs four 80 GB GPUs because only a BF16 checkpoint of
+Nemotron 3.5 Super is published. The two-GPU figure you may see elsewhere is for
+`NVIDIA-Nemotron-3-Super-120B-A12B-FP8`, a text-only model that cannot also serve
+the `vlm` role.
 
 The default layout needs six 80 GB GPUs. `.env.local-models.example` points
 every role at these services through the environment, so `models.yaml` does not change,
@@ -559,8 +554,7 @@ the guardrail models, `NVIDIA_API_KEY` (or `LLM_API_KEY`, `EMBED_API_KEY`,
 
 To repoint a role, set its `*_BASE_URL` and `*_MODEL` variables in your
 profile, together: hosts name the same model differently
-(`inference-api.nvidia.com` adds an `nvidia/` prefix). `NGC_API_KEY` is
-unrelated to inference: it authenticates `nvcr.io` image pulls.
+(`inference-api.nvidia.com` adds an `nvidia/` prefix).
 
 ### Environment Variables
 
@@ -579,7 +573,6 @@ set there; a unit test fails if the two differ, so change both together.
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `NGC_API_KEY` | NVIDIA NGC API key, for `nvcr.io` image pulls only | Only to pull images | - |
 | `NVIDIA_API_KEY` | Fallback inference key for roles whose own key variable is unset | No | - |
 | `LLM_API_KEY` | Language model API key | Yes | - |
 | `LLM_BASE_URL` / `LLM_MODEL` | Shopping agent endpoint and model | Yes | `.env.example` |
@@ -1001,13 +994,13 @@ docker compose -f docker-compose.yaml logs -f chain-server
 
 **Symptoms**: Docker pull errors for nvcr.io containers
 
+The images pull without a login. A stale or wrong saved login can still break
+the pull, so remove it first.
+
 **Solutions**:
 ```bash
-# Verify the NGC API key is set (without printing it)
-test -n "$NGC_API_KEY" && echo set
-
-# Re-authenticate
-docker login nvcr.io
+# Drop a saved nvcr.io login
+docker logout nvcr.io
 
 # Clear Docker cache
 docker system prune -a

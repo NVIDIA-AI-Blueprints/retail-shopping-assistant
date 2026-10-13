@@ -251,9 +251,10 @@ request again.
 - `GET /conversations/{conversation_id}/memory`: Turns and presented products
 - `DELETE /conversations/{conversation_id}`: Delete one conversation, leaving the cart
 - `POST /conversations/{conversation_id}/reset`: Return the conversation and its cart, then delete both
-- `GET /user/{user_id}`, `GET /user/{user_id}/cart`: Cart contents
-- `POST /user/{user_id}/cart/add`, `/cart/remove`, `/cart/clear`: Cart mutations
+- `GET /user/{user_id}/cart`: Cart contents
+- `POST /user/{user_id}/cart/add`, `/cart/remove`: Cart mutations
 - `PUT /user/{user_id}/cart/{cart_line_id}/quantity`: Set a line's quantity
+- `POST /user/{user_id}/clear`: Delete a user's cart and legacy user row
 - `GET /health`, `GET /ready`: Liveness and readiness
 
 ### Guardrails (Port 8012)

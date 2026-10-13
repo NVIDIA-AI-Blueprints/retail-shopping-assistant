@@ -69,9 +69,6 @@ def _sweep_abandoned_turns(
     )
 
 
-class ContextUpdate(BaseModel):
-    new_context: str
-
 class ItemUpdate(BaseModel):
     item: str
     amount: int = Field(gt=0)
@@ -227,14 +224,6 @@ def _cart_item_for_add(
     ).first()
 
 
-@app.get("/user/{user_id}")
-def get_user(user_id: int, db=Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
-    cart_items = db.query(CartItem).filter(CartItem.user_id == user_id).all()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {"id": user.id, "context": user.context, "cart": [_cart_item_dict(item) for item in cart_items]}
-
 @app.get("/user/{user_id}/cart")
 def report_cart(user_id: int, db=Depends(get_db)):
     cart_items = db.query(CartItem).filter(CartItem.user_id == user_id).all()
@@ -247,20 +236,6 @@ def report_cart(user_id: int, db=Depends(get_db)):
         return {
             "user_id": user_id,
             "cart": [_cart_item_dict(item) for item in cart_items]
-        }
-
-@app.get("/user/{user_id}/context")
-def get_context(user_id: int, db=Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        return {
-            "user_id": user_id,
-            "context" : ""
-        }
-    else:
-        return {
-            "user_id": user_id,
-            "context" : user.context
         }
 
 @app.post("/user/{user_id}/cart/add")
@@ -444,67 +419,6 @@ def update_cart_quantity(
     except Exception:
         db.rollback()
         raise
-
-@app.post("/user/{user_id}/cart/clear")
-def clear_cart(user_id: int, db=Depends(get_db)):
-    cart_items = db.query(CartItem).filter(CartItem.user_id == user_id).all()
-    if not cart_items:
-        raise HTTPException(status_code=404, detail="No items found in cart")
-    for item in cart_items:
-        db.delete(item)
-    db.commit()
-    return {
-        "user_id": user_id,
-        "message": f"In response to the user's request, the cart for user {user_id} has been deleted."
-        }
-
-@app.post("/user/{user_id}/context/add")
-def add_context(
-    user_id: int,
-    context_update: ContextUpdate,
-    db=Depends(get_db),
-):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        user = User(id=user_id, context=context_update.new_context)
-        db.add(user)
-    else:
-        user.context += " " + context_update.new_context
-    db.commit()
-    return {
-        "user_id": user_id,
-        "message": "Context updated successfully"
-        }
-
-@app.post("/user/{user_id}/context/replace")
-def replace_context(
-    user_id: int,
-    context_update: ContextUpdate,
-    db=Depends(get_db),
-):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        user = User(id=user_id, context=context_update.new_context)
-        db.add(user)
-    else:
-        user.context = context_update.new_context
-    db.commit()
-    return {
-        "user_id": user_id,
-        "message": "Context updated successfully"
-        }
-
-@app.post("/user/{user_id}/context/clear")
-def clear_context(user_id: int, db=Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    db.delete(user)
-    db.commit()
-    return {
-        "user_id": user_id,
-        "message": f"In response to the user's request, context for user {user_id} has been deleted."
-        }
 
 @app.post("/user/{user_id}/clear")
 def clear_user(user_id: int, db=Depends(get_db)):

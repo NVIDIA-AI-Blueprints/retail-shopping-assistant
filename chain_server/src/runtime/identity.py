@@ -23,10 +23,6 @@ class RequestIdentity:
     request_id: str
 
     @property
-    def legacy_user_id(self) -> int:
-        return self.context_user_id
-
-    @property
     def checkpoint_thread_id(self) -> str:
         return json.dumps(
             [self.conversation_id, self.request_id],

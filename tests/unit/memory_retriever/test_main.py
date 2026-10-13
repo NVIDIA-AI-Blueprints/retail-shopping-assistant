@@ -151,16 +151,12 @@ def test_database_sessions_return_connections_after_each_request(
 
     with TestClient(memory_main.app) as request_client:
         requests = [
-            request_client.get("/user/1/context"),
             request_client.get("/user/1/cart"),
-            request_client.post(
-                "/user/1/context/replace",
-                json={"new_context": "request scoped"},
-            ),
-            request_client.get("/user/404"),
+            request_client.get("/user/2/cart"),
+            request_client.post("/user/404/clear"),
         ]
 
-    assert [response.status_code for response in requests] == [200, 200, 200, 404]
+    assert [response.status_code for response in requests] == [200, 200, 404]
     assert test_engine.pool.checkedout() == 0
 
     for session in retained_sessions:
@@ -654,20 +650,6 @@ class TestCartFlows:
                 idempotency_key=payload["idempotency_key"],
             ).first() is None
 
-    def test_clear_cart_removes_all_items(self, client: TestClient) -> None:
-        _add_cart(client, 1, "A", 1, price=10.0)
-        _add_cart(client, 1, "B", 2, price=20.0)
-
-        response = client.post("/user/1/cart/clear")
-        assert response.status_code == 200
-
-        cart = client.get("/user/1/cart").json()["cart"]
-        assert cart == []
-
-    def test_clear_empty_cart_returns_404(self, client: TestClient) -> None:
-        response = client.post("/user/999/cart/clear")
-        assert response.status_code == 404
-
     def test_carts_are_partitioned_per_user(self, client: TestClient) -> None:
         _add_cart(client, 1, "A", 1, price=10.0)
         _add_cart(client, 2, "B", 1, price=20.0)
@@ -782,54 +764,24 @@ def test_cart_line_id_migration_is_idempotent(
 
 
 # --------------------------------------------------------------------------->
-# Context endpoints
+# Clearing a user
 # --------------------------------------------------------------------------->
 
 
-class TestContextFlows:
-    def test_context_empty_for_unknown_user(self, client: TestClient) -> None:
-        response = client.get("/user/42/context")
-        assert response.status_code == 200
-        assert response.json() == {"user_id": 42, "context": ""}
+def _seed_legacy_user(user_id: int, context: str) -> None:
+    """A user row as older databases hold it; nothing writes these any more."""
 
-    def test_add_context_creates_user(self, client: TestClient) -> None:
-        response = client.post(
-            "/user/1/context/add",
-            json={"new_context": "hello"},
-        )
-        assert response.status_code == 200
+    with memory_main.SessionLocal() as db:
+        db.add(memory_main.User(id=user_id, context=context))
+        db.commit()
 
-        assert client.get("/user/1/context").json()["context"] == "hello"
 
-    def test_add_context_appends_to_existing(self, client: TestClient) -> None:
-        client.post("/user/1/context/add", json={"new_context": "first"})
-        client.post("/user/1/context/add", json={"new_context": "second"})
+def _legacy_user_exists(user_id: int) -> bool:
+    with memory_main.SessionLocal() as db:
+        return db.get(memory_main.User, user_id) is not None
 
-        stored = client.get("/user/1/context").json()["context"]
-        assert stored == "first second"
 
-    def test_replace_context_overwrites_existing(
-        self, client: TestClient
-    ) -> None:
-        client.post("/user/1/context/add", json={"new_context": "old"})
-        client.post(
-            "/user/1/context/replace",
-            json={"new_context": "fresh"},
-        )
-
-        assert client.get("/user/1/context").json()["context"] == "fresh"
-
-    def test_replace_context_creates_user_when_absent(
-        self, client: TestClient
-    ) -> None:
-        client.post(
-            "/user/99/context/replace",
-            json={"new_context": "brand-new"},
-        )
-        assert (
-            client.get("/user/99/context").json()["context"] == "brand-new"
-        )
-
+class TestClearUser:
     def test_clear_user_deletes_the_cart_it_says_it_deleted(
         self, client: TestClient
     ) -> None:
@@ -838,7 +790,7 @@ class TestContextFlows:
         cart while leaving every line in place."""
 
         _add_cart(client, 1, "A", 1, price=10.0)
-        client.post("/user/1/context/add", json={"new_context": "sticky"})
+        _seed_legacy_user(1, "sticky")
 
         response = client.post("/user/1/clear")
 
@@ -846,6 +798,7 @@ class TestContextFlows:
         assert response.json()["deleted_cart_lines"] == 1
         assert response.json()["deleted_context"] is True
         assert client.get("/user/1/cart").json()["cart"] == []
+        assert not _legacy_user_exists(1)
 
     def test_clear_user_clears_a_cart_with_no_stored_context(
         self, client: TestClient
@@ -859,66 +812,18 @@ class TestContextFlows:
         assert response.json()["deleted_context"] is False
         assert client.get("/user/2/cart").json()["cart"] == []
 
+    def test_clear_user_removes_a_legacy_record_with_no_cart(
+        self, client: TestClient
+    ) -> None:
+        _seed_legacy_user(1, "will be gone")
+
+        response = client.post("/user/1/clear")
+
+        assert response.status_code == 200
+        assert response.json()["deleted_cart_lines"] == 0
+        assert not _legacy_user_exists(1)
+
     def test_clear_user_with_nothing_to_clear_returns_404(
         self, client: TestClient
     ) -> None:
         assert client.post("/user/998/clear").status_code == 404
-
-    def test_clear_context_deletes_user(self, client: TestClient) -> None:
-        client.post("/user/1/context/add", json={"new_context": "sticky"})
-        response = client.post("/user/1/context/clear")
-        assert response.status_code == 200
-
-        # After clear the user no longer exists: GET falls back to empty.
-        assert client.get("/user/1/context").json() == {
-            "user_id": 1,
-            "context": "",
-        }
-
-    def test_clear_unknown_user_returns_404(self, client: TestClient) -> None:
-        response = client.post("/user/404/context/clear")
-        assert response.status_code == 404
-
-
-# --------------------------------------------------------------------------->
-# User-level endpoints
-# --------------------------------------------------------------------------->
-
-
-class TestUserEndpoints:
-    def test_get_user_404_for_missing_user(self, client: TestClient) -> None:
-        response = client.get("/user/7")
-        assert response.status_code == 404
-
-    def test_get_user_returns_context(self, client: TestClient) -> None:
-        client.post("/user/7/context/add", json={"new_context": "hi"})
-
-        response = client.get("/user/7")
-        assert response.status_code == 200
-        body = response.json()
-        assert body["id"] == 7
-        assert body["context"] == "hi"
-
-    def test_get_user_returns_only_that_users_cart(self, client: TestClient) -> None:
-        # The other shopper's line takes primary key 1, the id being read.
-        _add_cart(client, 2, "Someone Else's Coat", 1)
-        client.post("/user/1/context/add", json={"new_context": "hi"})
-
-        assert client.get("/user/1").json()["cart"] == []
-
-        _add_cart(client, 1, "Silk Dress", 1)
-        assert [line["item"] for line in client.get("/user/1").json()["cart"]] == [
-            "Silk Dress"
-        ]
-
-    def test_clear_user_removes_record(self, client: TestClient) -> None:
-        client.post("/user/1/context/add", json={"new_context": "will be gone"})
-        response = client.post("/user/1/clear")
-        assert response.status_code == 200
-
-        # After clear the user no longer exists.
-        assert client.get("/user/1").status_code == 404
-
-    def test_clear_user_404_for_missing_user(self, client: TestClient) -> None:
-        response = client.post("/user/1234/clear")
-        assert response.status_code == 404

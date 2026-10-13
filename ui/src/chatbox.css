@@ -368,6 +368,9 @@ html {
 }
 
 .product-detail-panel__media {
+  /* Without this the 4:5 box shrinks in the scrolling column and squashes the
+     image; the description scrolls instead. */
+  flex: 0 0 auto;
   align-items: center;
   aspect-ratio: 4 / 5;
   background: var(--panel-soft);
@@ -771,13 +774,34 @@ html {
   width: 100%;
 }
 
-.product-result-grid {
+.product-result-block {
   align-self: stretch;
-  display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
   margin: 18px 0;
   width: 100%;
+}
+
+.product-result-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  width: 100%;
+}
+
+.product-result-toggle {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-top: 12px;
+  padding: 6px 14px;
+}
+
+.product-result-toggle:hover {
+  border-color: var(--primary);
 }
 
 .product-result-card {
@@ -790,7 +814,7 @@ html {
   display: flex;
   flex-direction: column;
   font: inherit;
-  min-height: 268px;
+  min-height: 228px;
   overflow: hidden;
   padding: 0;
   text-align: left;
@@ -818,7 +842,7 @@ html {
 
 .product-result-card__name {
   color: var(--ink);
-  font-size: 0.92rem;
+  font-size: 0.85rem;
   font-weight: 600;
   line-height: 1.3;
   overflow-wrap: anywhere;

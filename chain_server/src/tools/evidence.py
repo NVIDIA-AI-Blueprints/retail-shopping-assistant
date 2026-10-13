@@ -56,36 +56,24 @@ class SearchEvidence:
     #: the search but were never applied, so no product below is confirmed to
     #: meet them.
     unconfirmed_requirements: list[str] = field(default_factory=list)
-    #: Who every returned piece turns out to be for, when nobody said. A search
-    #: that does not filter on the audience field still comes back with an
-    #: audience, and the shopper is the only party who cannot see that it was
-    #: assumed. Empty once the audience is a stated constraint, because then
-    #: there is no assumption left to disclose.
+    #: Who every returned piece turns out to be for, when nobody said, so the
+    #: reply can disclose the assumed audience. Empty once the audience is a
+    #: stated constraint, because then there is nothing to disclose.
     assumed_audience: list[str] = field(default_factory=list)
     #: The size asked for and the sizes this scope actually comes in, when the
-    #: two do not meet and the size was dropped to search at all. Same reason
-    #: as the audience above: the server changed the question and the shopper
-    #: cannot see it. ``asked`` and ``comes_in``, both as the catalog writes
-    #: them, so the reply can name the real run instead of inventing one.
+    #: two do not meet and the size was dropped to search at all, so the reply
+    #: can disclose it. ``asked`` and ``comes_in`` use the catalog's spelling.
     size_the_scope_has_not: dict[str, Any] = field(default_factory=dict)
     #: The nearest product a hard filter removed: ``display_name`` and
     #: ``price``. Not a result and never an offer -- it fails the search it
-    #: came from. It is typed rather than left in the result prose because the
-    #: grounding editor reads this artifact and not that prose, and the editor
-    #: is what decides the words the shopper gets. Told only in the prose, a
-    #: $169.99 bracelet the price filter had removed never reached the editor,
-    #: which passed a draft saying this shop does not stock one.
+    #: came from. Typed here because the grounding editor reads this artifact,
+    #: not the result prose.
     excluded_near_miss: dict[str, Any] = field(default_factory=dict)
     #: How many products matched this search before top-k cut the list, when
     #: more matched than are being shown. Zero means the products below are
-    #: all of them, and the reply may say so.
-    #:
-    #: Four jewellery pieces were introduced as the ones this shop carries
-    #: under $150. Seventeen do. The count was known -- retrieval reports it --
-    #: and stopped at the tool, so no lane could tell the editor that the list
-    #: it was editing was a slice. A floor rather than an exact total, since
-    #: it counts within the candidate window, which is all "do not call this
-    #: everything" needs.
+    #: all of them, and the reply may say so. A floor, not an exact total: it
+    #: counts within the candidate window, which is enough to stop a reply
+    #: calling a slice everything.
     how_many_matched: int = 0
 
     def as_artifact(self) -> dict[str, Any]:

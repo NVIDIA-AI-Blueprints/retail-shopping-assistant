@@ -95,11 +95,8 @@ class Fence:
         cleaned = _INVISIBLE.sub("", cleaned)
         cleaned = _CONTROL.sub(" ", cleaned)
 
-        # To a fixpoint. With a non-empty replacement one pass is already
-        # enough -- fragments cannot rejoin across "[removed]" -- so this loop
-        # is what keeps that true if the replacement is ever changed to "",
-        # which is the obvious tidy-up and would reassemble
-        # `</shopper_me</shopper_media>dia>` into a working tag.
+        # To a fixpoint, so it stays safe if the replacement is ever changed
+        # to "", which would reassemble `</shopper_me</shopper_media>dia>`.
         marker = re.compile(rf"</?\s*{re.escape(self.label)}\s*>?", re.IGNORECASE)
         while True:
             stripped = marker.sub(_REMOVED, cleaned)
@@ -120,13 +117,9 @@ class Fence:
         return f"{self.open}\n{cleaned}\n{self.close}" if cleaned else ""
 
 
-#: What a shopper's photo or video was seen to contain. The words are a model's,
-#: written about a file a stranger supplied, and they are quoted to a model at
-#: two sites: the agent's own user message, which it reads before choosing
-#: tools, and the grounding editor's media lane. The first matters more -- the
-#: editor only trims a draft, while the agent acts -- and it was the one missed
-#: on the first pass, because the editor is where the lane is named and so the
-#: easier of the two to notice.
+#: What a shopper's photo or video was seen to contain: a model's words about
+#: an untrusted file. Fence it at both sites that quote it, the agent's user
+#: message (which matters more, since the agent acts) and the editor's lane.
 MEDIA_FENCE = Fence(
     label="shopper_media",
     notice=(

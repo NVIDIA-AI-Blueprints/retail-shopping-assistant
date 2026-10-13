@@ -152,11 +152,8 @@ def format_catalog_capabilities_for_prompt(
             ):
                 subcategory = category.subcategories[subcategory_name]
                 lines.append(f"  - {subcategory_field}={subcategory_name}")
-                # 13 of 20 subcategories restated their parent's filter set
-                # word for word, 2,472 characters of it. Every repetition is
-                # another reading of a filter's name with nothing new attached,
-                # which is how a field ends up looking interchangeable with the
-                # nine beside it. Say it where it differs.
+                # List a subcategory's filters only where they differ from
+                # its parent's; repetition makes fields look interchangeable.
                 if (
                     subcategory.filters == category.filters
                     and subcategory.semantic_fields == category.semantic_fields

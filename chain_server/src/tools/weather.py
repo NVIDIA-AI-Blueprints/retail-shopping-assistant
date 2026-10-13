@@ -76,12 +76,9 @@ class WeatherForecastInput(BaseModel):
         ),
     )
     #: Where the place came from, as a parameter rather than a rule, for the
-    #: reason above. A place carried over from an earlier turn can be right
-    #: ("will I need a jacket in the evening", mid-way through planning one
-    #: trip) or wrong ("it's going to snow when we get back" -- the shopper has
-    #: given the conditions, and "back" is home, not the trip). So the field
-    #: asks which place they are asking about now, and names the two things
-    #: that disqualify a carried-over one.
+    #: reason above: a place carried over from an earlier turn can be right or
+    #: wrong, so the field asks which place they mean now and names the two
+    #: things that disqualify a carried-over one.
     #:
     #: Nothing to quote is the signal. Ask which place they mean.
     shopper_words_naming_the_place: str = Field(
@@ -164,10 +161,8 @@ def _format_weather_result(result: Any) -> str:
     """
 
     if not getattr(result, "ok", False):
-        # One sentence, because no forecast is the ordinary state rather than
-        # an event. Everything about how to behave without one already lives
-        # in the agent prompt, where it applies whether or not this tool
-        # exists at all.
+        # One sentence only: how to behave without a forecast lives in the
+        # agent prompt, where it applies whether or not this tool exists.
         return (
             "WEATHER_UNAVAILABLE: "
             + str(getattr(result, "message", "No forecast is available."))
@@ -370,10 +365,8 @@ def build_weather_tool(
         ):
             return WEATHER_PLACE_NOT_STATED
         if weather_call_needs_a_date(date, start_date, end_date):
-            # The library treats a missing date as local today, which is
-            # right for "what is it like there now" and wrong for the only
-            # thing a shopper asks: "a wedding in Cancun" would silently
-            # get today's weather for an event months away. Ask instead.
+            # The library treats a missing date as today, which silently
+            # gives the wrong forecast for a future event. Ask instead.
             return WEATHER_NO_DATE
         if not claim_weather_call(scope):
             return WEATHER_BUDGET_EXHAUSTED

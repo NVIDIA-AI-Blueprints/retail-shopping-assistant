@@ -162,10 +162,8 @@ class CatalogVocabularyJudge:
             return VocabularyVerdict(unavailable=True)
 
         verdict = _read(content, questions, subcategories, colours)
-        # Logged when it works, not only when it breaks. A scope that reached
-        # the catalog when it should have been refused looks identical, after
-        # the fact, to one that was never asked about -- and telling those two
-        # apart is the whole of diagnosing a substitution that got through.
+        # Logged on success too, so a judged scope can be told apart from one
+        # never asked about when diagnosing a substitution.
         logger.info(
             "vocabulary judge: asked=%s scopes=%s colours=%s->%s",
             [q.requested_product_type for q in questions],
@@ -202,38 +200,23 @@ def _prompt(
             " - An umbrella word covers several: \"shoes\" -> flats, heels, "
             "sandals, boots; \"tops\" -> blouses, camisoles, sweaters; "
             "\"jewelry\" -> bracelets, earrings, necklaces.",
-            # Says what not to do and stops. Recommending the empty answer --
-            # "the right and useful answer, because the shopper will be told
-            # plainly that the shop does not carry it" -- read as a quota, and
-            # the model filled it from whichever word the examples above left
-            # unanchored. Asked for a dress, shoes and a bag, it answered bags
-            # with nothing on eight of eight attempts, and the shopper was told
-            # this shop sells no bags while six kinds of them sat in the
-            # catalogue. Removing the sentence: 56 of 56, the same prompt
-            # otherwise, and jeans and hats still correctly come back empty.
+            # Says what not to do and stops. Do not add a sentence recommending
+            # the empty answer: the model reads it as a quota and empties
+            # words the catalogue does sell.
             " - Never reach for the nearest available garment: jeans are not "
             "skirts, a belt is not a blouse, a coat is not a camisole. Return "
             "an empty list for a word this catalogue sells no form of.",
             # Null is "not mine to rule on", read as no verdict, so the search
-            # runs on the subcategories the model chose. Without it a phrase
-            # like "light layer" could only be placed or refused: alone it was
-            # refused, the shopper was told the shop sells no dresses, skirts
-            # or jumpsuits, and the answer flipped with whatever else the call
-            # asked. Six such phrases, alone and batched: 36 of 108 answers
-            # wrong before, 0 of 108 after, with jeans, jacket, coat, hat and
-            # belt still empty every time.
+            # runs on the subcategories the model chose. Without it, phrases
+            # that name no garment get wrongly refused as unsold.
             " - A phrase that names no kind of garment at all -- only a "
             'purpose, occasion or quality, such as "something cosy" or "an '
             'outfit for dinner" -- answer null, not a list. A phrase that '
             "names a garment is never null, whether or not this catalogue "
             "sells it: trousers, a scarf and a raincoat are garments, and "
             '"hiking boots" names boots.',
-            # The bare word "layer" read as a garment this shop does not sell:
-            # empty every time, and the model, which had scoped it to sweaters,
-            # blouses and camisoles, resent the same search ten times in one
-            # turn. Measured on seven role phrases, five of them not named
-            # here: 0 empty after, and the eight uncarried garments still
-            # empty every time.
+            # Role words such as "layer" must answer null, not empty, or they
+            # are judged an unsold garment and the search is refused.
             " - A word for the part a piece plays in a look -- a layer, a "
             "piece, a cover, an extra -- is not a garment name either: answer "
             "null.",

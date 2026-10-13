@@ -146,11 +146,8 @@ def build_store_tools(
         return _format_policy_result(result)
 
     # ``content_and_artifact`` because a repeat is refused with a typed
-    # control signal, and a signal rides on the artifact. Returning the
-    # tuple from a tool declared without it put the pair in the content
-    # instead: the model read ``["STOP_TOOL_USE: ...", {...}]``, the
-    # runtime saw no signal at all, and one turn made this call sixteen
-    # times.
+    # control signal, which rides on the artifact. Without it the tuple lands
+    # in the content and the runtime never sees the signal.
     @tool(
         args_schema=_CheckAvailabilityInput,
         return_direct=False,
@@ -197,10 +194,8 @@ def build_store_tools(
                 )
             )
 
-        # Each check stands in for an inventory-system lookup, so they go out
-        # together. Asking about four products cost four model round trips at
-        # roughly 8.7s each -- enough to exhaust a turn's step budget before
-        # the shopper got an answer.
+        # Each check stands in for an inventory lookup, so they go out
+        # together; one model round trip per product exhausts the step budget.
         if len(requests) == 1:
             answer = _one(requests[0])
         else:

@@ -26,11 +26,8 @@ class CatalogRepairState:
     failed_repair_scope_key: str | None = None
     pending_taxonomy_constraints: dict[str, Any] | None = None
     pending_schema_requirements: list[str] = field(default_factory=list)
-    #: The last scope this turn was turned back on, as sent. A repair that
-    #: comes back identical has not repaired anything, and the locks above
-    #: cannot tell the difference. Remembered here so the second identical
-    #: attempt is the last one, rather than the turn running to its recursion
-    #: limit.
+    #: The last scope this turn rejected, as sent, so a second identical
+    #: attempt is the last one instead of looping to the recursion limit.
     last_rejected_scope: str | None = None
 
 
@@ -54,11 +51,8 @@ class TurnScope:
     searched_catalog_scopes: list[dict[str, Any]] = field(default_factory=list)
     searched_shopper_scopes: set[tuple[str, str]] = field(default_factory=set)
     #: What each answered scope returned, so asking again is answered rather
-    #: than refused. The refusal it replaces told the model to "use the result
-    #: already returned" without returning it -- advisory text standing in for
-    #: data, which is the shape behind every retry loop in this file. Keyed by
-    #: the shopper scope and by the catalog scope, because a repeat arrives as
-    #: either: the same role asked twice, or the same query reworded.
+    #: than refused. Keyed by both shopper scope and catalog scope, because a
+    #: repeat arrives as either.
     answered_scopes: dict[str, str | tuple[str, dict[str, Any]]] = field(
         default_factory=dict
     )
@@ -73,17 +67,6 @@ class TurnScope:
     product_detail_reads: int = 0
 
     # Answers already given this turn, keyed by tool name and arguments.
-    #
-    # Nothing stopped a tool being called with arguments it had already been
-    # called with. Asked which of four dresses was the better value, the model
-    # ran the same block three times -- availability for the same four refs
-    # with the same size hints, promotions with no arguments at all, then the
-    # same product details -- with every previous result still in front of it
-    # and the prompt growing 13.3k to 17.5k as it went. It emitted no
-    # reasoning between the repeats, so this is not deliberation, and the turn
-    # ended at 19 tool calls and 95 seconds only because the product-detail
-    # cap happened to fire.
-    #
     # A repeat is answered from here. The second repeat of the same arguments
     # stops tool use outright, because a note saying "already answered" is
     # itself something to loop against.

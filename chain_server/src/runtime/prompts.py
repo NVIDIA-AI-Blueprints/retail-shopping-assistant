@@ -100,10 +100,8 @@ def format_most_recent_subject(state: Any) -> str:
     Silent when there is neither, so an opening turn gains nothing to ignore.
     """
 
-    # Only the newest showing for now. What the previous turn did to the cart
-    # is computed at the end of a turn for the grounding editor and never
-    # carried into the next one, so there is no field to read here yet -- and a
-    # line that is always empty is dead code pretending to be a feature.
+    # Only the newest showing for now. The previous turn's cart effects are
+    # not carried into the next turn, so there is no field to read here yet.
     lines: list[str] = []
     sets = [
         entry
@@ -339,14 +337,9 @@ def _today_for_the_shopper() -> str:
     return datetime.now(UTC).strftime("%A %d %B %Y")
 
 
-#: `BASE_AGENT_PROMPT` is written for a coding agent: it teaches a todo list, a
-#: filesystem, "read files before editing", and a task-completion protocol. None
-#: of it applies to a shopping assistant, and every tool it names is in
-#: `_EXCLUDED_DEEP_AGENT_TOOLS`, so it spent 3,862 characters instructing the
-#: model to call tools it had not been given. `base_system_prompt` is the
-#: framework's own slot for replacing it; the shopping instructions the agent
-#: does need are assembled in `_system_prompt` and passed as `system_prompt`,
-#: which sits ahead of this base.
+#: Replaces the framework's coding-agent `BASE_AGENT_PROMPT`, whose tools are
+#: all in `_EXCLUDED_DEEP_AGENT_TOOLS`. Shopping instructions belong in
+#: `_system_prompt`, which is passed as `system_prompt` ahead of this base.
 _DEEP_AGENT_BASE_PROMPT = """You have no filesystem, no shell, and no todo list.
 The tools you are given are the only ones that exist; there is no planning or
 bookkeeping step before using them."""

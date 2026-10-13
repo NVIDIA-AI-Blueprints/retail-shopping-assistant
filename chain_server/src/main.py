@@ -408,10 +408,9 @@ class CartQuantityRequest(BaseModel):
     """
 
     quantity: int = Field(ge=0)
-    #: Minted by the caller per intent, and reused only to retry that same
-    #: request. Deriving it from the target quantity is tempting and wrong:
-    #: a replay returns the stored response without mutating, so 2 -> 3 -> 2
-    #: would report success and leave the cart at 3.
+    #: Minted by the caller per intent and reused only to retry that request.
+    #: Never derive it from the target quantity: a replay does not mutate, so
+    #: setting 2, then 3, then 2 again would leave the cart at 3.
     idempotency_key: str = Field(min_length=1, max_length=128)
 
 

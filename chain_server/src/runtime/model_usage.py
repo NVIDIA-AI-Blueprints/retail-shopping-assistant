@@ -162,10 +162,8 @@ def _add_model_usage(
         "calls": existing_calls + max(0, calls),
         "detail": next_detail,
     }
-    # Tokens are additive across calls, and only chat models report them:
-    # embeddings and the guardrails checks have none to report, and showing a
-    # zero there would read as "this model used no tokens" rather than "tokens
-    # are not a thing this model has".
+    # Tokens are additive across calls, and only chat models report them.
+    # Other models must show no token count, not a misleading zero.
     merged_tokens = _safe_int(existing.get("tokens")) + max(0, tokens)
     if merged_tokens > 0:
         entry["tokens"] = merged_tokens

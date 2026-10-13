@@ -252,12 +252,8 @@ class WeatherDay(BaseModel):
 
     date: CalendarDate
     condition: WeatherCondition
-    #: Absent on plenty of sound forecasts. Visual Crossing sends it as null
-    #: for days it will not put a number on, and it did so for every day of
-    #: every forecast this shop asked for -- so requiring it discarded whole
-    #: usable responses, temperatures and all, and the shopper flying to
-    #: Cancun was told no forecast was available for a place and a date the
-    #: provider had answered in full.
+    #: Optional: Visual Crossing often sends null here on sound forecasts, and
+    #: requiring it would discard whole usable responses.
     precipitation_probability_pct: float | None = Field(
         default=None, ge=0, le=100
     )

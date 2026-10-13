@@ -37,10 +37,8 @@ UNSUPPORTED_CONSTRAINT_PREFIX = "The requested catalog requirement cannot be enf
 #: identical attempt shows the reason was not usable.
 _MAX_IDENTICAL_CALLS = 2
 #: Search calls one turn may make, whatever they carry. One call holds a whole
-#: look, so three leaves room for a repair and one follow-up. The per-turn scope
-#: budget counts distinct scopes and never fired on "something to layer over a
-#: sleeveless dress": each retry narrowed the shelves a little, so each was new,
-#: and one turn made twenty calls.
+#: look, so three leaves room for a repair and one follow-up. Needed beside the
+#: distinct-scope budget, which slightly narrowed retries never trip.
 _MAX_SEARCH_CALLS_PER_TURN = 3
 _SYNTHESIS_PROMPT = """## Tool Loop Closed
 
@@ -114,11 +112,8 @@ class ToolLoopControlMiddleware(AgentMiddleware):
         self._search_scope_closed = False
         self._observed_tool_results: set[str] = set()
         #: Every call this turn, counted by tool name and arguments, whatever
-        #: it returned. Other per-turn budgets are counted inside a tool body,
-        #: so a call refused before the body runs reaches none of them: it
-        #: costs nothing and may be sent again unchanged forever. One turn sent
-        #: the same rejected argument 22 times and ended on the graph's
-        #: recursion limit; another sent nine and ran to the agent timeout.
+        #: it returned. Other budgets count inside a tool body, so a call
+        #: refused before the body runs would otherwise repeat unbounded.
         self._calls_made: dict[tuple[str, str], int] = {}
         self._lock = Lock()
 
@@ -192,18 +187,11 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                     ),
                 )
             if self._search_scope_closed and not self._search_budget_exhausted:
-                # The model said it needs no more searching. Its field
-                # description lists four things that should have made it say
-                # otherwise: another product role, a detail check, an
-                # availability check, a cart action. Three of those need a tool
-                # that is not search -- and the fourth needs search itself. So
-                # taking any tool away on a prediction drops one of the four
-                # silently, and the model is predicting, not reporting.
-                #
-                # Nothing is removed here. What bounds the loop is deterministic
-                # and already in place: the per-turn search budget below, the
-                # duplicate-scope guards, and the graph's own recursion limit. A
-                # model with nothing left to do simply stops calling tools.
+                # Do not remove tools here: closure is the model's prediction,
+                # and remaining work (another role, a detail or availability
+                # check, a cart action) may still need any of them. The search
+                # budget, duplicate-scope guards and recursion limit bound the
+                # loop.
                 return request.override(
                     system_message=_append_system_text(
                         request.system_message,
@@ -325,11 +313,9 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                 self._synthesis_required = True
                 continue
             if self._an_identical_call_was_already_made(messages, result):
-                # Not a retry limit. A retry with corrected arguments is the
-                # model working, and the repair path below exists to invite
-                # exactly that. A retry that is byte-identical to a call
-                # already made cannot come out differently, so the turn
-                # answers from what it has instead of spending the graph.
+                # Not a retry limit: corrected retries are welcome. A
+                # byte-identical retry cannot come out differently, so the
+                # turn answers from what it has.
                 self._clear_in_flight_repair()
                 self._synthesis_required = True
                 continue
@@ -342,12 +328,9 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                     self._synthesis_required = True
                 continue
             if SEARCH_SCOPE_COMPLETE_PREFIX in content:
-                # Not synthesis. `scope_complete` is the model predicting it
-                # needs no further *search*, and its own description says to
-                # set it false when a cart action still has to run. Taking it
-                # as the end of the turn made a wrong prediction final and
-                # silent: measured 4/4, an add asked for in plain words was
-                # never attempted, because every tool had been taken away.
+                # Not synthesis: `scope_complete` only predicts that no more
+                # *search* is needed, and other work such as a cart add may
+                # remain, so the turn must keep its tools.
                 self._search_scope_closed = True
             elif _validation_error_body(content):
                 self._queue_repair(messages, tool_call_id, content)
@@ -381,20 +364,10 @@ class ToolLoopControlMiddleware(AgentMiddleware):
         the one that works. Counting those ended a turn that was succeeding.
         """
 
-        # WORKAROUND for a model failure, not a policy about retries.
-        #
-        # The model can emit an assistant message with empty text content
-        # whose tool call is byte-identical to the one it just made, receive a
-        # byte-identical result, and repeat until the graph's recursion limit.
-        # Nothing in the result is being read, so no wording in it can stop
-        # this. Filed against the model as a tool-call repetition lock-in.
-        #
-        # The *pair* is what gets counted, not the call. A repair re-issues the
-        # same arguments after the locked fields are restored, so an identical
-        # call whose result differs is the one that works, and counting those
-        # ended turns that were succeeding. An identical call whose result is
-        # also identical cannot be that: it is the pattern the model is
-        # copying, and the second occurrence is where it establishes.
+        # WORKAROUND for a model failure (repeating a byte-identical tool call
+        # until the recursion limit), not a policy about retries. Count the
+        # call-and-result *pair*: a repair may legitimately re-issue identical
+        # arguments and get a different, useful result.
         unproductive = _produced_nothing_usable(result)
         key = (
             _tool_name(result),
@@ -846,10 +819,8 @@ def _native_validation_fields(content: str) -> set[str]:
     _, separator, validation_error = content.rpartition(" with error:\n")
     if not separator:
         return set()
-    # Under the scoped contract every location reads `scopes.<n>.<field>`, so
-    # the first segment is always "scopes" and nothing ever matched. The result
-    # was an empty set, read by the caller as "nothing identifiable", and the
-    # model was told only that validation had failed -- `BUGS_OPEN` item 8.
+    # Strip the `scopes.<n>.` prefix the scoped contract puts on every
+    # location, or no field name below can ever match.
     validation_error = re.sub(r"^scopes\.\d+\.", "", validation_error, flags=re.M)
     field_names = {
         "semantic_query",

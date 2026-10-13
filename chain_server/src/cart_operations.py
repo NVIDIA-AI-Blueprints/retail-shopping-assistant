@@ -160,15 +160,9 @@ def add_items_to_the_cart(
                 descriptors,
             )
         except (ConversationProductsError, ValidationError) as exc:
-            # The lookup itself failed, which is not the same fact as
-            # this conversation never having shown the product, and
-            # returning the same `None` for both is how a working lookup
-            # came out as a missing bag. The record held the product and
-            # returned it; the response carried one field the product
-            # contract does not admit, so it was refused here and the
-            # refusal was read upstream as "no such reference". The
-            # shopper was told the reference was not valid, and nothing
-            # anywhere said why.
+            # A failed lookup is not the same fact as a product never
+            # shown, so record it as a failure; returning bare `None` would
+            # be read upstream as "no such reference".
             logger.error(
                 "chain-server | cart add | the conversation record could "
                 "not be read for PRODUCT_REF %s: %s",
@@ -191,23 +185,13 @@ def add_items_to_the_cart(
     for (product_ref, size), request in requested_items.items():
         product = scope.product_evidence.get(product_ref)
         if product is None:
-            # The conversation's product index is the identity lane: it
-            # is durable, scoped to this conversation, and printed into
-            # the prompt every turn -- which is where the model read
-            # this ref. Evidence is rebuilt per turn, so a ref shown two
-            # turns ago is absent from it, and refusing on that basis
-            # rejected a ref the shopper had genuinely been shown.
-            # This is a lookup in the conversation's own record, not a
-            # catalog search.
+            # Evidence is rebuilt per turn, so fall back to the
+            # conversation's durable product index for refs shown in
+            # earlier turns. This is not a catalog search.
             product = _resolve_from_conversation_index(product_ref)
         if product is None and product_ref in lookup_failures:
-            # Read, not missing. Sending this down the path below would
-            # tell the model to search the catalog for a product the
-            # record is holding, and to ask the shopper which of the
-            # results they meant -- about the one they just named.
-            # Nothing the model can do repairs a fault in this service,
-            # so say that, and let the turn say so plainly rather than
-            # inventing a reason the shopper is at fault.
+            # A service fault, not a missing product: do not send the
+            # model searching or asking the shopper, which cannot fix it.
             failed.append(
                 f"- PRODUCT_REF '{product_ref}': this conversation's "
                 "record could not be read, which is a fault on our "
@@ -218,20 +202,9 @@ def add_items_to_the_cart(
             )
             continue
         if product is None:
-            # Two different situations reach here, and naming only one
-            # of them stranded the other.
-            #
-            # A ref the shopper was never shown: the model passes the
-            # product's name, and told only that a name is not a ref it
-            # asked the shopper for the exact catalogue name -- the
-            # assistant's own job, with a search budget unspent.
-            #
-            # A ref shown in an *earlier* turn: evidence is rebuilt per
-            # turn, so a real ref from last turn is absent from this
-            # one. "Add it in a 10 as well" carried the correct ref for
-            # a dress added moments earlier, was told to go searching,
-            # and gave up -- so a shopper asking for a second size got
-            # "the add didn't go through".
+            # The message must cover both cases that reach here: a name
+            # or never-shown ref (search the catalog) and a ref from an
+            # earlier turn, absent from per-turn evidence (resolve it).
             failed.append(
                 f"- PRODUCT_REF '{product_ref}': not established in "
                 "this turn. If this product was shown earlier in the "
@@ -282,13 +255,9 @@ def add_items_to_the_cart(
                 "the new PRODUCT_REF before adding it."
             )
             continue
-        # Whether the catalog sells this size is a fact. Whether the
-        # shopper settled on it is answered from their own words, all
-        # of them, this turn and every turn before -- so "add the Jade
-        # Suede Heels in a 7" passes on the 7 they typed, and a 7 they
-        # gave five turns ago for something else still counts as said.
-        # What does not pass is a size that appears nowhere they spoke,
-        # which is the only way one nobody picked reaches the cart.
+        # The catalog must sell the size, and the shopper must have said
+        # it somewhere in the conversation; a size they never said is
+        # refused so one nobody picked cannot reach the cart.
         size_issue = _cart_size_issue(
             active_detail.product,
             size,
@@ -315,10 +284,8 @@ def add_items_to_the_cart(
             continue
         if one_size_note:
             choices_from_a_description.append(one_size_note)
-        # Disclosed, not refused. A description the model read one way
-        # is added and said out loud, because the cart is on screen and
-        # a wrong line is one click away -- where a refusal costs a
-        # turn on every request it misjudges, and it misjudged plenty.
+        # Disclosed, not refused: a wrong line is one click away on
+        # screen, while a refusal costs a turn whenever it misjudges.
         choice_note = _cart_product_choice_note(
             active_detail.product,
             _shopper_words_this_conversation(state),
@@ -354,13 +321,9 @@ def add_items_to_the_cart(
             state.cart,
             scope.product_evidence.values(),
         )
-        # Nothing is written -- the add is all or nothing. But the items
-        # that were established travel with the refusal, so the question
-        # put to the shopper is only the one still open.
-        # An item can pass every per-item gate and still be refused
-        # below as outside this turn's request. Listing it as settled
-        # would tell the shopper not to ask again about the very thing
-        # that failed.
+        # The add is all or nothing, but established items travel with
+        # the refusal so only the open question is asked. Out-of-scope
+        # items are not listed as settled.
         ready = [
             f"- {product.display_name}"
             + (f", size {size}" if size else "")
@@ -407,11 +370,8 @@ def add_items_to_the_cart(
                     "quantity": quantity,
                 }
             )
-            # The size travels with the line it went in as. Nothing
-            # now refuses a size the shopper did not choose, so the
-            # whole safety story is that it is visible -- to the model
-            # writing the reply, and through it to the shopper, on the
-            # turn it happens rather than at checkout.
+            # Report the size with the line: visibility on this turn is
+            # the safeguard against a size the shopper did not choose.
             added.append(
                 f"- {quantity} x {product.display_name}"
                 + (f", size {size}" if size else "")
@@ -533,10 +493,8 @@ def change_a_line_size(
 
     held = str(line.get("size") or "").strip()
     if held and size.casefold() == held.casefold():
-        # The size asked for is the size they have, so this is a
-        # quantity change that happens to name a size. Answering it as
-        # one keeps the cart to a single line: routing it through the
-        # add below would put a second line on the same size.
+        # Same size as held, so treat it as a quantity change; the add
+        # below would create a second line on the same size.
         return update_a_cart_line(runtime, state, identity, scope, cart_line_id, quantity)
     if quantity == 0:
         return (
@@ -558,10 +516,8 @@ def change_a_line_size(
             detail.error,
             cart_validation=True,
         )
-    # Whether the catalog sells the new size is a fact, and mostly the
-    # same fact the add path checks. A resize that skipped it would
-    # seat a size the shop does not sell by a route the add refuses --
-    # and this is the route a shopper naming a size reaches.
+    # Check the catalog sells the new size, as the add path does, so a
+    # resize cannot seat a size the add would refuse.
     size_issue = _cart_resize_issue(detail.product, size)
     if size_issue:
         return f"CART_UPDATE_REFUSED: {size_issue}"

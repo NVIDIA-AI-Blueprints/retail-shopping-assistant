@@ -215,11 +215,9 @@ const STARTER_PROMPTS: Array<{
 
 const Chatbox: React.FC<ChatboxProps> = ({
   selectedProduct,
-  selectedShopperProfileId,
   onProductSelect,
   onProductsUpdate,
   onBusyChange,
-  preserveIdentityOnMount,
 }) => {
   const defaultMediaCapabilities: MediaCapabilities = {
     enabled: config.features.imageUpload.enabled,
@@ -611,8 +609,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
         outgoing,
         image || "",
         guardrailsAvailable ? isGuardrailsOn : undefined,
-        media,
-        selectedShopperProfileId
+        media
       );
       const requestId = requestIdForTurn(turnFingerprint(payload));
       payload.request_id = requestId;
@@ -959,8 +956,8 @@ const Chatbox: React.FC<ChatboxProps> = ({
     if (!hasBeenOpened || initialResetStartedRef.current) return;
 
     initialResetStartedRef.current = true;
-    void handleResetRef.current?.(!preserveIdentityOnMount);
-  }, [hasBeenOpened, preserveIdentityOnMount]);
+    void handleResetRef.current?.(true);
+  }, [hasBeenOpened]);
 
   return (
     <section className="chatbox">

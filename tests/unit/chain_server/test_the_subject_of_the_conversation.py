@@ -87,7 +87,6 @@ def test_the_lane_actually_reaches_the_prompt() -> None:
         media_analysis="",
         cart=Cart(),
         context="",
-        shopper_context=None,
         wearer_audience=[],
         historical_product_sets=[_HEELS],
     )
@@ -114,7 +113,6 @@ def test_an_opening_turn_has_no_empty_section() -> None:
         media_analysis="",
         cart=Cart(),
         context="",
-        shopper_context=None,
         wearer_audience=[],
         historical_product_sets=[],
     )

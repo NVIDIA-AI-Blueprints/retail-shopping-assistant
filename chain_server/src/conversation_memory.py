@@ -15,7 +15,7 @@ import requests
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 from shared.commerce_contracts import ProductSummary
 
-from .agenttypes import SHOPPER_PROFILE_ID_PATTERN, DialogueTurn, ShopperContext
+from .agenttypes import DialogueTurn
 
 TurnStatus = Literal["started", "completed", "failed", "blocked", "abandoned"]
 FinalTurnStatus = Literal["completed", "failed", "blocked"]
@@ -54,12 +54,6 @@ class TurnStartRequest(_MemoryModel):
     request_digest: str = Field(
         ...,
         pattern=r"^sha256:[0-9a-f]{64}$",
-    )
-    shopper_profile_id: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=64,
-        pattern=SHOPPER_PROFILE_ID_PATTERN,
     )
     catalog_revision: str | None = Field(default=None, min_length=1, max_length=512)
 
@@ -149,7 +143,6 @@ class TurnStartResult(_MemoryModel):
         default_factory=list,
         max_length=5,
     )
-    shopper_context: ShopperContext | None
     projection: ConversationProjection = Field(default_factory=ConversationProjection)
     cart: list[ConversationCartItem] = Field(default_factory=list)
     assistant_text: str | None = Field(default=None, max_length=100_000)
@@ -247,7 +240,6 @@ class ConversationMemoryClient:
         shopper_text: str,
         media: Sequence[Mapping[str, Any]] = (),
         cart_user_id: int,
-        shopper_profile_id: str | None = None,
         catalog_revision: str | None = None,
         guardrails_enabled: bool | None = None,
     ) -> TurnStartResult:
@@ -260,23 +252,15 @@ class ConversationMemoryClient:
             request_digest=build_request_digest(
                 shopper_text,
                 media,
-                shopper_profile_id=shopper_profile_id,
                 guardrails_enabled=guardrails_enabled,
             ),
-            shopper_profile_id=shopper_profile_id,
             catalog_revision=catalog_revision,
         )
         payload = self._post(
             f"/conversations/{_path_segment(conversation_id)}/turn/start",
             request.model_dump(mode="json"),
         )
-        result = self._validate_response(payload, TurnStartResult)
-        if (shopper_profile_id is None) != (result.shopper_context is None):
-            raise ConversationMemoryError(
-                "shopper_context_invalid",
-                "Conversation memory returned mismatched shopper context.",
-            )
-        return result
+        return self._validate_response(payload, TurnStartResult)
 
     def finalize_turn(
         self,
@@ -362,13 +346,12 @@ def build_request_digest(
     shopper_text: str,
     media: Sequence[Mapping[str, Any]] = (),
     *,
-    shopper_profile_id: str | None = None,
     guardrails_enabled: bool | None = None,
 ) -> str:
-    """Fingerprint shopper input, selected profile, guardrails, and media hashes.
+    """Fingerprint shopper input, guardrails, and media hashes.
 
-    Guest requests retain the pre-profile canonical shape so finalized turns
-    created before the shopper-profile migration remain exactly replayable.
+    The canonical shape is the one finalized turns were stored with, so a
+    retried request still matches its earlier turn.
     """
 
     media_fingerprints = [
@@ -383,8 +366,6 @@ def build_request_digest(
         "shopper_text": shopper_text,
         "media": media_fingerprints,
     }
-    if shopper_profile_id is not None:
-        digest_payload["shopper_profile_id"] = shopper_profile_id
     if guardrails_enabled:
         digest_payload["guardrails_enabled"] = True
     canonical = _canonical_json(digest_payload)
@@ -480,12 +461,6 @@ def _dialogue_turn(sequence: int, shopper: str, assistant: str) -> DialogueTurn:
 
 def _http_error(status_code: int, detail: str = "") -> ConversationMemoryError:
     if status_code == 409:
-        if detail == "conversation_profile_mismatch":
-            return ConversationMemoryError(
-                detail,
-                "Conversation is bound to another shopper profile.",
-                status_code=status_code,
-            )
         if detail in {"turn_in_progress", "conversation_turn_in_progress"}:
             return ConversationMemoryError(
                 detail,
@@ -508,12 +483,6 @@ def _http_error(status_code: int, detail: str = "") -> ConversationMemoryError:
         return ConversationMemoryError(
             "memory_turn_conflict",
             "Conversation turn conflicts with an existing request.",
-            status_code=status_code,
-        )
-    if status_code == 404 and detail == "shopper_profile_not_found":
-        return ConversationMemoryError(
-            detail,
-            "Shopper profile was not found.",
             status_code=status_code,
         )
     if status_code in {400, 404, 422}:

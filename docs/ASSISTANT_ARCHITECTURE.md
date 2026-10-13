@@ -75,10 +75,6 @@ changing the runtime.
   resolution. Ambiguous or missing refs never authorize a downstream tool.
 - **A skill grant is checked twice** — once when building the model's visible
   toolset, once at dispatch against immutable policy.
-- **Shopper profiles are soft guidance only.** The runtime renders one block
-  with type, behavior, and saved ZIP. It cannot grant a tool or establish a
-  budget, requirement, cart intent, or product fact, and explicit shopper
-  instructions outrank it. Caller-supplied persona objects are never injected.
 - **The checkpointer is not memory.** It is request-scoped and process-local,
   survives only a finalize failure, and is deleted once the durable commit
   succeeds. `CHECKPOINT_STORE=memory` is the only supported mode.
@@ -149,8 +145,7 @@ The turn is implemented in the chain server's
 [tool-loop controller](../chain_server/src/tools/loop_control.py) enforcing the
 grants. Durability is the memory service's
 [conversation API](../memory_retriever/src/conversations.py),
-[product-reference resolver](../memory_retriever/src/product_references.py),
-[shopper registry](../memory_retriever/src/shopper_profiles.py), and
+[product-reference resolver](../memory_retriever/src/product_references.py), and
 [migrations](../memory_retriever/src/migrations.py).
 
 To see a turn actually behave this way, [Observability](OBSERVABILITY.md) shows

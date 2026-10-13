@@ -27,7 +27,7 @@ from chain_server.src import cart_references as cart_references_mod
 from chain_server.src import catalog_search
 from chain_server.src import product_records as product_records_mod
 from chain_server.src import search_input as search_input_mod
-from chain_server.src.agenttypes import Cart, ShopperContext, State
+from chain_server.src.agenttypes import Cart, State
 from chain_server.src.conversation_memory import (
     ConversationMemoryError,
     ConversationProjection,
@@ -42,10 +42,6 @@ from chain_server.src.conversation_products import (
 from chain_server.src.runtime import identity as identity_mod
 from chain_server.src.runtime import replies as replies_mod
 from chain_server.src.runtime import runtime as runtime_mod
-from chain_server.src.shopper_profiles import (
-    ShopperProfile,
-    ShopperProfilesError,
-)
 from chain_server.src.tools import cart as cart_tools
 from chain_server.src.tools import catalog as catalog_tools
 from chain_server.src.tools import loop_control as tool_loop_control
@@ -140,7 +136,6 @@ class _ConversationMemoryStub:
             attempt_id="attempt-a",
             sequence=1,
             recent_turns=[],
-            shopper_context=None,
             projection=ConversationProjection(),
             cart=[],
         )
@@ -234,8 +229,6 @@ class TestCreateInitialState:
 
         assert state.user_id == 1
         assert state.query == "hi"
-        assert state.shopper_profile_id is None
-        assert state.shopper_context is None
         assert state.context == ""
         assert state.image == ""
         assert isinstance(state.cart, Cart)
@@ -290,27 +283,6 @@ class TestCreateInitialState:
         state = main_module.create_initial_state(request)
         assert state.context == ""
 
-    def test_selected_shopper_id_reaches_validated_state(self, main_module) -> None:
-        request = main_module.QueryRequest(
-            user_id=1,
-            query="hi",
-            shopper_profile_id="shopper_morgan",
-        )
-
-        state = main_module.create_initial_state(request)
-
-        assert state.shopper_profile_id == "shopper_morgan"
-        assert state.shopper_context is None
-
-    def test_state_rejects_malformed_shopper_profile_id(self) -> None:
-        with pytest.raises(ValidationError):
-            State(
-                user_id=1,
-                query="hi",
-                shopper_profile_id="not a profile key",
-            )
-
-
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -364,84 +336,10 @@ class TestHealthAndRoot:
             "stream",
             "timing",
             "capabilities",
-            "shopper_profiles",
             "health",
             "docs",
         ]:
             assert key in body["endpoints"]
-
-    def test_shopper_profiles_proxy_is_read_only(
-        self,
-        main_module,
-        client: TestClient,
-    ) -> None:
-        profile = ShopperProfile(
-            shopper_profile_id="shopper_alex",
-            display_name="Alex",
-            shopper_type="occasion_driven_explorer",
-            behavior="Starts with an occasion and refines the complete look.",
-            zipcode="98101",
-        )
-
-        class _ProfilesStub:
-            def list_profiles(self):
-                return [profile]
-
-        main_module.shopper_profiles_client = _ProfilesStub()
-
-        listed = client.get("/shopper-profiles")
-
-        assert listed.status_code == 200
-        assert listed.json() == [profile.model_dump(mode="json")]
-        assert "shopper_profile_id" in main_module.QueryRequest.model_fields
-        for profile_field in ("display_name", "shopper_type", "behavior", "zipcode"):
-            assert profile_field not in main_module.QueryRequest.model_fields
-
-        response_schema = client.get("/openapi.json").json()["paths"][
-            "/shopper-profiles"
-        ]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-        assert response_schema["type"] == "array"
-        assert response_schema["items"]["$ref"].endswith("/ShopperProfile")
-
-    @pytest.mark.parametrize(
-        "error,expected_status",
-        [
-            (
-                ShopperProfilesError(
-                    "shopper_profiles_response_invalid",
-                    "Shopper profiles returned an invalid response.",
-                    status_code=200,
-                ),
-                502,
-            ),
-            (
-                ShopperProfilesError(
-                    "shopper_profiles_request_failed",
-                    "Shopper profiles are temporarily unavailable.",
-                    retryable=True,
-                ),
-                503,
-            ),
-        ],
-    )
-    def test_shopper_profile_proxy_errors_are_stable(
-        self,
-        main_module,
-        client: TestClient,
-        error: ShopperProfilesError,
-        expected_status: int,
-    ) -> None:
-        class _ProfilesStub:
-            def list_profiles(self):
-                raise error
-
-        main_module.shopper_profiles_client = _ProfilesStub()
-
-        response = client.get("/shopper-profiles")
-
-        assert response.status_code == expected_status
-        assert response.json()["detail"] == str(error)
-
 
 class TestTimingEndpoint:
     def test_returns_response_and_timings(
@@ -606,54 +504,10 @@ class TestStreamEndpoint:
         assert identity.conversation_id == "conversation-a"
         assert identity.cart_id == "cart-a"
         assert identity.request_id == "request-a"
-        assert identity.shopper_profile_id == "shopper_morgan"
-        assert state.shopper_profile_id == "shopper_morgan"
+        assert not hasattr(identity, "shopper_profile_id")
+        assert not hasattr(state, "shopper_profile_id")
         assert identity.context_user_id != 1
         assert identity.cart_user_id != 1
-
-    def test_selected_shopper_id_reaches_stream_runtime(
-        self,
-        main_module,
-        client: TestClient,
-    ) -> None:
-        with client.stream(
-            "POST",
-            "/query/stream",
-            json={
-                "user_id": 1,
-                **TURN_HANDLES,
-                "query": "hello",
-                "shopper_profile_id": "shopper_morgan",
-            },
-        ) as response:
-            for _ in response.iter_lines():
-                pass
-
-        assert response.status_code == 200
-        state, identity = main_module._test_runtime.astream_calls[-1]
-        assert state.shopper_profile_id == "shopper_morgan"
-        assert identity.shopper_profile_id == "shopper_morgan"
-
-    @pytest.mark.parametrize(
-        "shopper_profile_id",
-        ["", "-leading", "contains space", "x" * 65],
-    )
-    def test_rejects_malformed_shopper_profile_id(
-        self,
-        client: TestClient,
-        shopper_profile_id: str,
-    ) -> None:
-        response = client.post(
-            "/query/timing",
-            json={
-                "user_id": 1,
-                **TURN_HANDLES,
-                "query": "hello",
-                "shopper_profile_id": shopper_profile_id,
-            },
-        )
-
-        assert response.status_code == 422
 
     def test_legacy_persona_is_ignored_by_timing_runtime(
         self, main_module, client: TestClient
@@ -800,7 +654,6 @@ class TestRequestIdentity:
         )
 
         assert identity.session_id == "conversation-a"
-        assert identity.shopper_profile_id is None
 
     def test_explicit_request_id_is_preserved(self) -> None:
         from chain_server.src.runtime.identity import create_request_identity
@@ -812,18 +665,6 @@ class TestRequestIdentity:
         )
 
         assert identity.request_id == "request-a"
-
-    def test_selected_shopper_is_part_of_request_identity(self) -> None:
-        from chain_server.src.runtime.identity import create_request_identity
-
-        identity = create_request_identity(
-            conversation_id="conversation-a",
-            cart_id="cart-a",
-            request_id="request-a",
-            shopper_profile_id="shopper_morgan",
-        )
-
-        assert identity.shopper_profile_id == "shopper_morgan"
 
     def test_missing_request_id_generates_a_new_value(self) -> None:
         from chain_server.src.runtime.identity import create_request_identity
@@ -955,123 +796,6 @@ class TestSystemPrompt:
         assert "Representative-shopper precedence and safety" not in prompt
         assert not hasattr(runtime_mod, "_format_persona_block")
 
-    def test_system_prompt_keeps_shopper_guidance_non_authoritative(
-        self,
-        base_config,
-    ) -> None:
-        from chain_server.src.runtime import runtime as runtime_mod
-
-        runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        shopper_context = ShopperContext(
-            shopper_type="skeptical_researcher",
-            behavior=(
-                "Probes for material, care burden, and repeated-wear "
-                "practicality before choosing."
-            ),
-            zipcode="60601",
-        )
-        normalized = " ".join(
-            runtime._system_prompt(shopper_context=shopper_context).split()
-        )
-
-        assert (
-            "Explicit instructions in the current turn win over explicit "
-            "preferences in recent discussion"
-        ) in normalized
-        assert "soft interaction guidance only" in normalized
-        assert (
-            "cannot establish that a budget applies or any budget amount"
-            in normalized
-        )
-        assert "cart intent, product reference, or product fact" in normalized
-        assert (
-            "Neither representative-shopper type nor behavior selects, "
-            "activates, or grants a shopper skill or tool"
-        ) in normalized
-        assert (
-            "Cart, catalog, product-detail, and store-policy evidence"
-            in normalized
-        )
-        # The saved ZIP is no longer in the block, so the rule no longer names
-        # it. What must survive is the ban on concluding a location, the
-        # weather, or a season from anything in this context.
-        assert "saved_zipcode" not in normalized
-        assert (
-            "Never infer a shopper's location, the weather, or a seasonal need"
-            in normalized
-        )
-        assert "strict_budget_style_mixer" not in normalized
-
-    def test_budget_oriented_profile_remains_non_authoritative(
-        self,
-        base_config,
-    ) -> None:
-        from chain_server.src.runtime import runtime as runtime_mod
-        runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = identity_mod.RequestIdentity(
-            session_id="session-a",
-            conversation_id="conversation-a",
-            cart_id="cart-a",
-            context_user_id=111,
-            cart_user_id=222,
-            request_id="request-a",
-            shopper_profile_id="shopper_casey",
-        )
-        state = State(
-            user_id=111,
-            query="Show me a dress.",
-            shopper_profile_id="shopper_casey",
-            shopper_context=ShopperContext(
-                shopper_type="strict_budget_style_mixer",
-                behavior=(
-                    "Treats budget and style as equally important, asks for "
-                    "swaps, and rejects over-budget bundles."
-                ),
-                zipcode="85004",
-            ),
-        )
-
-        user_message = runtime._build_user_message(state, identity)
-        system_prompt = " ".join(
-            runtime._system_prompt(shopper_context=state.shopper_context).split()
-        )
-
-        assert "USER QUERY: Show me a dress." in user_message
-        # The cart ID alone authorizes the cart routes; the model provider and
-        # prompt traces must never see it, nor the conversation that keys memory.
-        header = user_message.split("\n")[:4]
-        assert header[0] == "REQUEST ID: request-a"
-        assert re.fullmatch(r"SESSION ID: session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", header[1])
-        assert re.fullmatch(r"CONVERSATION ID: conversation-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", header[2])
-        assert re.fullmatch(r"CART ID: cart-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", header[3])
-        for handle in ("cart-a", "conversation-a", "session-a"):
-            assert handle not in user_message
-        # Wiring, not formatting. The formatter had its own tests and every one
-        # of them passed with the block deleted from the turn entirely.
-        assert "TODAY (store's current date, server-resolved):" in user_message
-        assert "END TODAY" in user_message
-        assert "strict_budget_style_mixer" in user_message
-        assert "Treats budget and style as equally important" in user_message
-        assert (
-            "cannot establish that a budget applies or any budget amount"
-            in system_prompt
-        )
-        assert (
-            "Neither representative-shopper type nor behavior selects, "
-            "activates, or grants a shopper skill or tool"
-        ) in system_prompt
-
-    def test_shopper_context_cannot_carry_skill_or_tool_authority(self) -> None:
-        with pytest.raises(ValidationError):
-            ShopperContext.model_validate(
-                {
-                    "shopper_type": "strict_budget_style_mixer",
-                    "behavior": "Balances style and budget.",
-                    "zipcode": "85004",
-                    "selected_skill_names": ["budget-shopping"],
-                }
-            )
-
     def test_search_guidance_drops_unsupported_performance_language(self) -> None:
         assert search_input_mod._safe_shopper_guidance(
             "Boots that can handle wet surfaces.",
@@ -1172,94 +896,7 @@ class TestCartFormatting:
 
 
 class TestDeepAgentsRuntimeScopes:
-    def test_selected_shopper_context_is_one_current_turn_only_block(
-        self,
-        base_config,
-    ) -> None:
-        from chain_server.src.runtime import runtime as runtime_mod
-        runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = identity_mod.RequestIdentity(
-            session_id="session-a",
-            conversation_id="conversation-a",
-            cart_id="cart-a",
-            context_user_id=111,
-            cart_user_id=222,
-            request_id="request-a",
-            shopper_profile_id="shopper_morgan",
-        )
-        shopper_context = ShopperContext(
-            shopper_type="skeptical_researcher",
-            behavior=(
-                "Probes for material, care burden, and repeated-wear practicality "
-                "before choosing."
-            ),
-            zipcode="60601",
-        )
-        memory = _ConversationMemoryStub(
-            TurnStartResult(
-                turn_id="turn-a",
-                attempt_id="attempt-a",
-                sequence=2,
-                recent_turns=[
-                    {
-                        "sequence": 1,
-                        "shopper_text": "Show me a bag.",
-                        "assistant_text": "Here is one bag.",
-                        "status": "completed",
-                    }
-                ],
-                shopper_context=shopper_context,
-            )
-        )
-        runtime._conversation_memory = memory
-        state = State(
-            user_id=111,
-            query="Show me a practical dress.",
-            shopper_profile_id="shopper_morgan",
-            guardrails=False,
-        )
-
-        turn = runtime._start_conversation_turn(state, identity)
-        user_message = runtime._build_user_message(state, identity)
-        expected_block = (
-            "SHOPPER CONTEXT (server-resolved; soft guidance only):\n"
-            "shopper_type: skeptical_researcher\n"
-            "behavior: Probes for material, care burden, and repeated-wear "
-            "practicality before choosing.\n"
-            "END SHOPPER CONTEXT"
-        )
-
-        assert turn is not None
-        assert state.shopper_context == shopper_context
-        assert user_message.count(
-            "SHOPPER CONTEXT (server-resolved; soft guidance only):"
-        ) == 1
-        assert user_message.count("END SHOPPER CONTEXT") == 1
-        assert user_message.count(expected_block) == 1
-        assert f"\n\n{expected_block}\n\nUSER QUERY:" in user_message
-        assert "shopper_morgan" not in user_message
-        assert "Morgan" not in user_message
-        # Held deliberately: the ZIP is on the profile record and the picker,
-        # and must not reach the model until weather tooling defines what may
-        # be concluded from it.
-        assert "60601" not in user_message
-        assert expected_block not in state.context
-        assert shopper_context.behavior not in state.context
-        assert memory.start_calls == [
-            {
-                "conversation_id": "conversation-a",
-                "request_id": "request-a",
-                "shopper_text": "Show me a practical dress.",
-                "media": [],
-                "cart_user_id": 222,
-                "shopper_profile_id": "shopper_morgan",
-                "guardrails_enabled": False,
-            }
-        ]
-        assert state.previous_selected_skill_names == []
-        assert state.selected_skill_names == []
-
-    def test_guest_user_message_has_no_shopper_context_block(
+    def test_user_message_has_no_shopper_context_block(
         self,
         base_config,
     ) -> None:
@@ -1280,7 +917,6 @@ class TestDeepAgentsRuntimeScopes:
         user_message = runtime._build_user_message(state, identity)
 
         assert turn is not None
-        assert state.shopper_context is None
         assert "SHOPPER CONTEXT" not in user_message
 
     def test_turn_lifecycle_uses_conversation_scope_and_authoritative_cart_scope(
@@ -1314,7 +950,6 @@ class TestDeepAgentsRuntimeScopes:
                         }
                     ],
                     "previous_selected_skill_names": ["outfit-styling"],
-                    "shopper_context": None,
                     "projection": {
                         "product_reference_index": [
                             {
@@ -1405,7 +1040,6 @@ class TestDeepAgentsRuntimeScopes:
                 status="completed",
                 assistant_text="Here is the saved result.",
                 output=replay_output,
-                shopper_context=None,
             )
         )
         runtime._conversation_memory = memory
@@ -1510,126 +1144,6 @@ class TestDeepAgentsRuntimeScopes:
         )
 
     @pytest.mark.asyncio
-    async def test_selected_turn_missing_context_skips_agent_and_tools(
-        self,
-        base_config,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        from chain_server.src.runtime import runtime as runtime_mod
-        runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        memory = _ConversationMemoryStub()
-        runtime._conversation_memory = memory
-        identity = identity_mod.RequestIdentity(
-            session_id="session-a",
-            conversation_id="conversation-a",
-            cart_id="cart-a",
-            context_user_id=111,
-            cart_user_id=222,
-            request_id="request-a",
-            shopper_profile_id="shopper_morgan",
-        )
-
-        async def fail_execute(*_args, **_kwargs):
-            raise AssertionError("model and shopping tools must not run")
-
-        monkeypatch.setattr(runtime, "_execute_turn", fail_execute)
-
-        output = await runtime._run_turn(
-            State(
-                user_id=111,
-                query="hello",
-                shopper_profile_id="shopper_morgan",
-                guardrails=False,
-            ),
-            identity,
-        )
-
-        assert output.response == (
-            "I cannot safely load this conversation right now. "
-            "Please retry shortly."
-        )
-        assert output.agent_diagnostics["final_termination_reason"] == (
-            "memory_start_failed"
-        )
-        assert output.agent_diagnostics["memory_start_error"] == (
-            "shopper_context_invalid"
-        )
-        assert output.shopper_context is None
-        assert memory.finalize_calls == []
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "error_code,status_code,expected_response",
-        [
-            (
-                "shopper_profile_not_found",
-                404,
-                (
-                    "That shopper profile is unavailable. Please choose another "
-                    "shopper and try again."
-                ),
-            ),
-            (
-                "conversation_profile_mismatch",
-                409,
-                (
-                    "This conversation is already associated with a different "
-                    "shopper. Please start a new chat before switching shoppers."
-                ),
-            ),
-        ],
-    )
-    async def test_profile_start_errors_have_fixed_pre_agent_responses(
-        self,
-        base_config,
-        monkeypatch: pytest.MonkeyPatch,
-        error_code: str,
-        status_code: int,
-        expected_response: str,
-    ) -> None:
-        from chain_server.src.runtime import runtime as runtime_mod
-        runtime = runtime_mod.DeepAgentsRuntime(base_config)
-        identity = identity_mod.RequestIdentity(
-            session_id="session-a",
-            conversation_id="conversation-a",
-            cart_id="cart-a",
-            context_user_id=111,
-            cart_user_id=222,
-            request_id="request-a",
-            shopper_profile_id="shopper_morgan",
-        )
-
-        class FailingMemory:
-            def start_turn(self, *_args, **_kwargs):
-                raise ConversationMemoryError(
-                    error_code,
-                    "rejected",
-                    status_code=status_code,
-                )
-
-        runtime._conversation_memory = FailingMemory()
-
-        async def fail_execute(*_args, **_kwargs):
-            raise AssertionError("model and shopping tools must not run")
-
-        monkeypatch.setattr(runtime, "_execute_turn", fail_execute)
-
-        output = await runtime._run_turn(
-            State(
-                user_id=111,
-                query="hello",
-                shopper_profile_id="shopper_morgan",
-                guardrails=False,
-            ),
-            identity,
-        )
-
-        assert output.response == expected_response
-        assert output.agent_diagnostics["final_termination_reason"] == error_code
-        assert output.product_results == []
-        assert output.selected_skill_names == []
-
-    @pytest.mark.asyncio
     async def test_cancelled_turn_is_finalized_before_cancellation_propagates(
         self,
         base_config,
@@ -1715,7 +1229,6 @@ class TestDeepAgentsRuntimeScopes:
                     attempt_id=f"attempt-{self.sequence}",
                     sequence=self.sequence,
                     recent_turns=[],
-                    shopper_context=None,
                     projection=ConversationProjection(),
                     cart=[],
                 )

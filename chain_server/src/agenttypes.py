@@ -10,31 +10,7 @@ including the main State object that flows through the LangGraph and supporting 
 from operator import ior
 from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-SHOPPER_PROFILE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
-
-
-class ShopperContext(BaseModel):
-    """Server-resolved soft guidance for one representative shopper."""
-
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    shopper_type: str = Field(
-        ...,
-        min_length=1,
-        max_length=80,
-        pattern=r"^[a-z][a-z0-9_]*$",
-    )
-    behavior: str = Field(..., min_length=1, max_length=512)
-    zipcode: str = Field(..., pattern=r"^[0-9]{5}$")
-
-    @field_validator("behavior")
-    @classmethod
-    def _validate_behavior(cls, value: str) -> str:
-        if value != value.strip() or "\n" in value or "\r" in value:
-            raise ValueError("shopper behavior must be one trimmed line")
-        return value
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DialogueTurn(BaseModel):
@@ -70,13 +46,6 @@ class State(BaseModel):
     """Everything one turn carries, from request to final response."""
     user_id: int = Field(..., description="Unique user identifier")
     query: str = Field(..., description="User's input query")
-    shopper_profile_id: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=64,
-        pattern=SHOPPER_PROFILE_ID_PATTERN,
-        description="Selected immutable representative-shopper key",
-    )
     #: Audience most recently declared for who is being shopped for, carried
     #: from earlier turns. Dialogue establishes intent, never fact, so a wearer
     #: named a turn ago has no standing until it arrives as a value.
@@ -88,10 +57,6 @@ class State(BaseModel):
     #: The assumption this turn made, if it is the first to make one. Catalog
     #: search writes it; finalize records it so the next turn inherits it.
     disclosed_audience: list[str] = Field(default_factory=list)
-    shopper_context: ShopperContext | None = Field(
-        default=None,
-        description="Server-resolved current-turn shopper guidance",
-    )
     dialogue: list[DialogueTurn] = Field(
         default_factory=list,
         description="Typed prior turns; authoritative for shopper intent context"

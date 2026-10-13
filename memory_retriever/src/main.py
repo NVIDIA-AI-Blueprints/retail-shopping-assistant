@@ -34,12 +34,7 @@ from .models import (
     ConversationProjection,
     ConversationTurn,
     SchemaMigration,
-    ShopperProfile,
     User,
-)
-from .shopper_profiles import (
-    bootstrap_shopper_profiles,
-    create_shopper_profile_router,
 )
 
 __all__ = (
@@ -52,7 +47,6 @@ __all__ = (
     "ConversationTurn",
     "DATABASE_URL",
     "SchemaMigration",
-    "ShopperProfile",
     "User",
     "build_engine",
 )
@@ -61,12 +55,6 @@ __all__ = (
 def _run_schema_migrations() -> None:
     run_schema_migrations(engine)
 
-
-def _bootstrap_shopper_profiles(
-    *,
-    seed_path: str | None = None,
-) -> None:
-    bootstrap_shopper_profiles(SessionLocal, seed_path=seed_path)
 
 
 def _sweep_abandoned_turns(
@@ -123,7 +111,6 @@ def _match_threadpool_to_the_connection_pool() -> None:
 async def _lifespan(_app: FastAPI):
     _match_threadpool_to_the_connection_pool()
     _run_schema_migrations()
-    _bootstrap_shopper_profiles()
     _sweep_abandoned_turns()
     yield
 
@@ -138,7 +125,6 @@ def get_db():
         db.close()
 
 app.include_router(create_conversation_router(get_db))
-app.include_router(create_shopper_profile_router(get_db))
 
 
 def _cart_item_dict(item: CartItem) -> dict:

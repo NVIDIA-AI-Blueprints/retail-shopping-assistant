@@ -58,7 +58,6 @@ Run it on NVIDIA-hosted endpoints with no local GPU, or serve the models yoursel
 - **Deterministic cart** — typed tools, with totals computed in code rather than generated
 - **Skills with enforced tool grants** — each skill declares its tools, and the grant is rechecked at dispatch
 - **Durable conversation turns** — a turn's outcome and the products it showed survive a restart
-- **Representative shopper profiles** — five database-backed shoppers, or Guest
 - **Optional content safety and topic control** — separate guard models, on by default
 - **SSE response streaming** — products, images, text, and metrics as discrete events
 - **Per-turn observability** — which skill ran, what the model was told, and why a tool was refused
@@ -75,7 +74,7 @@ Five services, each owning one concern:
 |---------|------|
 | **Chain Server** | The Deep Agents turn: skill activation, tool dispatch, grounded response assembly |
 | **Catalog Retriever** | Embedding search, hard filtering, and deterministic ranking. No generative model |
-| **Memory Retriever** | Durable turns, cart state, presented-product history, and shopper profiles |
+| **Memory Retriever** | Durable turns, cart state, and presented-product history |
 | **Guardrails** | Content safety and topic control, when enabled |
 | **UI** | React front end with shopper selection and per-turn detail |
 

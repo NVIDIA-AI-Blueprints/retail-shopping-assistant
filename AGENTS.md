@@ -7,7 +7,7 @@ This file is a working guide for coding agents and contributors in this reposito
 Retail Shopping Assistant is a multi-service application with:
 - `chain_server`: FastAPI + Deep Agents SDK orchestration over deterministic catalog and cart tools.
 - `catalog_retriever`: FastAPI service for text embedding retrieval against Milvus.
-- `memory_retriever`: FastAPI + single-replica SQLite service for an immutable representative-shopper registry, ordered durable conversation turns, exact finalized-turn replay, stable cart-line IDs, and atomically idempotent add/remove/quantity mutations.
+- `memory_retriever`: FastAPI + single-replica SQLite service for ordered durable conversation turns, exact finalized-turn replay, stable cart-line IDs, and atomically idempotent add/remove/quantity mutations.
 - `guardrails`: FastAPI wrapper around NeMo Guardrails input/output safety checks.
 - `ui`: React + TypeScript chat UI using SSE streaming.
 - `shared`: Shared YAML configs, JSONL catalog data/role sidecars, and image assets.
@@ -19,7 +19,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional locally deployed 
 1. UI posts to `/api/query/stream` (nginx proxy on port `3000`).
 2. Nginx routes `/api/*` to `chain-server:8009`.
 3. Chain server request flow:
-   - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns bounded model-context-eligible raw turns, the prior turn's selected skill names, the authoritative cart, and an optional server-resolved representative-shopper snapshot. Blocked turns remain durable and exactly replayable but are excluded from both the service projection and chain prompt formatter. Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. A selected profile ID is bound immutably to that conversation and renders one compact current-turn context block containing only type, behavior, and saved ZIP. Profile precedence and non-authority rules are also present only for selected-profile turns; Guest receives neither the block nor profile-specific prompt rules. The block is soft guidance: current explicit instructions and recent explicit preferences take precedence, and it cannot establish budget, product constraints or facts, cart intent, skill selection, or tool grants. Unknown caller fields remain backward-compatibly ignored, and caller-supplied persona objects are never injected.
+   - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns bounded model-context-eligible raw turns, the prior turn's selected skill names, and the authoritative cart. Blocked turns remain durable and exactly replayable but are excluded from both the service projection and chain prompt formatter. Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. A selected profile ID is bound immutably to that conversation and renders one compact current-turn context block containing only type, behavior, and saved ZIP. Profile precedence and non-authority rules are also present only for selected-profile turns; Guest receives neither the block nor profile-specific prompt rules. The block is soft guidance: current explicit instructions and recent explicit preferences take precedence, and it cannot establish budget, product constraints or facts, cart intent, skill selection, or tool grants. Unknown caller fields remain backward-compatibly ignored, and caller-supplied persona objects are never injected.
    - Optional input guardrails normally run before model/tool work. A default-off, text-only speculative mode may overlap the first app-model step with those rails, but every tool waits for the input allow decision; blocked turns discard/cancel the model work and can still incur its provider cost. Media remains sequential and is analyzed through the configured perception client.
    - Deep Agents graph execution has a configurable deadline (`deepagents_execution_timeout_seconds` in `config.py`/`config.yaml`). A timeout captures bounded partial graph messages, clears unsent products, finalizes the durable turn as failed, and deletes the request checkpoint only after that finalization succeeds.
    - Every turn begins with a required model step that semantically selects the smallest applicable set from seven registered shopper skills. The latest durable selected names are supplied as a read-only continuity hint; they never authorize tools or replace the fresh selection. Product work uses exactly one primary procedure: product discovery, outfit styling, or catalog questions. Budget shopping is a modifier only when the shopper states a budget; cart, policy, and destination-weather requests may use their standalone skills. An invalid composition receives its typed reason and one correction attempt; a second invalid composition ends with a deterministic clarification and runs no shopping tool. Multiple activation calls in one response execute none and clarify immediately. The runtime injects the complete selected files and exposes only the union of their declared `tools_granted`; dispatch independently rechecks the selected skills, grant union, and immutable tool policy. Pre-activation, same-batch, and ungranted shopping calls are execution-blocked.
@@ -47,7 +47,6 @@ Top-level orchestration is via `docker-compose.yaml`; optional locally deployed 
 - Shopper-skill registry, frontmatter validation, and immutable tool policy: `chain_server/src/tools/policy.py`
 - Per-turn skill activation, model-visible tool binding, and dispatch grant gate: `chain_server/src/tools/skill_gate.py`
 - Durable conversation-turn client and wire contracts: `chain_server/src/conversation_memory.py`
-- Representative-shopper read client: `chain_server/src/shopper_profiles.py`
 - API contract and SSE endpoint: `chain_server/src/main.py`
 - Catalog capability cache/prompt projection: `chain_server/src/catalog_capabilities.py`
 - Catalog intent validation/execution: `chain_server/src/catalog_request.py`, `chain_server/src/catalog_execution.py`
@@ -90,15 +89,12 @@ Top-level orchestration is via `docker-compose.yaml`; optional locally deployed 
   `memory_retriever/src/models.py`, `memory_retriever/src/migrations.py`
 - Durable turn start/finalize/replay boundary:
   `memory_retriever/src/conversations.py`
-- Immutable representative-shopper bootstrap/read API:
-  `memory_retriever/src/shopper_profiles.py`
 
 - Guardrails API: `guardrails/src/main.py`
 - Guardrails engine/wiring: `guardrails/src/rails.py`
 - Guardrails model config helper: `guardrails/src/config_utils.py`
 
 - UI streaming behavior: `ui/src/components/chatbox/chatbox.tsx`
-- UI representative-shopper picker: `ui/src/components/ShopperPicker.tsx`
 - UI API config and feature flags: `ui/src/config/config.ts`
 - UI chat panel layout and footer alignment: `ui/src/chatbox.css`
 - UI message/cart-toast parsing helpers: `ui/src/utils/index.ts`
@@ -262,12 +258,9 @@ Key env vars:
   single-replica SQLite database. Compose uses
   `sqlite:////data/context.db` on the `memory-data` named volume; deleting that
   volume deletes the stored transcript and cart state.
-- The same SQLite database owns five immutable representative shoppers loaded
-  from `shared/configs/memory_retriever/shopper_profiles.json`. The bundled UI
-  sends only the selected ID. Turn start resolves it transactionally, binds it
-  to the conversation (including Guest as `NULL`), and returns a typed
-  three-field context. Switching profiles therefore requires the new
-  conversation/cart identities created by the picker.
+- The schema still holds the retired `shopper_profiles` table and the nullable
+  `conversation_turns.shopper_profile_id` column, so fresh and upgraded
+  databases match. Nothing reads or writes them.
 - Stale active turns are recovered at startup and atomically at the next turn
   start. An exact abandoned retry reopens only the latest conversation sequence,
   preserves its request ID for cart idempotency, and rotates its service-issued

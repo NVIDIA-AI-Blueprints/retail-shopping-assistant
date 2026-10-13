@@ -21,7 +21,6 @@ class RequestIdentity:
     context_user_id: int
     cart_user_id: int
     request_id: str
-    shopper_profile_id: str | None = None
 
     @property
     def legacy_user_id(self) -> int:
@@ -41,7 +40,6 @@ def create_request_identity(
     cart_id: str,
     session_id: str | None = None,
     request_id: str | None = None,
-    shopper_profile_id: str | None = None,
 ) -> RequestIdentity:
     """Scope one turn to the caller's opaque conversation and cart handles.
 
@@ -60,7 +58,6 @@ def create_request_identity(
         context_user_id=_stable_numeric_id("conversation", conversation),
         cart_user_id=cart_user_id_for(cart),
         request_id=request_id or str(uuid.uuid4()),
-        shopper_profile_id=shopper_profile_id,
     )
 
 

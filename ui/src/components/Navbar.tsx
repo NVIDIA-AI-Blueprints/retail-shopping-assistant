@@ -25,26 +25,16 @@ import {
   RestartAlt as RestartAltIcon,
 } from "@mui/icons-material";
 import { config } from "../config/config";
-import { ShopperProfile } from "../types";
 import CartPanel from "./CartPanel";
-import ShopperPicker, { ShopperProfilesStatus } from "./ShopperPicker";
 
 interface NavbarProps {
-  shopperProfiles: ShopperProfile[];
-  shopperProfilesStatus: ShopperProfilesStatus;
-  selectedShopperProfileId: string | null;
-  isShopperSwitchDisabled: boolean;
-  onShopperChange: (shopperProfileId: string | null) => void;
+  isResetDisabled: boolean;
   onReset: () => void;
   cart: React.ComponentProps<typeof CartPanel>;
 }
 
 const Navbar: React.FC<NavbarProps> = ({
-  shopperProfiles,
-  shopperProfilesStatus,
-  selectedShopperProfileId,
-  isShopperSwitchDisabled,
-  onShopperChange,
+  isResetDisabled,
   onReset,
   cart,
 }) => {
@@ -62,16 +52,9 @@ const Navbar: React.FC<NavbarProps> = ({
           </p>
         </div>
         
-        {/* Right side - Representative shopper selector */}
+        {/* Right side - Cart */}
         <div className="flex items-center gap-x-2">
           <CartPanel {...cart} />
-          <ShopperPicker
-            profiles={shopperProfiles}
-            profilesStatus={shopperProfilesStatus}
-            selectedShopperProfileId={selectedShopperProfileId}
-            disabled={isShopperSwitchDisabled}
-            onChange={onShopperChange}
-          />
         </div>
       </div>
 
@@ -143,7 +126,7 @@ const Navbar: React.FC<NavbarProps> = ({
           type="button"
           className="shopper-nav__reset"
           onClick={onReset}
-          disabled={isShopperSwitchDisabled}
+          disabled={isResetDisabled}
           aria-label="Reset conversation"
           title="Clear this conversation and start a new session"
         >

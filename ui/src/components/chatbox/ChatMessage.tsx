@@ -25,13 +25,12 @@ import SafeHTML from "./SafeHTML";
 import Loader from "./Loader";
 import MediaAnalysisCard from "./MediaAnalysisCard";
 import GuardrailDetails from "./GuardrailDetails";
+import ProductResultGrid from "./ProductResultGrid";
 import {
   ChatMessageProps,
-  ImageContent,
   ImageRowContent,
   MediaAnalysis,
 } from "../../types";
-import { isFashionMode } from "../../config/config";
 import nvinfo from "../../assets/nvinfo.jpg";
 
 // Single line breaks become <br>, as the replies are written line by line.
@@ -141,41 +140,13 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
 
     // Image row message (multiple products)
     if (role === "image_row") {
-      const images = content as ImageRowContent;
-      
       return (
-        <div className="product-result-grid" ref={ref}>
-          {images.map((image: ImageContent, index: number) => (
-            <div key={`${image.productName}-${index}`} className="messages__item messages__item--image">
-              <button
-                type="button"
-                className={`product-result-card${
-                  image.productName === selectedProductName ? " is-selected" : ""
-                }`}
-                onClick={() => onProductSelect?.(image)}
-              >
-                <img
-                  className="product-result-card__image"
-                  src={image.productUrl}
-                  alt={image.productName}
-                />
-                <span
-                  className="product-result-card__name"
-                  style={{
-                    maxWidth: isFashionMode() ? "200px" : "none",
-                  }}
-                >
-                  {image.productName}
-                </span>
-                {image.price && (
-                  <span className="product-result-card__price">
-                    {formatCardPrice(image.price)}
-                  </span>
-                )}
-              </button>
-            </div>
-          ))}
-        </div>
+        <ProductResultGrid
+          ref={ref}
+          images={content as ImageRowContent}
+          selectedProductName={selectedProductName}
+          onProductSelect={onProductSelect}
+        />
       );
     }
 
@@ -211,16 +182,5 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
 );
 
 ChatMessage.displayName = "ChatMessage";
-
-const formatCardPrice = (price: { amount: number; currency?: string }): string => {
-  try {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: price.currency || "USD",
-    }).format(price.amount);
-  } catch {
-    return `$${price.amount.toFixed(2)}`;
-  }
-};
 
 export default ChatMessage;

@@ -34,7 +34,6 @@ from shared.commerce_contracts import (
 )
 
 from .agenttypes import State
-from .catalog_execution import execute_catalog_search
 from .catalog_format import (
     _SEARCH_BUDGET_EXHAUSTED_NOTE,
     _SEARCH_NO_MATCH_GROUNDING_NOTE,
@@ -59,6 +58,7 @@ from .catalog_request import (
     CatalogSearchIntent,
     _filter_values,
     build_catalog_search_plan,
+    execute_catalog_search,
 )
 from .catalog_vocabulary import (
     _advertised_scope_match,
@@ -76,7 +76,7 @@ from .lexical_provenance import (
     _resolved_agent_selected_product_type,
     _shopper_stated_product_scope,
 )
-from .product_records import _append_product_results, _search_product_record
+from .product_records import _ONE_SIZE, _append_product_results, _search_product_record
 from .runtime.control_signals import (
     NOT_CARRIED_KEY,
     REJECTIONS_KEY,
@@ -102,7 +102,6 @@ from .search_input import (
     _unsupported_requirement_message,
     stated_media_terms,
 )
-from .sizes import _ONE_SIZE
 from .tools.evidence import (
     EVIDENCE_KEY,
     SearchEvidence,

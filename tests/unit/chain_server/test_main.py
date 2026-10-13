@@ -2592,8 +2592,8 @@ class TestDeepAgentsRuntimeRefs:
         base_config,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src.runtime import runtime as runtime_mod
+        from chain_server.src.tools import cart as cart_ops_mod
         from chain_server.src.tools import schemas as tool_schemas_mod
 
         captured: dict[str, Any] = {}
@@ -3535,8 +3535,8 @@ class TestDeepAgentsRuntimeRefs:
         base_config,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src.runtime import runtime as runtime_mod
+        from chain_server.src.tools import cart as cart_ops_mod
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
         identity = identity_mod.RequestIdentity(
             session_id="session-a",
@@ -3602,7 +3602,7 @@ class TestDeepAgentsRuntimeRefs:
         )
 
     def test_partial_product_results_response_is_grounded(self) -> None:
-        from chain_server.src import search_replies as search_replies_mod
+        from chain_server.src.runtime import replies as search_replies_mod
 
         state = State(
             user_id=111,
@@ -5400,7 +5400,7 @@ class TestDeepAgentsRuntimeRefs:
         self,
         base_config,
     ) -> None:
-        from chain_server.src import search_replies as search_replies_mod
+        from chain_server.src.runtime import replies as search_replies_mod
         from chain_server.src.runtime import runtime as runtime_mod
 
         runtime = runtime_mod.DeepAgentsRuntime(base_config)
@@ -5450,7 +5450,7 @@ class TestDeepAgentsRuntimeRefs:
     def test_grouped_search_deduplicates_by_product_ref_not_display_name(
         self,
     ) -> None:
-        from chain_server.src import search_replies as search_replies_mod
+        from chain_server.src.runtime import replies as search_replies_mod
 
         lines, displayed_names = search_replies_mod._grouped_search_response_lines(
             [
@@ -5811,7 +5811,7 @@ class TestDeepAgentsRuntimeRefs:
         ) == ""
 
     def test_search_only_filter_groups_preserve_product_scope(self) -> None:
-        from chain_server.src import search_replies as search_replies_mod
+        from chain_server.src.runtime import replies as search_replies_mod
 
         result = {
             "messages": [
@@ -5904,7 +5904,7 @@ class TestDeepAgentsRuntimeRefs:
         ]
 
     def test_scrub_internal_shopper_language_removes_tool_mechanics(self) -> None:
-        from chain_server.src import search_replies as search_replies_mod
+        from chain_server.src.runtime import replies as search_replies_mod
 
         scrubbed = search_replies_mod._scrub_internal_shopper_language(
 
@@ -6300,8 +6300,8 @@ class TestDeepAgentsRuntimeRefs:
         must not do without saying so.
         """
 
-        from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src.runtime import runtime as runtime_mod
+        from chain_server.src.tools import cart as cart_ops_mod
         captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
@@ -6452,8 +6452,8 @@ class TestDeepAgentsRuntimeRefs:
         compose it without deciding anything that belongs to the model.
         """
 
-        from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src.runtime import runtime as runtime_mod
+        from chain_server.src.tools import cart as cart_ops_mod
         captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")
@@ -6856,8 +6856,8 @@ class TestDeepAgentsRuntimeRefs:
         base_config,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from chain_server.src import cart_operations as cart_ops_mod
         from chain_server.src.runtime import runtime as runtime_mod
+        from chain_server.src.tools import cart as cart_ops_mod
         captured: dict[str, Any] = {}
         deepagents_mod = ModuleType("deepagents")
         tools_mod = ModuleType("langchain_core.tools")

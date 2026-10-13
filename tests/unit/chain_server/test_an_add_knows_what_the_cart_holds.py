@@ -86,8 +86,8 @@ class _Cart:
 
 @pytest.fixture
 def add_tool(base_config, monkeypatch: pytest.MonkeyPatch):
-    from chain_server.src import cart_operations as cart_ops_mod
     from chain_server.src.runtime import runtime as runtime_mod
+    from chain_server.src.tools import cart as cart_ops_mod
 
     captured: dict[str, Any] = {}
     deepagents_mod = ModuleType("deepagents")

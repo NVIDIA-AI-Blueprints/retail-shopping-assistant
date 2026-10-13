@@ -11,7 +11,7 @@ second upload.
 
 import json
 
-from chain_server.src.media_summary import summarize_media_analysis
+from chain_server.src.media_perception import summarize_media_analysis
 
 
 def _analysis(**overrides) -> str:

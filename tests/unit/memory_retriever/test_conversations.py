@@ -16,7 +16,6 @@ from memory_retriever.src import main as memory_main
 from memory_retriever.src import product_references
 from memory_retriever.src.migrations import _MIGRATIONS
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -1757,7 +1756,9 @@ def test_reset_of_an_unknown_conversation_deletes_nothing(
 def test_delete_cascades_conversation_rows_but_preserves_cart_and_context(
     conversation_db: TestClient,
 ) -> None:
-    conversation_db.post("/user/7/context/replace", json={"new_context": "legacy"})
+    with memory_main.SessionLocal() as db:
+        db.add(memory_main.User(id=7, context="legacy"))
+        db.commit()
     conversation_db.post(
         "/user/7/cart/add",
         json={
@@ -1805,7 +1806,8 @@ def test_delete_cascades_conversation_rows_but_preserves_cart_and_context(
     assert conversation_db.get("/user/7/cart").json()["cart"][0]["item"] == (
         "Structured Bag"
     )
-    assert conversation_db.get("/user/7/context").json()["context"] == "legacy"
+    with memory_main.SessionLocal() as db:
+        assert db.get(memory_main.User, 7).context == "legacy"
 
 
 def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(

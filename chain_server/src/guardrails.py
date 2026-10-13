@@ -13,7 +13,7 @@ from __future__ import annotations
 import contextlib
 import time
 from collections.abc import Sequence
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError
@@ -73,18 +73,6 @@ class GuardrailDecision(BaseModel):
     diagnostic_code: str | None = None
     modalities: list[Literal["text", "image", "video"]] = Field(default_factory=list)
     model_calls: dict[str, int] = Field(default_factory=dict)
-
-
-class GuardrailProvider(Protocol):
-    async def check_input(
-        self,
-        *,
-        text: str,
-        media: Sequence[dict[str, Any]],
-        conversation: Sequence[dict[str, str]] = (),
-    ) -> GuardrailDecision: ...
-
-    async def check_output(self, *, text: str) -> GuardrailDecision: ...
 
 
 class GuardrailServiceClient:

@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from chain_server.src.runtime.runtime import _relay_may_observe_but_not_decide
+from chain_server.src.runtime.tracing import _relay_may_observe_but_not_decide
 
 
 class _Request:

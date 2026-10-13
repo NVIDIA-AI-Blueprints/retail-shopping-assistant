@@ -88,7 +88,9 @@ has been removed; `runtime/runtime.py` is the only serving path.
 
 **Key Files**:
 - `main.py`: FastAPI application with streaming endpoints
-- `runtime/runtime.py`: Serving assistant loop, tool registry, grounding, and memory lifecycle
+- `runtime/runtime.py`: Serving assistant loop and tool registry
+- `runtime/grounding.py`, `runtime/conversation_turns.py`, `runtime/prompt_assembly.py`: Grounding, memory lifecycle and prompt assembly, mixed into `DeepAgentsRuntime`
+- `runtime/tracing.py`, `runtime/streaming.py`: Trace spans and NeMo Relay; the product showing streamed to the browser
 - `tools/`: Registered tool implementations, and the skill grant gate
 - `guardrails.py`: Client for the isolated guardrail service
 - `catalog_capabilities.py`: Process-lifetime catalog contract cache and compact prompt projection

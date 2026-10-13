@@ -1723,8 +1723,9 @@ class TestRelayExport:
         import logging
 
         from chain_server.src.runtime import runtime as deepagents_runtime
+        from chain_server.src.runtime import tracing
 
-        monkeypatch.setattr(deepagents_runtime, "_relay_warnings_said", set())
+        monkeypatch.setattr(tracing, "_relay_warnings_said", set())
         real_import = builtins.__import__
 
         def refuse(name, *args, **kwargs):

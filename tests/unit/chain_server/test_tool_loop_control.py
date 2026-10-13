@@ -2302,6 +2302,17 @@ def test_shopper_statements_default_to_no_stated_scope() -> None:
     assert _shopper_stated_scope(middleware._shopper_statements, "heel") is False
 
 
+#: runtime.py and the modules split out of it.
+_FORMERLY_RUNTIME_PY = (
+    "runtime.py",
+    "tracing.py",
+    "streaming.py",
+    "grounding.py",
+    "conversation_turns.py",
+    "prompt_assembly.py",
+)
+
+
 def test_control_prefixes_have_a_single_definition() -> None:
     """Producers and matchers must not carry independent copies of a prefix.
 
@@ -2312,7 +2323,10 @@ def test_control_prefixes_have_a_single_definition() -> None:
     """
 
     repo_root = Path(__file__).resolve().parents[3]
-    runtime_source = (repo_root / "chain_server/src/runtime/runtime.py").read_text()
+    runtime_source = "".join(
+        (repo_root / "chain_server/src/runtime" / name).read_text()
+        for name in _FORMERLY_RUNTIME_PY
+    )
 
     for prefix in (
         UNSUPPORTED_TAXONOMY_PREFIX,
@@ -2327,7 +2341,10 @@ def test_every_stop_signal_renders_the_shared_prefix() -> None:
     """Any STOP_TOOL_USE text the runtime emits must start with the constant."""
 
     repo_root = Path(__file__).resolve().parents[3]
-    runtime_source = (repo_root / "chain_server/src/runtime/runtime.py").read_text()
+    runtime_source = "".join(
+        (repo_root / "chain_server/src/runtime" / name).read_text()
+        for name in _FORMERLY_RUNTIME_PY
+    )
 
     for line in runtime_source.splitlines():
         stripped = line.strip()

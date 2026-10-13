@@ -36,7 +36,7 @@ def test_it_reads_like_a_person_wrote_it() -> None:
 
 
 def test_the_prompt_states_the_date_and_what_it_is_for() -> None:
-    source = (_REPO_ROOT / "chain_server/src/runtime/runtime.py").read_text()
+    source = (_REPO_ROOT / "chain_server/src/runtime/prompt_assembly.py").read_text()
     assert "TODAY IS {_today_for_the_shopper()}" in source
     block = source[source.index("TODAY IS") :][:600]
     assert "only date you know" in block

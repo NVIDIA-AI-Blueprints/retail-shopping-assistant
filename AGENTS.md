@@ -37,6 +37,11 @@ Top-level orchestration is via `docker-compose.yaml`; optional locally deployed 
 
 - Serving agent orchestration, turn lifecycle, and agent assembly:
   `chain_server/src/runtime/runtime.py`
+- Split out of it: the grounding-editor rewrite (`runtime/grounding.py`),
+  durable turn start and finalize (`runtime/conversation_turns.py`), system
+  prompt and user message assembly (`runtime/prompt_assembly.py`), trace spans
+  and NeMo Relay (`runtime/tracing.py`), and the product showing streamed to
+  the browser (`runtime/streaming.py`)
 - System-prompt and grounding-editor prompt text: `chain_server/src/runtime/prompts.py`
 - Agent tools, one module per area (`catalog.py`, `cart.py`, `store.py`,
   `weather.py`, `skills.py`): `chain_server/src/tools/`

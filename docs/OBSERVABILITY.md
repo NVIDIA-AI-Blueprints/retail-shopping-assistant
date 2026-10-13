@@ -472,7 +472,7 @@ own call and the turn answered *"I couldn't complete a valid catalog search"*.
 Measured on journey J01: two failures with tracing on, five passes with it off,
 on the same image, differing only by `RELAY_ENABLED`.
 
-`_relay_may_observe_but_not_decide` in `runtime/runtime.py` addresses the seam
+`_relay_may_observe_but_not_decide` in `runtime/tracing.py` addresses the seam
 rather than that one path, so the whole class of difference cannot recur.
 Three things hold whatever a wrapper does, including raising:
 

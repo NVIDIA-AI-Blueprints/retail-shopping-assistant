@@ -181,9 +181,9 @@ def test_the_rewriter_may_not_strip_the_attribution() -> None:
     anything derived from it is shown, so the stage that can delete it is told
     it may not."""
 
-    from chain_server.src.runtime import runtime as runtime_mod
+    from chain_server.src.runtime import prompts as prompts_mod
 
-    prompt = runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+    prompt = prompts_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
 
     assert "Keep the\n  provider attribution and its link" in prompt
     assert "removing it as clutter is not an option" in prompt

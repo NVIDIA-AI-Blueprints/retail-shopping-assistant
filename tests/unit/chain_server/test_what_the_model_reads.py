@@ -51,7 +51,7 @@ def _built_agent(base_config: Any) -> dict[str, Any]:
     with (
         patch("deepagents.create_deep_agent", lambda **kw: captured.update(kw)),
         patch(
-            "chain_server.src.runtime.runtime._today_for_the_shopper",
+            "chain_server.src.runtime.prompt_assembly._today_for_the_shopper",
             lambda: SNAPSHOT_DAY,
         ),
     ):

@@ -110,7 +110,18 @@ def shopping_tool_descriptions() -> str:
     """
 
     src = REPO_ROOT / "chain_server" / "src"
-    paths = [src / "runtime" / "runtime.py", src / "runtime" / "prompts.py"]
+    paths = [
+        src / "runtime" / name
+        for name in (
+            "runtime.py",
+            "tracing.py",
+            "streaming.py",
+            "grounding.py",
+            "conversation_turns.py",
+            "prompt_assembly.py",
+            "prompts.py",
+        )
+    ]
     paths += sorted((src / "tools").glob("*.py"))
     return "\n".join(path.read_text() for path in paths)
 

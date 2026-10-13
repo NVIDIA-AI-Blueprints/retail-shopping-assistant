@@ -23,6 +23,7 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
+from chain_server.src import cart_format as cart_format_mod
 from chain_server.src import cart_references as cart_references_mod
 from chain_server.src import catalog_search
 from chain_server.src import product_records as product_records_mod
@@ -40,11 +41,13 @@ from chain_server.src.conversation_products import (
     ResolveConversationProductsResult,
 )
 from chain_server.src.runtime import identity as identity_mod
+from chain_server.src.runtime import prompts as prompts_mod
 from chain_server.src.runtime import replies as replies_mod
 from chain_server.src.runtime import runtime as runtime_mod
 from chain_server.src.tools import cart as cart_tools
 from chain_server.src.tools import catalog as catalog_tools
 from chain_server.src.tools import loop_control as tool_loop_control
+from chain_server.src.tools import policy as policy_mod
 from chain_server.src.tools import skills as skill_tools
 from chain_server.src.tools import store as store_tools
 from fastapi.testclient import TestClient
@@ -1354,13 +1357,15 @@ class TestDeepAgentsRuntimeScopes:
                     cancelled = True
                     raise
 
+        from chain_server.src.runtime import conversation_turns
+
         monkeypatch.setattr(
-            runtime_mod,
+            conversation_turns,
             "_PARTIAL_GRAPH_SNAPSHOT_TIMEOUT_SECONDS",
             0.01,
         )
 
-        messages, error = await runtime_mod._partial_graph_messages(
+        messages, error = await conversation_turns._partial_graph_messages(
             HangingSnapshotAgent(),
             {"configurable": {"thread_id": "request-a"}},
         )
@@ -2865,7 +2870,7 @@ class TestDeepAgentsRuntimeRefs:
             "check_active_promotions_tool",
             "resolve_conversation_products_tool",
         }
-        selected = runtime_mod._shopper_skill_registry(
+        selected = policy_mod.load_shopper_skill_registry(
             runtime._shopper_skills_root()
         )["outfit-styling"]
         assert skill_gate._skill_files == {selected.path: selected.content}
@@ -4153,7 +4158,7 @@ class TestDeepAgentsRuntimeRefs:
             identity,
         )
 
-        assert output.response == runtime_mod._GROUNDING_FAILURE_RESPONSE
+        assert output.response == replies_mod._GROUNDING_FAILURE_RESPONSE
         assert cancelled.is_set()
         assert "I added both items." not in output.response
         assert "PRODUCT_REF" not in output.response
@@ -4226,7 +4231,7 @@ class TestDeepAgentsRuntimeRefs:
             request_id="current-request",
         )
 
-        assert response == runtime_mod._GROUNDING_FAILURE_RESPONSE
+        assert response == replies_mod._GROUNDING_FAILURE_RESPONSE
         assert "I added the bag." not in response
         assert state.agent_diagnostics["final_termination_reason"] == (
             "grounding_error"
@@ -4295,7 +4300,7 @@ class TestDeepAgentsRuntimeRefs:
             request_id="current-request",
         )
 
-        assert response == runtime_mod._GROUNDING_FAILURE_RESPONSE
+        assert response == replies_mod._GROUNDING_FAILURE_RESPONSE
         assert "I added both items." not in response
         assert state.agent_diagnostics["final_termination_reason"] == (
             "grounding_error"
@@ -5574,7 +5579,6 @@ class TestDeepAgentsRuntimeRefs:
 
     def test_collect_search_evidence_forbids_name_based_attribute_inference(self) -> None:
         from chain_server.src.runtime import grounding_evidence as grounding_evidence_mod
-        from chain_server.src.runtime import runtime as runtime_mod
 
         result = {
             "messages": [
@@ -5627,31 +5631,31 @@ class TestDeepAgentsRuntimeRefs:
         assert '"subcategory": ["flats", "sandals"]' in evidence
         assert "Do not describe an unlisted product type as advertised" in evidence
         assert "Do not omit or override a confirmed filter" in (
-            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+            prompts_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         )
         # The rewriter runs after the agent and can delete what it wrote. If
         # only the agent were told that occasion judgement is allowed, this
         # stage would strip it back out as an unsupported functional claim, and
         # the feature would look like it had never been built.
         assert "Styling judgement about an occasion is not a product claim" in (
-            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+            prompts_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         )
         assert "Remove the second, keep the first" in (
-            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+            prompts_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         )
         assert "requested type is not separately advertised" in (
-            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+            prompts_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         )
         assert "classify or group candidates by" in (
-            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+            prompts_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         )
         assert "one concise\n  group-level styling rationale" in (
-            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+            prompts_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         )
         assert "answer the styling question rather than returning a raw" in (
-            runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+            prompts_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         )
-        assert "never derive it" in runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+        assert "never derive it" in prompts_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         assert "Ocean Breeze Maxi Dress | category: dress | price: $189.99 USD" in (
             evidence
         )
@@ -7573,8 +7577,6 @@ class TestDeepAgentsRuntimeRefs:
         assert "Rubber sole and ankle strap" not in formatted
 
     def test_format_cart_exposes_cart_line_id(self) -> None:
-        from chain_server.src.runtime import runtime as runtime_mod
-
         cart = Cart(
             contents=[
                 {
@@ -7587,7 +7589,7 @@ class TestDeepAgentsRuntimeRefs:
             ]
         )
 
-        formatted = runtime_mod._format_cart(cart)
+        formatted = cart_format_mod._format_cart(cart)
 
         assert "CART_LINE_ID: line_1" in formatted
         assert "2 x Silk Dress" in formatted
@@ -7858,7 +7860,7 @@ class TestEvidenceFreeTurnsStillGetEdited:
         )
 
         assert response == "Happy to help you shop today."
-        assert response != runtime_mod._GROUNDING_FAILURE_RESPONSE
+        assert response != replies_mod._GROUNDING_FAILURE_RESPONSE
         # The turn completed; only the optional edit failed.
         assert state.agent_diagnostics["final_termination_reason"] == "completed"
         assert state.model_usage["app_llm_grounding_editor"]["status"] == "failed"
@@ -7960,35 +7962,27 @@ class TestComposerAuthorityLanes:
         shopper prose sat beside genuine product identity under one label.
         """
 
-        from chain_server.src.runtime import runtime as runtime_mod
 
-
-        src = runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+        src = prompts_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         assert "CONVERSATION" in src
         assert "PRODUCTS SHOWN EARLIER" in src
         assert "RECENT DISCUSSION" not in src
 
     def test_conversation_lane_is_declared_non_authoritative(self) -> None:
-        from chain_server.src.runtime import runtime as runtime_mod
-
-        src = runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+        src = prompts_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         assert "CONVERSATION does not" in src
         assert "intent only" in src
 
     def test_earlier_products_are_identity_not_current_fact(self) -> None:
-        from chain_server.src.runtime import runtime as runtime_mod
-
-        src = runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+        src = prompts_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
         assert "establishes identity only" in src
         assert "never proves a product's" in src
 
     def test_dead_prior_turn_lane_is_gone(self) -> None:
         """_prior_turn_messages always returns [] — one human message per turn."""
 
-        from chain_server.src.runtime import runtime as runtime_mod
 
-
-        assert "PRIOR-TURN TOOL EVIDENCE" not in runtime_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
+        assert "PRIOR-TURN TOOL EVIDENCE" not in prompts_mod._GROUNDING_EDITOR_SYSTEM_PROMPT
 
     def test_dialogue_context_excludes_the_product_index(self) -> None:
         from chain_server.src.agenttypes import State

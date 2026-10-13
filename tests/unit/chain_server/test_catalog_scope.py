@@ -11,7 +11,7 @@ def test_model_catalog_search_has_no_semantic_relation_label() -> None:
 
 
 def test_catalog_search_rules_allow_model_selected_parent_category() -> None:
-    from chain_server.src.catalog_scope import CATALOG_SEARCH_RULES
+    from chain_server.src.tools.catalog import CATALOG_SEARCH_RULES
 
     assert "not separately advertised" in CATALOG_SEARCH_RULES
     assert "denotes the same kind of thing" in CATALOG_SEARCH_RULES

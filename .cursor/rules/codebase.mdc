@@ -92,8 +92,7 @@ has been removed; `runtime/runtime.py` is the only serving path.
 - `tools/`: Registered tool implementations, and the skill grant gate
 - `guardrails.py`: Client for the isolated guardrail service
 - `catalog_capabilities.py`: Process-lifetime catalog contract cache and compact prompt projection
-- `catalog_request.py`: Deterministic required-constraint validation
-- `catalog_execution.py`: Pure mapping from validated plans to catalog requests
+- `catalog_request.py`: Deterministic required-constraint validation, and the pure mapping from validated plans to catalog requests
 - `commerce_tools.py`: Typed catalog and cart service adapters
 - `media_perception.py`: Image/video analysis before the assistant turn
 

@@ -14,7 +14,7 @@ from typing import Any, cast
 import pytest
 from chain_server.src import catalog_search
 from chain_server.src.agenttypes import Cart, State
-from chain_server.src.catalog_execution import CatalogSearchExecution
+from chain_server.src.catalog_request import CatalogSearchExecution
 from chain_server.src.fencing import MEDIA_FENCE
 from chain_server.src.runtime.identity import RequestIdentity
 from chain_server.src.runtime.runtime import (
@@ -32,7 +32,7 @@ from chain_server.src.tools.skill_gate import (
     SpeculativeToolExecutionBlocked,
     selected_skill_names_for_turn,
 )
-from chain_server.src.tools.skill_input import _skill_activation_input_model
+from chain_server.src.tools.skills import _skill_activation_input_model
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
@@ -359,7 +359,7 @@ def test_enforcement_matches_the_shipped_frontmatter() -> None:
     """
 
     from chain_server.src.tools.policy import load_shopper_skill_registry
-    from chain_server.src.tools.skill_input import primary_skills_by_group
+    from chain_server.src.tools.skills import primary_skills_by_group
 
     registry = load_shopper_skill_registry(
         Path(__file__).resolve().parents[3] / "chain_server" / "skills"

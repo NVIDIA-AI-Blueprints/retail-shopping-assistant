@@ -20,19 +20,19 @@ from typing import Any
 
 import pytest
 from chain_server.src import catalog_search as catalog_search_mod
-from chain_server.src import search_replies as search_replies_mod
 from chain_server.src.agenttypes import State
 from chain_server.src.catalog_search import SearchContext, search_catalog
 from chain_server.src.runtime import audience_events as audience_events_mod
 from chain_server.src.runtime import grounding_evidence as grounding_evidence_mod
+from chain_server.src.runtime import replies as search_replies_mod
 from chain_server.src.runtime.control_signals import REJECTIONS_KEY
 from chain_server.src.runtime.grounding_evidence import (
     _scope_relation_line,
 )
-from chain_server.src.runtime.turn_scope import TurnScope
-from chain_server.src.search_replies import (
+from chain_server.src.runtime.replies import (
     _scope_relation_payload,
 )
+from chain_server.src.runtime.turn_scope import TurnScope
 from chain_server.src.tools.evidence import EVIDENCE_KEY
 from chain_server.src.tools.schemas import (
     _search_catalog_tool_input_model,

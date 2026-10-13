@@ -43,13 +43,13 @@ Top-level orchestration is via `docker-compose.yaml`; optional locally deployed 
 - Capability-derived model-visible tool schemas: `chain_server/src/tools/schemas.py`
 - Model-visible tool result text: `chain_server/src/catalog_format.py`,
   `chain_server/src/cart_format.py`
-- Reusable model-visible catalog search rules: `chain_server/src/catalog_scope.py`
+- Reusable model-visible catalog search rules: `CATALOG_SEARCH_RULES` in `chain_server/src/tools/catalog.py`
 - Shopper-skill registry, frontmatter validation, and immutable tool policy: `chain_server/src/tools/policy.py`
 - Per-turn skill activation, model-visible tool binding, and dispatch grant gate: `chain_server/src/tools/skill_gate.py`
 - Durable conversation-turn client and wire contracts: `chain_server/src/conversation_memory.py`
 - API contract and SSE endpoint: `chain_server/src/main.py`
 - Catalog capability cache/prompt projection: `chain_server/src/catalog_capabilities.py`
-- Catalog intent validation/execution: `chain_server/src/catalog_request.py`, `chain_server/src/catalog_execution.py`
+- Catalog intent validation/execution: `chain_server/src/catalog_request.py`
 - Commerce service adapters: `chain_server/src/commerce_tools.py`
 - Operator-managed store policy content: `shared/configs/chain_server/store_policies.yaml`
 - Shopper behavior skills and references: `chain_server/skills/shopper/`

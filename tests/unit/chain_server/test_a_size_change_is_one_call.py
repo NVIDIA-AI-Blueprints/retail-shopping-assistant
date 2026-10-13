@@ -108,8 +108,8 @@ class _Cart:
 def cart_tools(base_config, monkeypatch: pytest.MonkeyPatch):
     """The registered cart tools, with the cart and the catalog stubbed."""
 
-    from chain_server.src import cart_operations as cart_ops_mod
     from chain_server.src.runtime import runtime as runtime_mod
+    from chain_server.src.tools import cart as cart_ops_mod
     captured: dict[str, Any] = {}
     deepagents_mod = ModuleType("deepagents")
     tools_mod = ModuleType("langchain_core.tools")
@@ -154,7 +154,7 @@ def cart_tools(base_config, monkeypatch: pytest.MonkeyPatch):
     catalog: dict[str, Any] = {
         "result": GetProductDetailsResult(ok=True, product=_heels())
     }
-    # The cart tools are called from cart_operations, so that is the module a
+    # The cart tools look these up in tools.cart, so that is the module a
     # double has to be installed in for the call to reach it.
     monkeypatch.setattr(
         cart_ops_mod,

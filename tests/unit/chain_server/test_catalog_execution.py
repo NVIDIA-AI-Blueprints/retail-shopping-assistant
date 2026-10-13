@@ -3,8 +3,7 @@
 
 from __future__ import annotations
 
-from chain_server.src.catalog_execution import execute_catalog_search
-from chain_server.src.catalog_request import CatalogSearchPlan
+from chain_server.src.catalog_request import CatalogSearchPlan, execute_catalog_search
 from shared.commerce_contracts import ProductSummary, SearchCatalogResult
 
 

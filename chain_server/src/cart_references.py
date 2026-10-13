@@ -16,11 +16,12 @@ from shared.commerce_contracts import ProductSummary
 from .agenttypes import Cart
 from .catalog_format import _format_product_refs
 from .product_records import (
+    _ONE_SIZE,
+    _advertised_sizes,
     _normalize_product_name,
     _product_name_tokens,
     _product_name_tokens_match,
 )
-from .sizes import _ONE_SIZE, _advertised_sizes
 
 if TYPE_CHECKING:
     from .conversation_products import ProductEvidence

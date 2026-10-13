@@ -17,6 +17,23 @@ from shared.commerce_contracts import (
 from .agenttypes import State
 from .catalog_format import _format_detail_value
 
+# Which sizes a product advertises, and the marker for one-size products.
+
+#: What the catalog carries for a product sold in exactly one size.
+_ONE_SIZE = "onesize"
+
+
+def _advertised_sizes(product: Any) -> list[str]:
+    """Read the sizes the catalog states for a product."""
+
+    raw = (getattr(product, "attributes", None) or {}).get("sizes")
+    if isinstance(raw, str):
+        raw = [part.strip() for part in raw.split(",")]
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(value).strip() for value in raw if str(value).strip()]
+
+
 _PRODUCT_NAME_STOPWORDS = frozenset({"a", "an", "and", "in", "of", "the", "to", "with"})
 
 

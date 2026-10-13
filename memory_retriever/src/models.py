@@ -34,16 +34,9 @@ def new_turn_attempt_id() -> str:
 
 class User(Base):
     __tablename__ = "users"
-    #: Client-asserted and large: the biggest live one is 1.08e18, which is
-    #: half a billion times what PostgreSQL's INTEGER holds. SQLite never
-    #: complained because its INTEGER is 64-bit regardless of the declaration,
-    #: so this only surfaces on the first insert after a Postgres migration.
-    #: The variant keeps SQLite's autoincrement working, which needs INTEGER.
-    id = Column(
-        BigInteger().with_variant(Integer, "sqlite"),
-        primary_key=True,
-        index=True,
-    )
+    #: Client-asserted and large (up to about 1.08e18); SQLite's INTEGER is
+    #: 64-bit whatever the declaration says.
+    id = Column(Integer, primary_key=True, index=True)
     context = Column(String, default="")
 
 
@@ -55,10 +48,8 @@ class CartItem(Base):
     two concurrent adds of the same product and size cannot interleave -- not
     because anything prevents it, but because every endpoint is `async def`
     doing blocking work, so the event loop serialises the whole service. That
-    is an accident, and the two steps that make this service scale both remove
-    it: Postgres replaces database-wide write serialisation with MVCC, and
-    making the endpoints threadpool-bound removes the loop lock. After either,
-    the read-then-write is a lost update or a duplicate line.
+    is an accident: making the endpoints threadpool-bound removes the loop
+    lock, and then the read-then-write is a lost update or a duplicate line.
 
     So the invariant moves into the schema first, while it is still cheap. The
     durable-turn tables already work this way -- `uq_turn_event_key`,
@@ -66,7 +57,7 @@ class CartItem(Base):
     cart was the outlier.
 
     Two indexes rather than one, because `size` is nullable and NULLs are
-    distinct in a unique index on both SQLite and Postgres. A single
+    distinct in a SQLite unique index. A single
     three-column index would leave every one-size product -- bags, sunglasses,
     jewellery, 38 of the 215 in this catalog -- entirely unconstrained, which
     is the half of the cart most likely to be added twice.
@@ -81,7 +72,6 @@ class CartItem(Base):
             "size",
             unique=True,
             sqlite_where=text("size IS NOT NULL"),
-            postgresql_where=text("size IS NOT NULL"),
         ),
         Index(
             "uq_cart_line_unsized",
@@ -89,7 +79,6 @@ class CartItem(Base):
             "product_id",
             unique=True,
             sqlite_where=text("size IS NULL"),
-            postgresql_where=text("size IS NULL"),
         ),
     )
 
@@ -175,10 +164,7 @@ class ShopperProfile(Base):
         ),
         CheckConstraint(
             # Five characters, none of which survive having every digit
-            # removed. Said this way because the obvious spelling is
-            # `NOT GLOB '*[^0-9]*'` and GLOB exists only in SQLite: Postgres
-            # rejects the statement outright, so the table cannot be created
-            # there at all. `replace` and `length` are in both.
+            # removed.
             "length(zipcode) = 5 AND replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(zipcode, '0', ''), '1', ''), '2', ''), '3', ''), '4', ''), '5', ''), '6', ''), '7', ''), '8', ''), '9', '') = ''",
             name="ck_shopper_profiles_zipcode",
         ),
@@ -212,13 +198,7 @@ class ConversationTurn(Base):
             "uq_conversation_started",
             "conversation_id",
             unique=True,
-            # Both dialects, always. With only the SQLite clause this
-            # becomes a *full* unique index on conversation_id everywhere else
-            # -- one turn per conversation, ever -- and the service is unusable
-            # from the first second turn. Found by copying live data into
-            # Postgres, which is the only place it can show.
             sqlite_where=text("status = 'started'"),
-            postgresql_where=text("status = 'started'"),
         ),
     )
 

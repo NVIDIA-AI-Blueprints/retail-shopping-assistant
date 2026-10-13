@@ -45,24 +45,8 @@ def cart_mutation_digest(
     return sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _FLOAT_TYPE(connection: Connection) -> str:
-    """The spelling for a double-precision column in this dialect.
-
-    REAL means 8 bytes in SQLite and 4 in Postgres, where it would round a
-    price to about seven significant digits.
-    """
-
-    return "REAL" if connection.dialect.name == "sqlite" else "DOUBLE PRECISION"
-
-
 def _table_columns(connection: Connection, table_name: str) -> set[str]:
-    """Column names for a table, whichever database this is.
-
-    Not `PRAGMA table_info`, which exists only in SQLite and returns an empty
-    result elsewhere -- on Postgres every "add the column if it is missing"
-    check below would then try to add it again. The inspector asks each dialect
-    in its own language.
-    """
+    """Column names for a table, or none if it does not exist yet."""
 
     inspector = inspect(connection)
     if not inspector.has_table(table_name):
@@ -73,7 +57,7 @@ def _table_columns(connection: Connection, table_name: str) -> set[str]:
 def ensure_price_column(connection: Connection) -> None:
     if "price" not in _table_columns(connection, "cart_items"):
         connection.execute(
-        text(f"ALTER TABLE cart_items ADD COLUMN price {_FLOAT_TYPE(connection)}")
+        text("ALTER TABLE cart_items ADD COLUMN price REAL")
     )
 
 
@@ -172,10 +156,6 @@ def _conversation_schema(connection: Connection) -> None:
     ConversationTurn -- which carries the shopper_profile_id foreign key that
     version 6 adds, pointing at a table version 5 creates. On a fresh database
     that is a reference to a table that does not exist yet.
-
-    SQLite accepted it, because it does not check that a foreign key's target
-    exists until something is inserted. Postgres checks at CREATE and refused,
-    which is how this was found.
 
     `create_all` sorts by dependency, so naming ShopperProfile here lets it go
     first. Version 5 stays where it is and does nothing on a fresh database --
@@ -299,13 +279,10 @@ def expected_schema_version() -> int:
 def run_schema_migrations(database_engine: Engine) -> None:
     """Apply each schema version once without losing existing data."""
 
-    if database_engine.dialect.name == "sqlite":
-        # Readers and the writer block each other without it. Postgres has no
-        # equivalent statement and rejects this one, and does not need it: MVCC
-        # is the reason to move there in the first place.
-        with database_engine.connect() as connection:
-            connection.exec_driver_sql("PRAGMA journal_mode=WAL")
-            connection.commit()
+    # Readers and the writer block each other without it.
+    with database_engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+        connection.commit()
     SchemaMigration.__table__.create(bind=database_engine, checkfirst=True)
 
     for version, migrate in _MIGRATIONS:

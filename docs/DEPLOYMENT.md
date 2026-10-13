@@ -446,13 +446,7 @@ cost control, serve the models on your own GPUs with vLLM:
   conversation lives in the memory service, so nothing ties a conversation to
   one worker.
 - **Memory service:** SQLite is one file with one writer, so the service runs
-  as a single replica. To run more than one, move it to PostgreSQL first. The
-  service also accepts a `postgresql+psycopg://` URL in `MEMORY_DATABASE_URL`,
-  and `scripts/copy_memory_to_postgres.py` copies an existing SQLite database
-  across. To try it with Compose, `docker compose --profile postgres up -d
-  memory-db` starts PostgreSQL on loopback port 5432 with the credentials in
-  `MEMORY_DB_USER`, `MEMORY_DB_PASSWORD` and `MEMORY_DB_NAME`; all three default
-  to `memory`, so change them before any shared deployment.
+  as a single replica.
 - **Catalog:** the index is built once per catalog and read by every replica;
   see [Kubernetes](#kubernetes) for running indexing as a Job.
 - **Load balancing:** the bundled UI sends uploaded media as base64 JSON. Keep
@@ -504,8 +498,7 @@ are for whoever writes them.
   read the index; they will sit unready until it succeeds, which is correct and
   needs no coordination.
 - **The memory service stays at one replica** on SQLite, on a volume one pod
-  mounts, unless you move it to PostgreSQL first; see
-  [Scale Out](#scale-out).
+  mounts; see [Scale Out](#scale-out).
 - **`shared/` is still a bind mount.** All four services read configuration,
   data, images, and Python modules from it, and a hostPath does not exist on
   another node. It is read-only at runtime, so the fix is

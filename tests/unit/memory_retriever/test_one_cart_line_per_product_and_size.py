@@ -5,11 +5,9 @@
 
 The add reads then writes. It is correct today only because the service
 serialises every request -- 13 `async def` endpoints doing blocking database
-work make the event loop a lock over the whole process. Both changes that let
-this scale remove that lock: Postgres swaps database-wide write serialisation
-for MVCC, and threadpool-bound endpoints free the loop. After either, two
-concurrent adds of the same product and size are a lost update or a duplicate
-line.
+work make the event loop a lock over the whole process. Threadpool-bound
+endpoints free the loop, and then two concurrent adds of the same product and
+size are a lost update or a duplicate line.
 
 So the invariant lives in the schema, and these tests are about the schema
 keeping it rather than about the add path being careful.
@@ -70,8 +68,8 @@ def test_a_sized_line_cannot_be_inserted_twice(session) -> None:
 def test_a_one_size_line_cannot_be_inserted_twice(session) -> None:
     """The case a single three-column index would miss.
 
-    `size` is nullable and NULLs are distinct in a unique index on both SQLite
-    and Postgres, so `(user_id, product_id, NULL)` twice would not collide.
+    `size` is nullable and NULLs are distinct in a SQLite unique index, so
+    `(user_id, product_id, NULL)` twice would not collide.
     That is bags, sunglasses and jewellery -- 38 of the 215 products here, and
     the ones most likely to be added twice, since nothing asks the shopper a
     size question for them.

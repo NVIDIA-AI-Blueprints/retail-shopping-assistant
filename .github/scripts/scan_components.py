@@ -65,7 +65,6 @@ NVIDIA_CONTAINER_CATALOG = {
 _APACHE = ('Apache-2.0', 'https://spdx.org/licenses/Apache-2.0.html')
 THIRD_PARTY_CONTAINER_CATALOG = {
     'python': {'name': 'Python', 'url': 'https://hub.docker.com/_/python', 'license': 'PSF-2.0', 'license_url': 'https://spdx.org/licenses/Python-2.0.html'},
-    'postgres': {'name': 'PostgreSQL', 'url': 'https://hub.docker.com/_/postgres', 'license': 'PostgreSQL License', 'license_url': 'https://www.postgresql.org/about/licence/'},
     'nginx': {'name': 'nginx', 'url': 'https://hub.docker.com/_/nginx', 'license': 'BSD-2-Clause', 'license_url': 'https://spdx.org/licenses/BSD-2-Clause.html'},
     'quay.io/coreos/etcd': {'name': 'etcd', 'url': 'https://github.com/etcd-io/etcd', 'license': _APACHE[0], 'license_url': _APACHE[1]},
     'chrislusf/seaweedfs': {'name': 'SeaweedFS', 'url': 'https://github.com/seaweedfs/seaweedfs', 'license': _APACHE[0], 'license_url': _APACHE[1]},

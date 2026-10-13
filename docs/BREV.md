@@ -11,7 +11,7 @@ NVIDIA Brev provides GPU Environment Templates called "Launchables" that enable 
 Before starting this deployment, ensure you have:
 
 - Access to the NVIDIA Brev platform ([brev.nvidia.com](https://brev.nvidia.com))
-- NVIDIA NGC API key ([Get your API key here](https://ngc.nvidia.com/))
+- NVIDIA API key ([get one at build.nvidia.com](https://build.nvidia.com))
 - Basic familiarity with containerized applications and Jupyter notebooks
 
 ## Step-by-Step Deployment Guide
@@ -83,7 +83,7 @@ Configure the GPU compute resources for optimal performance.
    - **Storage**: At least 500 GB; the model checkpoints alone are about 300 GB
 
 #### Alternative Configurations
-- **Hosted endpoints only**: any instance, no GPU required
+- **Hosted endpoints only**: any instance, no local GPU required
 - **8x NVIDIA A100 80GB**: the same layout, without native FP8 for the video safety model
 
 3. Click **Next** to review your configuration

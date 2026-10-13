@@ -257,7 +257,7 @@ def configure(args: argparse.Namespace) -> None:
 def base_env() -> dict[str, str]:
     env = os.environ.copy()
     model_env_loaded = load_model_env(env)
-    default_key = env.get("NVIDIA_API_KEY", "").strip() or env.get("NGC_API_KEY", "").strip()
+    default_key = env.get("NVIDIA_API_KEY", "").strip()
     if model_env_loaded and not default_key:
         default_key = "local"
     if default_key:

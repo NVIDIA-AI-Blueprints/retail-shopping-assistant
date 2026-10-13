@@ -14,7 +14,7 @@ basis of whether you have GPUs.
 
 | Path | What it needs | Start at |
 |------|---------------|----------|
-| **NVIDIA-hosted endpoints** | An API key, no GPU | [Deployment Guide - Hosted Endpoints](DEPLOYMENT.md#-hosted-endpoints) |
+| **NVIDIA-hosted endpoints** | An API key, no local GPU | [Deployment Guide - Hosted Endpoints](DEPLOYMENT.md#-hosted-endpoints) |
 | **Self-hosted models (vLLM)** | GPUs, plus a Hugging Face token for gated checkpoints | [Deployment Guide - Locally Hosted Models](DEPLOYMENT.md#-locally-hosted-models) |
 | **Managed cloud GPU** | An NVIDIA Brev account | [Deploy on Brev](BREV.md) |
 

@@ -57,7 +57,7 @@ def _table_columns(connection: Connection, table_name: str) -> set[str]:
 def ensure_price_column(connection: Connection) -> None:
     if "price" not in _table_columns(connection, "cart_items"):
         connection.execute(
-        text(f"ALTER TABLE cart_items ADD COLUMN price REAL")
+        text("ALTER TABLE cart_items ADD COLUMN price REAL")
     )
 
 

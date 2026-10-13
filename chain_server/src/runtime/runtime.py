@@ -274,12 +274,8 @@ def _record_turn_diagnostics(span: Any, state: State) -> None:
             ),
             "skills": diagnostics.get("skill_files_read") or [],
             "tools": [call.get("tool_name") for call in tool_calls],
-            # Serialised, not nested. A viewer flattens nested metadata into one
-            # attribute per leaf, and the full blob explodes into ~120 keys --
-            # `product_evidence.0.facts.heel_type` and the like -- which sorts
-            # the handful of fields worth reading to the bottom of a wall. The
-            # per-tool detail is already on the tool spans; this is the derived
-            # view, kept whole and out of the way.
+            # Serialised, not nested: trace viewers flatten nested metadata
+            # into one attribute per leaf, which buries the useful fields.
             "diagnostics_json": json.dumps(diagnostics, default=str),
         }
         span.set_attribute("metadata", json.dumps(payload, default=str))
@@ -413,14 +409,8 @@ def _numbered_within_the_group(
     ]
 
 
-#: `read_file` joined this list once the base prompt below stopped being a lie.
-#: It said "You have no filesystem" while the model could and did call
-#: read_file -- observed on live turns across the run archive, including one
-#: with ten consecutive calls, and one that also reached for `glob`. Every one
-#: of those was a model round trip spent fetching a skill file the activation
-#: middleware had already injected in full, which is why the injection prompt
-#: had to ask it not to. Removing the tool answers that where a request could
-#: only ask.
+#: Must match the base prompt's "You have no filesystem". Skill files are
+#: already injected in full, so `read_file` would only waste a round trip.
 _EXCLUDED_DEEP_AGENT_TOOLS = frozenset(
     {
         "write_todos",
@@ -435,11 +425,9 @@ _EXCLUDED_DEEP_AGENT_TOOLS = frozenset(
     }
 )
 #: Names looked up in the catalog when a reference resolves to nothing. Bounded
-#: because each is a retrieval, and a turn that names more than two products the
-#: assistant never showed is a conversation to have, not a batch to satisfy.
+#: because each is a retrieval.
 #: The longest one model request may take before it is abandoned, whatever the
-#: deployment's turn budget. A request slower than this has stalled rather than
-#: thought: the median turn costs ten seconds end to end.
+#: deployment's turn budget. A request slower than this has stalled.
 _MODEL_REQUEST_TIMEOUT_CEILING_SECONDS = 40.0
 
 
@@ -842,8 +830,7 @@ class DeepAgentsRuntime:
         self._conversation_products = ConversationProductsClient(config.memory_port)
         # Fails closed when weather is disabled or unconfigured: every call
         # returns a typed failure, which the reply degrades into occasion
-        # styling. So an operator who never sets a key sees a shop that styles
-        # without weather, not a shop that breaks.
+        # styling.
         self._weather_client = build_weather_client(
             getattr(config, "weather", None) or WeatherConfig()
         )
@@ -856,10 +843,8 @@ class DeepAgentsRuntime:
     def _exposed_agent_diagnostics(self, output: State) -> dict[str, Any]:
         if not getattr(self.config, "expose_agent_diagnostics", False):
             return {}
-        # What the turn could see, beside what it did. Reviewing a journey
-        # means asking both, and the lanes could only be reconstructed
-        # offline and approximately -- from the products a run happened to
-        # report rather than from the projection the turn actually read.
+        # What the turn could see, beside what it did. The lanes cannot be
+        # reconstructed accurately offline, so they are recorded here.
         lanes = {
             lane: text
             for lane, text in (
@@ -908,21 +893,16 @@ class DeepAgentsRuntime:
                     break
                 yield event
         except BaseException:
-            # A shopper who closes the tab or resets stops this generator. The
-            # turn is a task now, so it does not hear that on its own: before
-            # the queue it was awaited inline and the cancellation reached it.
-            # Measured without this: a client that hung up at 8s still cost
-            # three more LLM calls. Cancel it and let the timeout own the rest.
+            # A shopper who closes the tab or resets stops this generator, but
+            # the turn is a separate task and must be cancelled explicitly.
             turn.cancel()
             raise
         # Re-raises whatever the turn raised, so failure handling is unchanged.
         output = await turn
         products = output.product_results or []
         if products:
-            # Flat, still, and in group order: the client renders a sequence,
-            # and a payload that changed shape would blank the panel. Each
-            # product names its group and its number under that group, which
-            # is what the client needs to draw the headings.
+            # Flat and in group order: a payload that changed shape would blank
+            # the client panel. Each product names its group and index in it.
             yield json.dumps(
                 {
                     "type": "products",
@@ -987,12 +967,8 @@ class DeepAgentsRuntime:
                 # In a finally, not on the success path: a failed turn is
                 # exactly when the trace is worth having.
                 _record_turn_diagnostics(span, state)
-                # Likewise, and for a blunter reason. The checkpoint thread is
-                # keyed on (conversation_id, request_id), so it belongs to this
-                # one request and nothing will ever read it again. It is freed
-                # here, not only at finalization, because a turn that fails to
-                # finalize would otherwise keep its whole message history for
-                # the life of a long-lived pod with no eviction.
+                # The checkpoint thread is request-scoped and never read again.
+                # Freed here too, or a turn that fails to finalize leaks it.
                 await self._delete_turn_checkpoint(identity)
 
     async def _run_turn_inner(
@@ -1234,13 +1210,9 @@ class DeepAgentsRuntime:
                 )
             input_message = self._build_user_message(state, identity)
             # The grounding editor is not optional, so its budget is reserved
-            # before the agent loop runs rather than taken from what the loop
-            # leaves. Measured 2026-08-04: the loop reached the full 45s turn
-            # budget on six turns, leaving the editor zero seconds and sending
-            # the grounding-failure message to the shopper.
-            # Never take more than half the turn: a deployment with a short
-            # budget must still get an agent loop, and a reserve larger than the
-            # budget would fail every turn before any work happened.
+            # before the agent loop runs rather than taken from what it leaves.
+            # Never take more than half the turn, so a short budget still gets
+            # an agent loop.
             if grounding_reserve is None:
                 grounding_reserve = self._grounding_reserve()
             agent_timeout = max(
@@ -1291,9 +1263,7 @@ class DeepAgentsRuntime:
                 final_termination_reason="completed",
             )
             # An unenforceable requirement is a fact for the model to speak to,
-            # not a reason for the runtime to seize the turn. Deterministic code
-            # establishes that the filter is not advertised; the model decides
-            # what to say about it, constrained by the grounding editor.
+            # not a reason for the runtime to seize the turn.
             # Never below the reserve, however long the loop actually ran.
             remaining_seconds = max(
                 grounding_reserve,
@@ -1514,10 +1484,8 @@ class DeepAgentsRuntime:
             },
             disabled=("get_weather_forecast_tool",) if weather_off else (),
         )
-        # Built before the skill gate because the gate asks it, at each model
-        # call, which tools the turn has finished with. `tool_loop_control` is
-        # the outer middleware and owns that fact; the gate is what writes the
-        # prompt, so the answer has to travel from here to there.
+        # Built before the skill gate, which asks it at each model call which
+        # tools the turn has finished with.
         tool_loop_control = ToolLoopControlMiddleware(
             catalog_context=format_catalog_capabilities_for_prompt(
                 turn_capabilities
@@ -1538,11 +1506,9 @@ class DeepAgentsRuntime:
         )
 
         agent_tools = [activate_shopper_skills_tool, *shopping_tools]
-        # `@tool` copies the docstring verbatim, source indentation included,
-        # so where a tool is defined would otherwise change what the model
-        # reads. Descriptions take the form they are evaluated with, wherever
-        # their source sits; changing that form changes which tools turns
-        # call, and needs a replay like any prompt change.
+        # `@tool` copies the docstring verbatim, indentation included. Changing
+        # this normalisation changes what the model reads; replay it like any
+        # prompt change.
         for agent_tool in agent_tools:
             if isinstance(getattr(agent_tool, "description", None), str):
                 agent_tool.description = _as_evaluated(agent_tool.description)
@@ -1561,10 +1527,8 @@ class DeepAgentsRuntime:
         return {
             "configurable": {"thread_id": identity.checkpoint_thread_id},
             "recursion_limit": self.config.deepagents_recursion_limit,
-            # Trace-only. The checkpoint thread is deliberately request-scoped,
-            # so a tracer left to infer a session from it files every turn as
-            # its own conversation. This names the conversation for spans raised
-            # inside the graph; it is read by tracing and by nothing else.
+            # Trace-only: the checkpoint thread is request-scoped, so tracing
+            # needs the conversation named explicitly. Nothing else reads it.
             "metadata": {"session_id": identity.conversation_id},
         }
 
@@ -1619,14 +1583,8 @@ class DeepAgentsRuntime:
 
         api_key_env = getattr(self.config, "llm_api_key_env", None)
         api_key = os.environ.get(api_key_env, "") if api_key_env else "not-needed"
-        # Sampling is settable so the repetition failure can be bisected.
-        #
-        # J01 turn 16 emitted twelve model steps with empty text content, each
-        # a byte-identical tool call against a byte-identical result, and died
-        # on the recursion limit. That is degenerate repetition under
-        # likelihood-maximising decoding, and at `temperature=0` with no
-        # penalty it cannot be told apart from a model that will not stop.
-        # Measurements taken before llm_temperature left 0 do not carry over.
+        # Sampling is settable so degenerate tool-call repetition can be
+        # bisected. Measurements taken at temperature 0 do not carry over.
         sampling: dict[str, Any] = {}
         frequency_penalty = os.environ.get("APP_LLM_FREQUENCY_PENALTY", "")
         if frequency_penalty:
@@ -1642,18 +1600,9 @@ class DeepAgentsRuntime:
             max_tokens=(
                 max_tokens if max_tokens is not None else self.config.llm_max_output_tokens
             ),
-            # One request hung for 133.8 seconds and took the whole turn with
-            # it: the shopper asked to add a bracelet and got "this request
-            # took too long to complete" after two and a quarter minutes, on a
-            # turn that normally costs ten seconds. Without a deadline here the
-            # only limit was the turn budget, so a single stalled call spent
-            # everything the turn had.
-            #
-            # This also switches on the retry that was already configured.
-            # `max_retries` defaults to 2 and fires on errors -- and a hang is
-            # not an error, so nothing ever retried. A call that has not
-            # answered in forty seconds is not going to; failing it leaves time
-            # to ask again and still finish inside the turn.
+            # Without a deadline a single stalled call can spend the whole turn
+            # budget. Timing out also lets `max_retries` fire, since a hang is
+            # not an error.
             timeout=self._model_request_timeout(),
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
@@ -1727,20 +1676,11 @@ class DeepAgentsRuntime:
                 result,
                 request_id=request_id,
             )
-        # No evidence is a reason to run the editor, not to skip it. A turn with
-        # nothing to ground against is exactly the turn where the model
-        # improvises about its own machinery -- the leak that reached a shopper
-        # was "I don't have access to a catalog search tool (only cart tools)"
-        # on a turn with no evidence, no cart, and no history. Skipping here left
-        # a fixed list of literal replacements as the only guard, and a list can
-        # never cover what a model might say. These turns also run no tools, so
-        # the editor has the most deadline available, not the least.
+        # No evidence is a reason to run the editor, not to skip it: those are
+        # the turns where the model improvises about its own machinery.
 
-        # Fail-closed exists to stop a draft asserting product facts that the
-        # turn's evidence cannot support. A turn with no authority has no such
-        # facts, so an editor failure there must not cost the shopper the whole
-        # reply -- it degrades to the unedited draft, which is what shipped
-        # before the editor ran on these turns at all.
+        # Fail-closed guards unsupported product facts. A turn with no
+        # authority has none, so an editor failure degrades to the draft.
         has_grounding_authority = _has_grounding_authority(state, current_evidence)
         termination_reason_before_editor = state.agent_diagnostics.get(
             "final_termination_reason"
@@ -1761,16 +1701,10 @@ class DeepAgentsRuntime:
             f"{format_cart_change(state.cart_at_turn_start, state.cart)}\n\n"
             "CONVERSATION (shopper intent only — never a product fact):\n"
             f"{state.dialogue_context or '(none)'}\n\n"
-            # The editor had seven lanes and none of them was the shopper's own
-            # media, so a draft naming what the photo showed -- "tan blazer,
-            # cable-knit sweater, salmon trousers" -- had no lane supporting it,
-            # and this editor cuts what no lane supports. It was not merely
-            # failing to require the description; it had reason to remove one.
-            # Fenced: these words were written by a model about a file a
-            # stranger supplied, and they are the one thing here that nobody in
-            # this service wrote. Everything in a prompt is text, so without a
-            # boundary a description saying "ignore the above" arrives looking
-            # exactly like a rule we set.
+            # Without this lane the editor cuts descriptions of the shopper's
+            # media, since it removes what no lane supports.
+            # Fenced: this text describes an untrusted upload, and without a
+            # boundary it could read like an instruction we set.
             "WHAT THE SHOPPER'S MEDIA SHOWED (sight, never a catalog fact):\n"
             f"{MEDIA_FENCE.wrap(state.media_analysis) or '(none)'}\n\n"
             f"AVAILABLE IMAGES:\n{_format_retrieved_images(state.retrieved)}\n\n"
@@ -2000,16 +1934,10 @@ class DeepAgentsRuntime:
         # Media rules are only reachable on a turn that carries media, so they
         # are only assembled then.
         media_rules = _MEDIA_TURN_RULES if media else ""
-        # Weather ships off, and off means absent, not present-and-failing:
-        # a turn without the tool must not be told about it either. The rule
-        # about ordering calls around a forecast lives in
-        # `forecast_prompt_section`, which ships with the grant and so needs
-        # no flag.
-        #
-        # The date itself stays either way. Relative dates are how shoppers
-        # talk about occasions -- "the wedding is next weekend" -- and resolving
-        # them has nothing to do with forecasts. Only the forecast window,
-        # which is a fact about the tool, stays behind the flag.
+        # Weather off means absent: a turn without the tool is not told of it.
+        # Forecast ordering rules live in `forecast_prompt_section`.
+        # The date stays either way, for relative dates; only the forecast
+        # window stays behind the flag.
         weather_registered = self._weather_is_registered()
         forecast_window = (
             " and a forecast may only be asked for a window within about "
@@ -2202,11 +2130,8 @@ Rules:
                     f"IMAGE ATTACHED: {'yes' if state.image else 'no'}"
                 ),
                 f"MEDIA ATTACHED:\n{_format_media_summary(state.media)}",
-                # Fenced, and this is the site that matters more than the
-                # editor's: the editor only trims a draft, while this message
-                # is what the agent reads before choosing tools. Text arriving
-                # here unmarked is the closest thing in this service to a
-                # stranger writing in the instruction channel.
+                # Fenced: the agent reads this before choosing tools, so
+                # unmarked text here would reach the instruction channel.
                 f"MEDIA ANALYSIS:\n"
                 f"{MEDIA_FENCE.wrap(state.media_analysis) or '(none)'}",
                 f"CURRENT CART:\n{_format_cart(state.cart)}",
@@ -2214,22 +2139,10 @@ Rules:
                 f"RECENT DISCUSSION:\n{state.context or '(none)'}",
             ]
         )
-        # Last, because it was arriving fifth of nine with eleven thousand
-        # characters of history behind it, and the final words the model read
-        # before choosing a tool were a product showing from turn one.
-        #
-        # Asked "it's going to snow when we get back, what should I wear", it
-        # searched for "a dress suitable for a warm-weather wedding in Cancun"
-        # carrying black, high_neck and size 2 from six turns earlier -- the
-        # constraints of the turn whose reply is quoted in the history above.
-        # The request was in the prompt the whole time, buried at character
-        # 1,182 of 12,865.
-        #
-        # The same words, moved, and nothing said about what outranks what. An
-        # earlier attempt to fix this by declaring the query authoritative over
-        # anything established before it took this journey from three passes in
-        # three to none: the cart and the references it resolves are
-        # established earlier too, and they still count.
+        # Last, so the current request is the final thing the model reads
+        # before choosing a tool, rather than stale history.
+        # Do not declare it authoritative over earlier context: the cart and
+        # resolved references are established earlier and still count.
         sections.append(f"THIS TURN'S REQUEST, TO ANSWER NOW:\n{state.query}")
         return "\n\n".join(sections)
 
@@ -2416,9 +2329,7 @@ Rules:
 
         # Ordered here, before the record is written and before the events are
         # emitted, so the shopper, the durable index and the resolver all count
-        # the same list. Ordering only at the stream would have left "the second
-        # one" meaning the second shown to the shopper and the second ranked to
-        # the resolver.
+        # the same list.
         state.product_results = _in_presentation_order(
             state.product_results or [], state.response or "", state.product_groups
         )
@@ -2501,9 +2412,8 @@ Rules:
 
 #: Keys the catalog returns alongside the declared detail fields that are not
 #: product attributes: retrieval bookkeeping, and taxonomy which has its own
-#: lane. catalog_text is the prose serialisation of the same attributes and is
-#: deliberately not forwarded -- it carries a marketing summary, and separating
-#: the two would mean parsing prose.
+#: lane. catalog_text is deliberately not forwarded: it mixes the same
+#: attributes with a marketing summary.
 
 
 _EVALUATED_DESCRIPTION_INDENT = " " * 12

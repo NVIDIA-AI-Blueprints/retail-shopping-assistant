@@ -286,21 +286,13 @@ def _rejected_catalog_search_response(
         for tool_name, status in business_calls
     ):
         if _search_reported_not_covered(messages):
-            # The scopes were invalid, but the call also named what this catalog
-            # does not carry, and NOT_COVERED evidence went back to the model.
-            # That is a fact for the model to speak to, not a reason to seize
-            # the turn: asked to compare two aprons in a catalog with none, the
-            # model correctly sent not_covered and had its answer replaced by
-            # "I couldn't complete a valid catalog search", five turns running.
+            # The scopes were invalid, but NOT_COVERED evidence went back to
+            # the model. That is a fact for the model to speak to, not a reason
+            # to seize the turn.
             return None
         if _search_reported_not_carried(messages):
             # The same fact, established by the tool rather than volunteered by
-            # the model. Leaving it to the model meant leaving it to chance:
-            # replayed five times, it filled `not_covered` unprompted in four
-            # and in the fifth wrote the right answer -- "aprons aren't a
-            # product type this store carries" -- only to have it replaced by
-            # the refusal. Nothing about a catalog that carries no aprons
-            # differed between those runs.
+            # the model, which does not report it reliably.
             return None
         return _REJECTED_CATALOG_SEARCH_RESPONSE
     return None
@@ -693,10 +685,8 @@ def _diagnostic_product_facts(product: dict[str, Any]) -> dict[str, Any]:
             facts[key] = _bounded_product_evidence_value(value)
     facts["image_available"] = bool(product.get("image_url"))
 
-    # Attributes the catalog confirmed on a search result. The composer is
-    # allowed to state these, so the evidence trace has to carry them: a fact an
-    # observer cannot see the support for is indistinguishable from an invented
-    # one, and gets judged as invention however accurate it is.
+    # Attributes the catalog confirmed on a search result. The composer may
+    # state these, so the trace must carry them or they look invented.
     attributes = product.get("attributes")
     if isinstance(attributes, dict):
         for name, value in attributes.items():

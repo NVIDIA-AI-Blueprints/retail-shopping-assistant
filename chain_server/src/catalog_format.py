@@ -304,10 +304,8 @@ def _format_catalog_scope_outcome(outcome: dict[str, Any]) -> str:
     )
 
 
-#: Said once per search result, not once per product. It is a fact about the
-#: search, identical for every hit, and thirteen hits repeated it thirteen
-#: times -- 2,665 of one result's 13,346 characters, more than the product
-#: facts themselves, re-sent on every later model call of the turn.
+#: Said once per search result, not once per product: it is a fact about the
+#: search, and repeating it per hit bloats every later model call.
 SEARCH_RESULT_ATTRIBUTE_LIMIT_NOTE = (
     "DETAILS: Any attribute not listed under a product above is not carried by "
     "this search result. Read it with get_product_details_tool and that "
@@ -482,10 +480,8 @@ _SEARCH_NO_MATCH_GROUNDING_NOTE = (
 )
 
 
-#: The last line of a zero-result reply. It names this search's own filters:
-#: the general rule above sat before four blocks of evidence echoing the call,
-#: and replayed, the model sent the same search back 3 of 3 times; with this
-#: line after the evidence it dropped a filter 3 of 3.
+#: The last line of a zero-result reply, naming this search's own filters. It
+#: must come after the evidence, or the model resends the same search.
 _SEARCH_NO_MATCH_NEXT_STEP = (
     "NEXT STEP: search again without one of these filters: {droppable}. "
     "Do not send the same search again."

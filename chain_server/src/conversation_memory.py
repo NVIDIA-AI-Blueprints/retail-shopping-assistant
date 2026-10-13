@@ -186,12 +186,9 @@ class TurnFinalizeResult(_MemoryModel):
     status: FinalTurnStatus
     assistant_text: str = Field(..., max_length=100_000)
     termination_reason: str | None = Field(default=None, max_length=1_024)
-    #: Event types the memory service did not recognise and did not store.
-    #: Normally empty. Non-empty means either a genuine typo or a peer running
-    #: an older build, and either way the turn itself finalized.
-    #: Bounded by the events a finalize may carry, not by a number picked
-    #: here: a smaller cap would reject a legitimate receipt, and this
-    #: field exists precisely so a receipt is never rejected.
+    #: Event types the memory service did not recognise and did not store; the
+    #: turn still finalized. Bounded by MAX_FINALIZE_EVENTS, not a smaller cap,
+    #: so a legitimate receipt is never rejected.
     dropped_event_types: list[str] = Field(
         default_factory=list,
         max_length=MAX_FINALIZE_EVENTS,

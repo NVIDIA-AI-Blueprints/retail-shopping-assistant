@@ -56,10 +56,8 @@ def summarize_media_analysis(media_analysis: str) -> dict[str, Any] | None:
 
     return {
         "summary": _text(parsed.get("summary")),
-        # Everything seen, each carrying how many of the model's own searches
-        # chase it. A shopper who says "I like the top" gets a top with several
-        # and the jeans beside it with none: the breadth is shown, the focus is
-        # evidenced rather than asserted.
+        # Everything seen, each with how many of the model's searches chase
+        # it, so breadth is shown and focus is evidenced rather than asserted.
         "items": [
             {"label": item, "pursued": _pursued_by(item, queries)}
             for item in items[:_MAX_PER_FIELD]

@@ -138,14 +138,9 @@ class SearchCatalogToolArguments(BaseModel):
             "are meant."
         ),
     )
-    # No description on either field. `_search_catalog_tool_input_model`
-    # redefines both with the active catalog's enums, and a redefined field
-    # replaces the whole `FieldInfo` -- description included. Text written here
-    # never reaches the model. It sat here for months saying things the live
-    # description did not say, which is worse than saying nothing: two
-    # statements of the taxonomy contract, one of them inert, and nothing to
-    # keep them in step. The clauses worth keeping were moved into the live
-    # description; the rest were never tested, because they were never read.
+    # No description on either field: `_search_catalog_tool_input_model`
+    # redefines both with the catalog's enums, replacing the whole `FieldInfo`,
+    # so text here never reaches the model. Edit the live description instead.
     taxonomy: CatalogTaxonomyToolInput = Field(...)
     required_constraints: dict[str, Any] = Field(...)
     scope_complete: bool = Field(
@@ -234,17 +229,10 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
             and not has_taxonomy
             and not self._scoped_by_a_hard_filter()
         ):
-            # Required unconditionally, this field had to be invented on the one
-            # request that has no product type to give it. "Nothing over $50"
-            # named none, so the model filled it with "items" -- and the
-            # vocabulary judge, whose question is whether a named product type
-            # is stocked, answered that this catalog carries no "items". The
-            # turn told the shopper the shop had nothing, with four bags under
-            # fifty dollars sitting behind a search that was never run.
-            #
-            # A scope still has to say which products are meant. Taxonomy says
-            # it, and so does an enforceable filter; what is not allowed is an
-            # unscoped search, and the rules below still refuse one.
+            # A product type is not required when taxonomy or a hard filter
+            # scopes the search: forcing one on "nothing over $50" makes the
+            # model invent a noun the catalog does not stock. An unscoped
+            # search is still refused.
             raise ValueError(
                 "text catalog search requires requested_product_type, an "
                 "advertised category or subcategory, or a hard filter"
@@ -271,24 +259,12 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
             and not self.taxonomy.category
             and not self._scoped_by_a_hard_filter()
         ):
-            # The rule exists so a role the model invented -- "loungewear" --
-            # cannot be mapped onto subcategories silently. It fires on an
-            # INVENTED role, not an ABSENT one. "Nothing over $50" invents
-            # nothing: the shopper named no category, no subcategory and no
-            # product type, so clothes, shoes and accessories are all on the
-            # table and the price is the whole scope. Demanding a subcategory
-            # there asks the assistant to narrow a request that was complete,
-            # and it answered "could you clarify the product type" instead of
-            # showing anything.
-            #
-            # An advertised category grounds the scope the same way a filter
-            # does, and nothing is mapped silently onto anything: the category
-            # IS the scope, unlimited by subcategory, and the role only ranks
-            # within it. "It's going to snow when we get back, what should I
-            # wear" reached apparel -- a real category, holding eighteen
-            # sweaters -- and was told to name a subcategory. It asked the
-            # shopper to clarify the product type instead, which is the same
-            # dead turn this rule already learned not to cause.
+            # This stops an invented role ("loungewear") from being mapped onto
+            # subcategories silently. It must fire only on an invented role,
+            # not an absent one: a hard filter or an advertised category is a
+            # complete scope on its own, and the role only ranks within it.
+            # Demanding a subcategory there makes the assistant ask the shopper
+            # to clarify a request that was already complete.
             raise ValueError(
                 "an open-role search requires an advertised subcategory"
             )
@@ -308,11 +284,8 @@ class SearchCatalogToolInput(SearchCatalogToolArguments):
         if not has_query and not has_taxonomy:
             raise ValueError("text catalog search requires a semantic query")
         if not has_query:
-            # A browse has no descriptive words and does not need any: "now show
-            # me some skirts" is fully expressed by its taxonomy. Demanding a
-            # semantic query as well refused that search outright, and the
-            # assistant -- holding a plain request for skirts -- asked the
-            # shopper which product type they meant. The taxonomy is the query.
+            # A browse ("now show me some skirts") is fully expressed by its
+            # taxonomy, so the taxonomy becomes the query; do not refuse it.
             object.__setattr__(
                 self,
                 "semantic_query",
@@ -347,24 +320,12 @@ class _CatalogNumberConstraint(BaseModel):
 
 
 
-#: Built schemas, kept for the life of the process.
+#: Built schemas, kept for the life of the process. Every builder input is
+#: fixed once the service runs (CatalogCapabilitiesClient caches the contract),
+#: so rebuilding per turn only burns time on the event loop.
 #:
-#: Every input to these builders is fixed once the service is running: the
-#: capability contract is cached by CatalogCapabilitiesClient on its first
-#: success, and the rest are configuration. So the schema is identical on every
-#: turn -- verified byte-for-byte -- and rebuilding it was 15ms per turn of
-#: producing the same object, on the event loop that also serves the turn.
-#:
-#: Keyed on the contract's *content*, not its catalog_id. Two contracts can
-#: carry the same id and differ -- which is not hypothetical: thirty-two tests
-#: failed on an id-based key, each having built a catalog named like the shipped
-#: one with different fields, and each being served the other's schema. In
-#: production one process sees one catalog and the distinction never arises;
-#: the point of hashing is that a cache should not be correct only because of
-#: how it happens to be used.
-#:
-#: The hash costs 1.9ms against 7ms to rebuild, so it pays for itself, and it
-#: needs no assumption about when a catalog may change.
+#: Keyed on the contract's *content*, not its catalog_id: two contracts can
+#: share an id and differ (tests do this), and hashing is cheaper than a build.
 _SCHEMA_CACHE: dict[tuple[Any, ...], Any] = {}
 
 
@@ -511,29 +472,12 @@ def _build_search_catalog_tool_input_model(
             Field(
                 ...,
                 description=(
-                    # The size-2-and-shoes example lives on `scopes`, which is
-                    # where cross-role ownership belongs, and was stated here
-                    # too. Both arrived on 2026-08-20 (#191). Measured across
-                    # the run archive on J01 turn 12 -- "my husband is coming
-                    # too, he needs sunglasses" -- the audience filter was
-                    # correct 3 times in 5 on the build before that day, and
-                    # once in the ~105 runs after it. Nothing was removed in
-                    # between and the audience rule itself has not changed
-                    # since 2026-08-06; 140 characters of size-and-role worked
-                    # example were added to the front of the object where the
-                    # audience value gets chosen. Stated once, on the field
-                    # that owns it.
-                    #
-                    # The same lesson, applied again to what was still here.
-                    # Four rules about what belongs in
-                    # `unadvertised_requirements` -- the water-resistant bags
-                    # example, the eleven-adjective list, the product-type ban,
-                    # and the season-and-weather rule -- were stated on that
-                    # field and restated here. Only the destination differed,
-                    # and two of them genuinely have two destinations, so those
-                    # two keep one compact statement each for this object and
-                    # the worked example and the list stay on the field they
-                    # are about.
+                    # State each rule once, on the field that owns it. The
+                    # size-and-role example belongs on `scopes`; restating it
+                    # here, where the audience value is chosen, broke audience
+                    # filtering. Rules about `unadvertised_requirements` stay
+                    # on that field; only the two that also govern this object
+                    # get one compact statement here.
                     "Catalog hard filters and any defining requirement the active "
                     "catalog cannot enforce. When the shopper names a specific "
                     "product and asks whether it meets some condition -- within a "
@@ -814,10 +758,8 @@ def _taxonomy_list_field(
 
     literal_type = Literal.__getitem__(tuple(values))
     max_length = 1 if role == "category" else None
-    # Required at the boundary meant "show me some jewellery" -- a category
-    # with no subcategory named -- was rejected outright, and the shopper was
-    # asked to clarify a request that could not have been plainer. It killed
-    # J17 at turn 1 and took the journey with it.
+    # Optional (default empty): a category with no subcategory, as in "show
+    # me some jewellery", is a complete request and must not be rejected.
     return list[literal_type], Field(
         default_factory=list,
         max_length=max_length,
@@ -826,42 +768,16 @@ def _taxonomy_list_field(
 
 
 
-#: Every advertised filter otherwise gets "Advertised hard filter '<name>'."
-#: For the audience field that generic line is the whole bug: the model was
-#: reading the enum value names and nothing else, so "sunglasses for men" and
-#: "my husband" scoped correctly while "shades for hubby" sent no filter and
-#: returned women's sunglasses. The rule below is not new -- it is the one
-#: already written in the system prompt, moved to the channel the model reads.
+#: Replaces the generic "Advertised hard filter '<name>'." for the audience
+#: field: from enum value names alone the model misses casual wording. This
+#: restates the system-prompt rule on the channel the model actually reads.
 _WEARER_AUDIENCE_FILTER_DESCRIPTION = (
-    # Two halves, learned separately and measured apart.
-    #
-    # The MEANING of the values comes from Catalog capabilities, not from a
-    # table of cases written here. Enumerating them scored a man 0/10 to 11/18
-    # depending on wording, and "shades for hubby" never once: the model had
-    # to infer from the bare string `womens` whether it was a wearability
-    # constraint or a department, and men do shop womenswear. Published as a
-    # fact, hubby went to 4/4 and dad to 4/4.
-    #
-    # The TRIGGER and the ORDER have to stay here. A version that carried only
-    # the meanings sent no filter at all for a wife or a sister, 0/10 -- it
-    # knew what the values meant and never reached for them. So: say plainly
-    # when to send it, and keep the covers-everyone value unconditional so
-    # there is no judgment to lose.
-    #
-    # The trigger was a list of thirteen person-words, and it failed on the
-    # commonest word of all. J01 turn 12 said "my husband is coming too" and
-    # sent no filter, because the list held "hubby" and "my man" but not
-    # "husband" -- it had been measured on "hubby" and the ordinary word was
-    # never tried. Turn 13 then said "he also wants a bag" and sent none
-    # either, because a pronoun names nobody by that rule, and a womens floral
-    # clutch came back for a man. Turn 12 hid the same failure only because
-    # every sunglass this catalog stocks happens to suit all genders.
-    #
-    # So the trigger is a rule now and not an enumeration: the person appears
-    # in this turn's words, in any form, including a pronoun pointing back.
-    # The reverse rule stays -- silence means no filter -- because that is the
-    # part that cannot be enumerated, and "now show me some skirts" must not
-    # inherit a husband.
+    # The MEANING of each value is appended from Catalog capabilities; do not
+    # enumerate cases here. The TRIGGER and the ORDER must stay here, or the
+    # model knows the meanings but never sends the filter. The trigger is a
+    # rule (the person appears in this turn's words, in any form, including a
+    # pronoun), not a word list, which always misses a common word. Silence
+    # means no filter, so a later request does not inherit an earlier person.
     "Who the products are for. Send this whenever this turn's words say who "
     "the shopper is buying for, however casually and in whatever form: a "
     "formal word, an affectionate one, or a pronoun pointing back to someone "
@@ -960,12 +876,8 @@ def _required_constraints_input_model(
             field_type = str | list[str] | None
         if name and name == wearer_audience_field:
             description = _WEARER_AUDIENCE_FILTER_DESCRIPTION
-            # The catalog publishes what its values mean; render them onto the
-            # field the model fills, not only into the capabilities block.
-            # Measured: with the meanings in the system prompt alone, "shades
-            # for hubby" went 0/4 to 3/4 -- the fact was doing real work -- but
-            # a wife or sister collapsed to 1/14, because the binding channel
-            # had lost the instruction to the weaker one. The fact belongs
+            # Render the published value meanings onto the field the model
+            # fills, not only into the capabilities block: the fact belongs
             # where the decision is made.
             meanings = getattr(capability, "value_meanings", None) or {}
             if meanings:
@@ -976,12 +888,8 @@ def _required_constraints_input_model(
                 ) + "."
         else:
             description = f"Advertised hard filter '{name}'."
-            # The catalog publishes the range of every numeric filter and this
-            # threw it away. Asked for "the most expensive thing you have", the
-            # assistant searched one category and reported its dearest item as
-            # the shop's -- a $189.99 purse in a catalog that runs to $269.99 --
-            # or refused outright. The answer was in capabilities the whole
-            # time; it just never reached the field the model reads.
+            # Show the advertised range of numeric filters so the model can
+            # answer catalog-wide questions like "the most expensive thing".
             span = _advertised_range(capability)
             if span:
                 description += f" Advertised range: {span}."

@@ -78,11 +78,8 @@ EFFECTS_KEY = "committed_effects"
 #: turned that scope back -- ``None`` for a scope that was not turned back.
 REJECTIONS_KEY = "scope_rejections"
 
-#: Artifact key holding the product types this catalog advertises nothing for,
-#: as established by the search tool itself rather than volunteered by the
-#: model. "We do not carry aprons" is a current fact about the catalog, so it
-#: is recorded like any other tool evidence and survives the call being
-#: rejected on its arguments.
+#: Artifact key for product types the search tool found the catalog lacks.
+#: Recorded as tool evidence, so it survives the call being rejected.
 NOT_CARRIED_KEY = "not_carried_product_types"
 
 

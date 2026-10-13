@@ -250,13 +250,9 @@ class ShopperSkillActivationMiddleware(AgentMiddleware):
             self._skill_tool_grants,
         )
         with self._lock:
-            # What the shopper wants is not always clear at the first token of
-            # a turn, and a selection made then has to be correctable. So a
-            # later call replaces the selection and re-grants against it,
-            # through the same validation as the first. The cap is what stops a
-            # model that cannot find the tool it wants from spinning: past it
-            # the answer is honestly no, rather than a success that grants
-            # nothing.
+            # A later call replaces the selection and re-grants through the
+            # same validation, so an early selection stays correctable. The cap
+            # stops a model from spinning; past it the answer is an honest no.
             if self._status not in {"pending", "active"}:
                 return False
             if self._activations >= _MAX_TURN_ACTIVATIONS:

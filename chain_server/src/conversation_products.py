@@ -24,9 +24,8 @@ from .tools.schemas import _a_list_written_as_json_text
 
 _DEFAULT_TIMEOUT_SECONDS = 10.0
 _DEFAULT_INDEX_MAX_CHARS = 12_000
-#: How many numbered rows stay countable. Wide enough for a whole outfit
-#: showing -- J01's widest is twenty-two across five roles -- and narrow enough
-#: that the showing before last drops out once a full one arrives.
+#: How many numbered rows stay countable: wide enough for a whole outfit
+#: showing, narrow enough that the previous showing drops out after a full one.
 _HOT_ROW_BUDGET = 24
 
 
@@ -137,16 +136,10 @@ class ProductReferenceDescriptor(_ConversationProductModel):
             self.attributes,
         )
         if not any(value is not None for value in selectors):
-            # `reference_id` is meant to be a label -- "first_sandals" -- but a
-            # model asked to add the Southwest Bracelet put the product's name
-            # there and nothing anywhere else. The whole call was refused, the
-            # name lookup that exists for exactly this never ran, and the turn
-            # died on "I could not complete that shopping request" with the
-            # product's name sitting one field over.
-            #
-            # A label that is plainly a name is a name. Reading it as one
-            # guesses nothing: it is looked up in the catalog and comes back
-            # labelled as found by name rather than shown before.
+            # A model may put a product's name in `reference_id` and nothing
+            # else. Treat it as a display name rather than refusing the call;
+            # it is looked up and labelled as found by name, so nothing is
+            # guessed.
             object.__setattr__(self, "display_name", self.reference_id)
             return self
         return self
@@ -155,10 +148,8 @@ class ProductReferenceDescriptor(_ConversationProductModel):
 class ResolveConversationProductsRequest(_ConversationProductModel):
     """One batched historical-product resolution request."""
 
-    # Forgiven here for the same reason the cart tool and skill activation
-    # forgive it: the list arrives JSON-encoded inside a string often enough to
-    # have cost whole turns, and the contents are validated against the same
-    # model either way.
+    # Like the cart tool and skill activation, accept the list JSON-encoded in
+    # a string; the contents are validated against the same model either way.
     _accept_references_as_text = field_validator("references", mode="before")(
         _a_list_written_as_json_text
     )
@@ -293,12 +284,9 @@ class ConversationProductsClient:
             ) from exc
 
 
-#: Selectors that identify a product without the model choosing which one: the
-#: coordinates recorded when the products were shown -- which turn, which set,
-#: which position. A product_ref is deliberately not among them. The refs are
-#: printed into the prompt, so picking one out of four black dresses is the
-#: model choosing and then quoting itself, which is the move this exists to
-#: catch.
+#: Selectors that identify a product by the coordinates recorded when it was
+#: shown. product_ref is deliberately excluded: refs are printed in the prompt,
+#: so a model-supplied ref is the model choosing the product.
 _SYSTEM_SELECTORS = ("ordinal", "candidate_set_id", "turn_sequence")
 
 
@@ -342,11 +330,8 @@ class ProductEvidence:
                 continue
             product = resolution.matches[0].product
             self.add([product])
-            # How the product was identified, not just that it was. A ref the
-            # system minted, or a position it recorded, is the system picking
-            # the product. A display name is the model asserting one -- which is
-            # right when the shopper said the name and wrong when they said
-            # "the black one" and the model chose which black one they meant.
+            # Record how the product was identified. A recorded position is the
+            # system picking it; a display name is the model asserting one.
             if _identified_by_the_system(by_reference.get(resolution.reference_id)):
                 self._system_identified.add(product.product_id)
 
@@ -458,12 +443,8 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
         if resolution.status == "resolved":
             match = resolution.matches[0]
             product = match.product
-            # The durable presentation event stores the whole ProductSummary, so
-            # these facts are already resolved and in hand. Rendering only the
-            # ref and the name discarded them, and the assistant then had no way
-            # to answer "which of those was cheapest" about products it had
-            # itself shown -- it re-searched, and still came back without the
-            # prices it had displayed a few turns earlier.
+            # Render the stored ProductSummary facts, not just ref and name, so
+            # the model can answer questions about products it already showed.
             lines.extend(
                 (
                     f"REFERENCE {resolution.reference_id}: RESOLVED",
@@ -483,10 +464,8 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
                 )
             if product.image_url:
                 lines.append("IMAGE_AVAILABLE: yes")
-            # The presented-product event stores the whole ProductSummary, so
-            # the attributes the catalog confirmed when this product was shown
-            # are already in hand. Withholding them would have the model spend
-            # a round trip fetching what the lane has recorded.
+            # Include the attributes confirmed when shown, so the model does
+            # not spend a round trip fetching what is already recorded.
             facts = _presented_attribute_facts(product)
             if facts:
                 lines.append("CONFIRMED WHEN SHOWN:")
@@ -498,10 +477,8 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
                 "read before a cart action or a budget claim."
             )
             if resolution.corroboration_mismatch:
-                # Resolved on the ref, so the product is not in doubt. Saying
-                # which describing field disagreed is what keeps the relaxation
-                # visible instead of silent -- and the values above are the
-                # record, not what the call claimed.
+                # Resolved on the ref; name the disagreeing fields so the
+                # relaxation is visible. The values above are the record.
                 lines.append(
                     "NOTE: resolved by PRODUCT_REF. These fields you supplied "
                     "do not match the record and were not used: "
@@ -510,15 +487,8 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
                 )
             continue
         if resolution.status == "ambiguous":
-            # The candidates, with what the catalog confirmed about each when it
-            # was shown. A list of names cannot answer "the black one": four
-            # dresses shown together were all black and only two said so in
-            # their names, so the model guessed, reached back fourteen turns to
-            # a navy dress and put it in the cart.
-            #
-            # The record already holds this. Handing it back is what lets the
-            # model tell the candidates apart -- and it needs no new descriptor
-            # field to ask with, and no copy of the catalog in the index.
+            # List each candidate with its confirmed attributes: names alone
+            # cannot answer "the black one", and the record already holds them.
             lines.append(
                 f"REFERENCE {resolution.reference_id}: CLARIFICATION REQUIRED. "
                 "These were shown; tell them apart on the facts below and ask "
@@ -535,10 +505,8 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
                     lines.append(f"    {name}: {value}")
             continue
         if resolution.blocking_field:
-            # Naming the field is what lets the model correct the call. Reporting
-            # only NOT FOUND told it the product was gone when it had in fact
-            # identified it correctly by every other field, so it repeated the
-            # same call and kept telling the shopper the listing was unavailable.
+            # Name the blocking field so the model can correct the call; a bare
+            # NOT FOUND reads as the product being gone.
             lines.append(
                 f"REFERENCE {resolution.reference_id}: NOT FOUND. Every other "
                 f"field you supplied matched one earlier product; "
@@ -547,16 +515,9 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
                 "guess."
             )
             continue
-        # Nothing matched by ref or by whole display name -- a different
-        # situation from an ambiguous or near-miss reference above. A shopper
-        # who names a product that was never shown is making a search request;
-        # one who points ("the black one in a 2") may mean something in the
-        # index that neither comparison can hit.
-        #
-        # Which recovery fits depends on whether the shopper named a product or
-        # pointed at one, and the model is the only reader that can tell. So
-        # the message reports what was checked, not a conclusion that nothing
-        # shown matches.
+        # Nothing matched by ref or exact name. Only the model can tell whether
+        # the shopper named a product (a search) or pointed at one shown, so
+        # report what was checked rather than conclude nothing shown matches.
         lines.append(
             f"REFERENCE {resolution.reference_id}: NOT FOUND. No product shown "
             "in this conversation carries that PRODUCT_REF or that exact name; "
@@ -583,31 +544,20 @@ def format_historical_product_index(
 
     if max_chars < 256:
         raise ValueError("max_chars must be at least 256")
-    # Most recent first, because that is how the shopper refers to things. "The
-    # black one" means the most recent black thing they were shown, not the
-    # oldest, and the latest showing must not be buried at the bottom of a long
-    # prompt.
+    # Most recent first: "the black one" means the most recent black thing
+    # shown, and the latest showing must not be buried in a long prompt.
     heading = (
         "HISTORICAL PRODUCT INDEX (read-only, most recently shown first):"
     )
-    # The counting rule sits with the numbers, because this is where the model
-    # decides what "the first one" means. Numbering restarts under each
-    # heading, and shown two products numbered 1 the model stopped and asked
-    # which -- over a reference the shopper could not have made clearer. The
-    # resolver already answers a bare ordinal with the first group, but it is
-    # never reached: the question is asked before any tool runs.
+    # The counting rule sits with the numbers because the model decides what
+    # "the first one" means here, before any resolver tool runs.
     counting_rule = (
         "Numbered from 1 under each [heading]. A number with no kind named "
         "means the first heading here: take it and say which, do not ask."
     )
-    # Only the newest showings stay numbered, because only one showing at a
-    # time can be the one a shopper is counting from. Numbering all of them put
-    # the Vivienne Lace Dress at #1, #2, #3 and #4 at once by turn 19 of J01,
-    # with the rule above as the only thing arbitrating between them.
-    #
-    # Everything older keeps its name and loses its position. That is how a
-    # shopper reaches back anyway: the one long-range reference in J01, "add
-    # the black one in a 2", describes the dress rather than counting to it.
+    # Only the newest showings stay numbered, so one product never carries
+    # several positions. Older ones keep their names but lose positions, since
+    # shoppers reach back by description rather than by counting.
     usable = [raw for raw in reference_sets if _format_reference_set(raw)]
     if not usable:
         return ""
@@ -728,10 +678,8 @@ def _roster_of_earlier_products(
         "ALSO SHOWN EARLIER (identity only, no numbering -- refer to these by "
         "description, not position):"
     )
-    # Truncated rather than dropped whole. Dropping it lost every earlier
-    # product on a long conversation, which is worse than what it replaced:
-    # the flat list this grew out of would have packed twenty showings into
-    # the same budget.
+    # Truncated rather than dropped whole, so a long conversation does not
+    # lose every earlier product.
     kinds = [
         (f"  {kind}: {', '.join(names)}" if kind else f"  {', '.join(names)}", names)
         for kind, names in by_kind.items()
@@ -747,10 +695,8 @@ def _roster_of_earlier_products(
     if kept == len(kinds):
         return "\n".join([heading, *(line for line, _ in kinds)])
 
-    # Said rather than silent: an index that simply ends is one the model reads
-    # as the whole history of the conversation. The note has to fit, so the
-    # oldest kinds give way to it rather than the other way round -- and each
-    # one that does adds its products to what the note is counting.
+    # The model reads an index that simply ends as the whole history, so the
+    # oldest kinds give way to the "+N more" note, which counts them.
     while kept:
         dropped = sum(len(names) for _, names in kinds[kept:])
         note = f"  (+{dropped} more shown earlier)"
@@ -772,10 +718,8 @@ def _format_reference_set(value: Any) -> str:
     products = value.get("products")
     if not set_id or not isinstance(turn, int) or not isinstance(products, list):
         return ""
-    # Grouped, and numbered from one inside each group, because that is what
-    # the shopper saw. Rendered as one run of numbers it read as a queue while
-    # the screen showed headed lists, so a position meant one product here and
-    # another there, and "the first one" over dresses and shoes named two.
+    # Grouped and numbered from one inside each group, matching the headed
+    # lists the shopper saw, so a position means the same product to both.
     rendered = []
     current_group: str | None = None
     for product in products:
@@ -799,10 +743,8 @@ def _format_reference_set(value: Any) -> str:
         )
     if not rendered:
         return ""
-    # The showing remembers the size it was made under. "Show me sandals in a
-    # 7" then "add the first one" asked which size, with the answer one turn
-    # back. It qualifies this set and nothing else: a later showing carries its
-    # own size or none, so no size follows the shopper from one to the next.
+    # The showing remembers the size it was made under. It qualifies this set
+    # only; no size carries over from one showing to the next.
     qualifier = (
         f" [shopper asked for size {shopper_size}]" if shopper_size else ""
     )

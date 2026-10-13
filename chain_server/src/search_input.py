@@ -18,16 +18,10 @@ _UNSUPPORTED_SEARCH_MODE_MESSAGE = (
 )
 
 
-#: Media-analysis fields that count as the shopper speaking.
-#:
-#: A photo is a statement. When a shopper attaches one and says "I like the
-#: top", the garment, its colour and its fabric came from them via the camera --
-#: refusing those as model-invented refuses the shopper's own words.
-#:
-#: Deliberately excludes `style_terms`, `occasion`, `search_queries`,
-#: `uncertainties` and `safety_notes`. Those are the model's reading of the
-#: image, not its content, and authorising them would let "boho-chic" become a
-#: shopper-stated requirement.
+#: Media-analysis fields that count as the shopper speaking: what the photo
+#: shows is the shopper's statement. Deliberately excludes `style_terms`,
+#: `occasion`, `search_queries`, `uncertainties` and `safety_notes`, which are
+#: the model's reading of the image and must not become shopper requirements.
 _STATED_MEDIA_FIELDS = ("fashion_items", "colors", "materials_or_textures")
 
 

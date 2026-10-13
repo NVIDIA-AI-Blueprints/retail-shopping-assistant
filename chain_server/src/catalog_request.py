@@ -141,15 +141,10 @@ def _hard_filters(
         if value not in (None, "", [], {}):
             filters[name] = value
         if not _filter_value_is_fully_valid(raw_value, value, capability):
-            # An enum that keeps at least one advertised value is honourable in
-            # part: filter on what is advertised and disclose the rest. This is
-            # not the weakening the other branches guard against -- nothing the
-            # shopper can act on is dropped, and the unadvertised words were
-            # never enforceable in the first place.
-            #
-            # Everything else still stops. A malformed numeric bound must never
-            # become "no bound": "under $300" that quietly returns $400 items is
-            # worse than refusing.
+            # An enum keeping at least one advertised value is honoured in
+            # part: filter on what is advertised and disclose the rest.
+            # Everything else still stops; a malformed numeric bound must
+            # never silently become "no bound".
             if capability.type == "enum" and value:
                 partial.append(
                     f"'{name}' also had values this catalog does not carry"

@@ -111,11 +111,8 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
         near_miss = _the_filter_removed_line(payload)
         if near_miss:
             lines.append(near_miss)
-        # Zero results say what is absent and nothing about what is present,
-        # so on their own they invite a question the shopper cannot answer
-        # ("would you like size 4 instead?" with nothing shown). No search is
-        # re-run here: the model retries correctly itself, keeping the garment
-        # and dropping a colour, so the note below tells it what to keep.
+        # Zero results alone invite a question the shopper cannot answer.
+        # No search is re-run here; the note tells the model what to keep.
         lines.append(
             "NEXT: nothing in the catalog matched all of these at once. Search "
             "again yourself, now, with one optional requirement dropped -- "
@@ -348,12 +345,7 @@ def _assumed_audience_line(payload: dict[str, Any]) -> str:
 
 
 #: Appended to every catalog evidence summary the composer reads. The labels
-#: above it are internal -- taxonomy, confirmed filters, scope outcomes -- and a
-#: model handed them will paraphrase them straight back. One live reply read "I
-#: checked the broader apparel category with the adult all-genders filter, and
-#: that search returned no matches under that scope", which is the evidence
-#: block read aloud. A shopper is standing in a shop, not in front of a query
-#: planner.
+#: above it are internal, and without this note the model reads them aloud.
 _SHOPPER_VOICE_NOTE = (
     "SPEAK AS A SHOP ASSISTANT: everything above is internal bookkeeping. Say "
     "what you looked at and what you found in the shopper's own words. Never "

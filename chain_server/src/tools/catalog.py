@@ -180,11 +180,9 @@ def build_catalog_tools(
                 "Search this turn or resolve the earlier product first."
             )
         if _detail_fields_already_held(cached_product, turn_capabilities):
-            # The search that produced this product already returned every
-            # detail field its category advertises. Answering from that
-            # evidence is not a guess; it is the same data, without an ~8.7s
-            # round trip. A product recovered from the historical index
-            # carries identity only, so it fails this check and still reads.
+            # The search already returned every advertised detail field, so
+            # answer from it and skip the round trip. A product from the
+            # historical index carries identity only and still reads.
             record = _product_detail_record(cached_product)
             evidence = ProductDetailEvidence(products=[record])
             answer = _format_product_detail_record(record)
@@ -400,14 +398,9 @@ def build_catalog_tools(
                 if _same_product_display_name(name, product.display_name)
             ]
             if len(exact) == 1:
-                # Naming a product by the name the catalog gives it is not
-                # a resemblance to be judged -- it is the same product, and
-                # choosing it is the shopper's to do. Told to "offer it and
-                # ask which size", the assistant answered "add the
-                # Southwest Bracelet" with "I found a Southwest Bracelet
-                # for $169.99. Would you like me to add that?" -- asking
-                # permission for the thing it had just been asked to do,
-                # about a bracelet that has no size to ask about.
+                # An exact catalog name is the same product, already chosen
+                # by the shopper: act on it rather than asking permission,
+                # and ask for a size only when the product has sizes.
                 match = exact[0]
                 sizes = _advertised_sizes(match)
                 lines.append(
@@ -479,23 +472,16 @@ def build_catalog_tools(
         """
 
         # This turn's own evidence first, before the memory service is
-        # called at all. A product this turn searched for is not in the
-        # durable index yet -- that is written when the turn finalizes --
-        # so asking history about it returns nothing, and the turn spends a
-        # round trip rediscovering what it already holds. The two records
-        # disagree only inside the turn that created one of them; reading
-        # the nearer one first is what makes them agree.
+        # called: the durable index is written only when the turn finalizes,
+        # so it cannot yet hold products this turn found.
         established = _established_this_turn(references)
         if established:
             return "\n".join(established)
 
         with scope.resolution_lock:
-            # A resolution that found something ends the budget. One that
-            # found nothing does not: the failure itself says "correct that
-            # field and retry", and refusing the retry would have the turn
-            # ask the shopper to name a product the assistant already named.
-            # Attempts are still counted, so a call that keeps missing
-            # terminates.
+            # A resolution that found something ends the budget; a miss does
+            # not, because its feedback invites a corrected retry. Attempts
+            # are still counted, so a call that keeps missing terminates.
             if (
                 scope.product_resolution_used
                 or scope.product_resolution_attempts
@@ -532,17 +518,10 @@ def build_catalog_tools(
         if any(item.status == "resolved" for item in result.results):
             scope.product_resolution_used = True
             return format_product_resolution(result)
-        # Nothing resolved. The products this conversation has shown are
-        # already recorded, so the next attempt can be a lookup in that
-        # record rather than another guess at a descriptor.
-        #
-        # Only for a near miss. A blocking field means the call pointed at
-        # something it had seen and got one field wrong, and the record is
-        # what corrects it. When nothing matches at all, the shopper named a
-        # product that was never shown -- that is a search request, and
-        # handing back a list of earlier products reads as a menu and
-        # suppresses the search: asked for a dress by name, the assistant
-        # offered four it had shown before and never looked in the catalog.
+        # Nothing resolved. Offer the record of shown products for a near
+        # miss only (a blocking field means one field was wrong). A total miss
+        # names a product never shown, which is a search request; listing
+        # earlier products would suppress that search.
         near_miss = any(item.blocking_field for item in result.results)
         if not near_miss:
             looked_up = _catalog_name_lookup(result, references)

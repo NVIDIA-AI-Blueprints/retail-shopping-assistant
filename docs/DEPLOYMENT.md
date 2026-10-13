@@ -176,10 +176,11 @@ Face checkpoints served by vLLM from `docker-compose-model-local.yaml`:
 Memory in use was measured on H100 80 GB GPUs. It is more than the weights
 because vLLM also reserves a KV cache, plus a few GB of working memory.
 
-The chat model needs four 80 GB GPUs because only a BF16 checkpoint of
-Nemotron 3.5 Super is published. The two-GPU figure you may see elsewhere is for
-`NVIDIA-Nemotron-3-Super-120B-A12B-FP8`, a text-only model that cannot also serve
-the `vlm` role.
+The chat model needs four 80 GB GPUs because Nemotron 3.5 Super is published
+only as one BF16 checkpoint, which reads text, images and video. The two-GPU
+figure you may see elsewhere is for the earlier Nemotron 3 Super
+(`NVIDIA-Nemotron-3-Super-120B-A12B-FP8`), which is text-only and cannot also
+serve the `vlm` role.
 
 The default layout needs six 80 GB GPUs. `.env.local-models.example` points
 every role at these services through the environment, so `models.yaml` does not change,

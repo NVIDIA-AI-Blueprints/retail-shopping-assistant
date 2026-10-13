@@ -142,3 +142,39 @@ def test_configure_matches_local_model_compose_services(
     assert 'RAILS_TOPIC_BASE_URL="http://pdx-host:8004/v1"' in content
     assert 'RAILS_TOPIC_MODEL="llama-3.1-nemoguard-8b-topic-control"' in content
     assert 'MULTIMODAL_SAFETY_BASE_URL="http://pdx-host:8005/v1"' in content
+
+
+MODEL_KEYS = (
+    "LLM_API_KEY",
+    "EMBED_API_KEY",
+    "RAIL_API_KEY",
+    "VLM_API_KEY",
+    "MULTIMODAL_SAFETY_API_KEY",
+)
+
+
+@pytest.mark.parametrize(
+    "source_env,expected_key",
+    [
+        ({"NGC_API_KEY": "registry-only"}, ""),
+        ({"NVIDIA_API_KEY": "inference-key"}, "inference-key"),
+        ({"NVIDIA_API_KEY": "inference-key", "NGC_API_KEY": "registry-only"}, "inference-key"),
+    ],
+)
+def test_model_keys_default_to_the_nvidia_api_key_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    source_env: dict[str, str],
+    expected_key: str,
+) -> None:
+    runner = load_runner_module()
+    monkeypatch.setattr(runner, "MODEL_ENV", tmp_path / "missing.env")
+    for name in (*MODEL_KEYS, "NVIDIA_API_KEY", "NGC_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in source_env.items():
+        monkeypatch.setenv(name, value)
+
+    env = runner.base_env()
+
+    for name in MODEL_KEYS:
+        assert env.get(name, "") == expected_key, name

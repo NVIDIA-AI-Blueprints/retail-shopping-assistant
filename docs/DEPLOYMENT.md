@@ -68,8 +68,9 @@ deployed models are vLLM serving Hugging Face checkpoints from
    with `nvapi-`). No NGC account is needed; the `nvcr.io` images this project
    uses pull without a login.
 2. **Hugging Face token**, for locally hosted models only: request access to the
-   Nemotron 3.5 Super checkpoint and to `meta-llama/Llama-3.1-8B-Instruct`, then
-   create an `HF_TOKEN`.
+   Nemotron 3.5 Super checkpoint and to the NemoGuard topic control model's base
+   checkpoint (see [Locally Hosted Models](#-locally-hosted-models)), then create
+   an `HF_TOKEN`.
 
 ## 🚀 Hosted Endpoints
 
@@ -233,9 +234,9 @@ BF16 checkpoint (~66 GB) leaves little room on that card; on a larger GPU, set
   [GPU Sizing](#gpu-sizing) for the other layouts
 - About 300 GB of disk for the checkpoints, most of it the chat model's BF16 weights
 - A Hugging Face token with access to the two gated checkpoints: the
-  Nemotron 3.5 Super chat model, and `meta-llama/Llama-3.1-8B-Instruct`, the
-  topic-control adapter's base, which Meta approves by hand. The other three
-  are public.
+  Nemotron 3.5 Super chat model, and the base checkpoint that the NemoGuard
+  topic control adapter runs on (`meta-llama/Llama-3.1-8B-Instruct`, approved
+  by hand). The other three are public.
 - Network access from the `local-video-safety` container at start, which
   installs vLLM's audio packages before serving
 

@@ -140,7 +140,12 @@ class SchemaMigration(Base):
 
 
 class ShopperProfile(Base):
-    """One immutable representative shopper managed by startup bootstrap."""
+    """Schema only: the retired shopper-profile table.
+
+    Nothing reads or writes it. Migrations 5 and 6 still create it and the
+    nullable `conversation_turns.shopper_profile_id` column that references
+    it, so a fresh database and an upgraded one keep the same schema.
+    """
 
     __tablename__ = "shopper_profiles"
     __table_args__ = (

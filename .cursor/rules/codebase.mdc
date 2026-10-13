@@ -132,7 +132,8 @@ persistence in a single-replica SQLite database
 **Data Storage** (`memory_retriever/src/models.py`): `conversation_turns`,
 `conversation_events` and `conversation_projection` for turns and presented
 products; `cart_items`, `cart_mutations` and `cart_quantity_idempotency` for the
-cart; plus `users`, `shopper_profiles` and `schema_migrations`.
+cart; plus `users` and `schema_migrations`. The retired `shopper_profiles` table
+stays in the schema but nothing reads or writes it.
 
 **API Endpoints**: see [Memory Retriever (Port 8011)](#memory-retriever-port-8011).
 
@@ -154,8 +155,7 @@ cart; plus `users`, `shopper_profiles` and `schema_migrations`.
 - `App.tsx`: Main application container
 - `chatbox/`: Chat interface with streaming support
 - `Navbar.tsx`: Navigation header
-- `CartPanel.tsx`, `ProductDetailPanel.tsx`, `ShopperPicker.tsx`: Cart, product
-  detail and shopper profile panels
+- `CartPanel.tsx`, `ProductDetailPanel.tsx`: Cart and product detail panels
 - `hooks/useChat.ts`: Chat state management
 
 **Features**:
@@ -236,7 +236,6 @@ request again.
 - `POST /query/timing`: Query with timing information
 - `GET /capabilities`: UI/model roles plus cached catalog contract
 - `GET /cart`: Cart for a `cart_id`
-- `GET /shopper-profiles`: Shopper profiles for the picker
 - `GET /health`, `GET /ready`: Liveness and readiness
 
 ### Catalog Retriever (Port 8010)

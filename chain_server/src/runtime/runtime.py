@@ -31,7 +31,7 @@ from shared.commerce_contracts import (
     ProductSummary,
 )
 
-from ..agenttypes import Cart, ShopperContext, State
+from ..agenttypes import Cart, State
 from ..cart_format import _format_cart, format_cart_change
 from ..catalog_capabilities import (
     CatalogCapabilitiesClient,
@@ -111,19 +111,15 @@ from .prompts import (
     _DEEP_AGENT_BASE_PROMPT,
     _GROUNDING_EDITOR_SYSTEM_PROMPT,
     _MEDIA_TURN_RULES,
-    _SHOPPER_CONTEXT_SYSTEM_RULES,
     _format_media_summary,
     _format_retrieved_images,
-    _format_shopper_context,
     _format_store_date,
     _format_wearer_audience,
     _today_for_the_shopper,
     format_most_recent_subject,
 )
 from .replies import (
-    _CONVERSATION_PROFILE_MISMATCH_RESPONSE,
     _GROUNDING_FAILURE_RESPONSE,
-    _SHOPPER_PROFILE_NOT_FOUND_RESPONSE,
     _committed_effect_receipt,
     _has_grounding_authority,
     _has_search_only_tool_evidence,
@@ -820,7 +816,7 @@ class DeepAgentsRuntime:
 
     This class intentionally keeps commerce truth in existing services. Deep
     Agents gets scoped context and deterministic tools; it does not own carts,
-    profiles, prices, inventory, or session identity.
+    prices, inventory, or session identity.
     """
 
     def __init__(self, config: Any, *, guardrails: Any = None) -> None:
@@ -1009,8 +1005,6 @@ class DeepAgentsRuntime:
         state.agent_diagnostics = _empty_agent_diagnostics("not_started")
         state.previous_selected_skill_names = []
         state.selected_skill_names = []
-        state.shopper_profile_id = identity.shopper_profile_id
-        state.shopper_context = None
         state.wearer_audience = []
         state.assumed_audience = []
         state.disclosed_audience = []
@@ -1556,10 +1550,7 @@ class DeepAgentsRuntime:
         agent_kwargs: dict[str, Any] = {
             "model": self._create_chat_model(),
             "tools": agent_tools,
-            "system_prompt": self._system_prompt(
-                shopper_context=state.shopper_context,
-                media=bool(state.media),
-            ),
+            "system_prompt": self._system_prompt(media=bool(state.media)),
             "middleware": [tool_loop_control, skill_gate],
             "backend": skills_backend,
             "checkpointer": self._checkpointer,
@@ -2004,17 +1995,11 @@ class DeepAgentsRuntime:
     def _system_prompt(
         self,
         *,
-        shopper_context: ShopperContext | None = None,
         media: bool = False,
     ) -> str:
         # Media rules are only reachable on a turn that carries media, so they
         # are only assembled then.
         media_rules = _MEDIA_TURN_RULES if media else ""
-        shopper_context_rules = (
-            f"\n{_SHOPPER_CONTEXT_SYSTEM_RULES}\n"
-            if shopper_context is not None
-            else ""
-        )
         # Weather ships off, and off means absent, not present-and-failing:
         # a turn without the tool must not be told about it either. The rule
         # about ordering calls around a forecast lives in
@@ -2090,7 +2075,7 @@ rubber sole; ankle strap means ankle strap. Do not add grass, gravel, weather,
 outdoor-surface performance, all-day comfort, maximum breathability, or
 best-in-category performance claims unless those claims are directly supported
 by product details.
-{shopper_context_rules}
+
 
 Rules:
 - Every turn begins with shopper-skill activation. Select the smallest set of
@@ -2207,10 +2192,7 @@ Rules:
             )
         ]
         sections.append(_format_store_date())
-        shopper_context = _format_shopper_context(state.shopper_context)
         wearer = _format_wearer_audience(state.wearer_audience)
-        if shopper_context:
-            sections.append(shopper_context)
         if wearer:
             sections.append(wearer)
         sections.extend(
@@ -2314,19 +2296,8 @@ Rules:
                 shopper_text=state.query,
                 media=state.media,
                 cart_user_id=identity.cart_user_id,
-                shopper_profile_id=identity.shopper_profile_id,
                 guardrails_enabled=state.guardrails,
             )
-            if (identity.shopper_profile_id is None) != (
-                turn.shopper_context is None
-            ) or (
-                turn.shopper_context is not None
-                and not isinstance(turn.shopper_context, ShopperContext)
-            ):
-                raise ConversationMemoryError(
-                    "shopper_context_invalid",
-                    "Conversation memory returned mismatched shopper context.",
-                )
         except (ConversationMemoryError, ValidationError) as exc:
             logger.error("Failed to start durable conversation turn: %s", exc)
             state.dialogue = []
@@ -2334,15 +2305,8 @@ Rules:
             state.dialogue_context = ""
             state.context = ""
             state.cart = Cart()
-            state.shopper_context = None
             error_code = getattr(exc, "code", "memory_start_payload_invalid")
-            if error_code == "shopper_profile_not_found":
-                state.response = _SHOPPER_PROFILE_NOT_FOUND_RESPONSE
-                state.agent_diagnostics = _empty_agent_diagnostics(error_code)
-            elif error_code == "conversation_profile_mismatch":
-                state.response = _CONVERSATION_PROFILE_MISMATCH_RESPONSE
-                state.agent_diagnostics = _empty_agent_diagnostics(error_code)
-            elif getattr(exc, "status_code", None) == 409:
+            if getattr(exc, "status_code", None) == 409:
                 if error_code in {"turn_in_progress", "conversation_turn_in_progress"}:
                     state.response = (
                         "This conversation is still processing another request. "
@@ -2389,7 +2353,6 @@ Rules:
         state.previous_selected_skill_names = list(
             turn.previous_selected_skill_names
         )
-        state.shopper_context = turn.shopper_context
         state.wearer_audience = list(turn.wearer_audience)
         state.assumed_audience = list(turn.assumed_audience)
         state.historical_product_sets = [

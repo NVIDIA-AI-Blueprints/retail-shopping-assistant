@@ -5,7 +5,6 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 
 import App from "./App";
-import { getOrCreateUserSession } from "./utils";
 
 vi.mock("@mui/icons-material", () => ({
   Menu: () => null,
@@ -30,52 +29,6 @@ global.TextDecoder = class {
 Element.prototype.scrollIntoView = vi.fn();
 
 const SESSION_STORAGE_KEY = "shopping_session_identity";
-const SHOPPER_PROFILE_STORAGE_KEY = "shopping_shopper_profile_id";
-
-const profiles = [
-  {
-    shopper_profile_id: "shopper_morgan",
-    display_name: "Morgan",
-    shopper_type: "skeptical_researcher",
-    behavior:
-      "Probes for material, care burden, and repeated-wear practicality before choosing.",
-    zipcode: "60601",
-  },
-  {
-    shopper_profile_id: "shopper_alex",
-    display_name: "Alex",
-    shopper_type: "occasion_driven_explorer",
-    behavior: "Starts from an occasion and asks for a complete look.",
-    zipcode: "98101",
-  },
-  {
-    shopper_profile_id: "shopper_casey",
-    display_name: "Casey",
-    shopper_type: "strict_budget_style_mixer",
-    behavior: "Balances a complete look with an explicit budget.",
-    zipcode: "85004",
-  },
-  {
-    shopper_profile_id: "shopper_jordan",
-    display_name: "Jordan",
-    shopper_type: "impatient_decisive",
-    behavior: "Uses concise references and changes cart decisions.",
-    zipcode: "10001",
-  },
-  {
-    shopper_profile_id: "shopper_riley",
-    display_name: "Riley",
-    shopper_type: "iterative_refiner",
-    behavior: "Refines one part of an existing outfit direction.",
-    zipcode: "33130",
-  },
-];
-
-const buttonWithText = (container, text) =>
-  Array.from(container.querySelectorAll("button")).find((button) =>
-    button.textContent.includes(text)
-  );
-
 const click = (element) => {
   React.act(() => {
     element.click();
@@ -105,7 +58,7 @@ const submitQuery = async (container, query) => {
   await flushEffects();
 };
 
-describe("App shopper identity lifecycle", () => {
+describe("App session lifecycle", () => {
   let container;
   let root;
   let originalFetch;
@@ -116,12 +69,6 @@ describe("App shopper identity lifecycle", () => {
     originalFetch = global.fetch;
     global.fetch = vi.fn((input) => {
       const url = String(input);
-      if (url.endsWith("/shopper-profiles")) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve(profiles),
-        });
-      }
       if (url.includes("/cart")) {
         return Promise.resolve({
           ok: true,
@@ -164,81 +111,49 @@ describe("App shopper identity lifecycle", () => {
     vi.restoreAllMocks();
   });
 
-  test("Guest requests omit shopper_profile_id through App and Chatbox", async () => {
-    // This test uses React createRoot directly, so rendering must be inside act.
-    React.act(() => {
-      root.render(<App />);
-    });
-    await flushEffects();
-
-    await submitQuery(container, "Show me bags");
-
-    const streamCall = global.fetch.mock.calls.find(([input]) =>
-      String(input).endsWith("/query/stream")
-    );
-    const payload = JSON.parse(streamCall[1].body);
-
-    expect(payload.query).toBe("Show me bags");
-    expect(payload).not.toHaveProperty("shopper_profile_id");
-  });
-
-  test("shopper switch keeps exactly its rotated identity and manual Reset clears it", async () => {
-    const setItemSpy = vi.spyOn(Storage.prototype, "setItem");
-
-    // This test uses React createRoot directly, so rendering must be inside act.
-    React.act(() => {
-      root.render(<App />);
-    });
-    await flushEffects();
-
-    const priorSession = getOrCreateUserSession();
-    const writesBeforeSwitch = setItemSpy.mock.calls.filter(
-      ([key]) => key === SESSION_STORAGE_KEY
-    ).length;
-
-    click(buttonWithText(container, "Shop as"));
-    click(buttonWithText(container, "Morgan"));
-    click(buttonWithText(container, "Shop as Morgan"));
-    await flushEffects();
-
-    const identityWrites = setItemSpy.mock.calls
-      .filter(([key]) => key === SESSION_STORAGE_KEY)
-      .slice(writesBeforeSwitch);
-    const storedIdentity = sessionStorage.getItem(SESSION_STORAGE_KEY);
-
-    expect(identityWrites).toHaveLength(1);
-    expect(storedIdentity).toBe(identityWrites[0][1]);
-    expect(sessionStorage.getItem(SHOPPER_PROFILE_STORAGE_KEY)).toBe(
-      "shopper_morgan"
-    );
-
-    const shopperSession = getOrCreateUserSession();
-    expect(shopperSession.sessionId).not.toBe(priorSession.sessionId);
-    expect(shopperSession.conversationId).not.toBe(priorSession.conversationId);
-    expect(shopperSession.cartId).not.toBe(priorSession.cartId);
-
-    await submitQuery(container, "Show me bags");
-    await submitQuery(container, "Which one is under $50?");
-
-    const payloads = global.fetch.mock.calls
+  const streamPayloads = () =>
+    global.fetch.mock.calls
       .filter(([input]) => String(input).endsWith("/query/stream"))
       .map(([, request]) => JSON.parse(request.body));
 
-    expect(payloads).toHaveLength(2);
-    payloads.forEach((payload) => {
-      expect(payload.shopper_profile_id).toBe("shopper_morgan");
-      expect(payload.conversation_id).toBe(shopperSession.conversationId);
-      expect(payload.cart_id).toBe(shopperSession.cartId);
-      expect(payload).not.toHaveProperty("display_name");
-      expect(payload).not.toHaveProperty("shopper_type");
-      expect(payload).not.toHaveProperty("behavior");
-      expect(payload).not.toHaveProperty("zipcode");
+  test("requests carry no shopper profile and there is no shopper picker", async () => {
+    // This test uses React createRoot directly, so rendering must be inside act.
+    React.act(() => {
+      root.render(<App />);
     });
+    await flushEffects();
+
+    await submitQuery(container, "Show me bags");
+
+    const [payload] = streamPayloads();
+    expect(payload.query).toBe("Show me bags");
+    expect(payload).not.toHaveProperty("shopper_profile_id");
+    expect(container.textContent).not.toContain("Shop as");
+    expect(
+      global.fetch.mock.calls.some(([input]) =>
+        String(input).includes("shopper-profiles")
+      )
+    ).toBe(false);
+  });
+
+  test("Reset clears the identity and the next request starts a new conversation", async () => {
+    // This test uses React createRoot directly, so rendering must be inside act.
+    React.act(() => {
+      root.render(<App />);
+    });
+    await flushEffects();
+
+    await submitQuery(container, "Show me bags");
+    const [first] = streamPayloads();
 
     click(container.querySelector('[aria-label="Reset conversation"]'));
     expect(sessionStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
-    expect(sessionStorage.getItem(SHOPPER_PROFILE_STORAGE_KEY)).toBe(
-      "shopper_morgan"
-    );
+    await flushEffects();
+
+    await submitQuery(container, "Show me shoes");
+    const second = streamPayloads().at(-1);
+    expect(second.query).toBe("Show me shoes");
+    expect(second.conversation_id).not.toBe(first.conversation_id);
+    expect(second.cart_id).not.toBe(first.cart_id);
   });
 });

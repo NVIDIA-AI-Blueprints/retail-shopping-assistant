@@ -42,8 +42,7 @@ def test_a_date_says_nothing_about_where_the_shopper_is() -> None:
     """The guard that matters, and the freedom that does not threaten it.
 
     Knowing the date must never become "so it is cold where you are" -- that
-    is the inference `_SHOPPER_CONTEXT_SYSTEM_RULES` forbids, and August is
-    winter in half the world anyway.
+    is an invented fact, and August is winter in half the world anyway.
 
     The date block says only this. What the assistant may say about a place
     the shopper named lives in the agent prompt, where it applies whether or

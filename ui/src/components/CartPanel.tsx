@@ -4,8 +4,7 @@
 /**
  * The cart, as a shopper expects to find it on a shop.
  *
- * Structure follows ShopperPicker, the only overlay precedent in this app:
- * a trigger-anchored dialog, dismissed by outside click or Escape, with focus
+ * A trigger-anchored dialog, dismissed by outside click or Escape, with focus
  * moved in on open and returned to the trigger on close.
  */
 

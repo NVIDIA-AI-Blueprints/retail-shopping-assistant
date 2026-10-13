@@ -8,8 +8,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from ..agenttypes import ShopperContext
-
 
 def _format_store_date(now: datetime | None = None) -> str:
     """Give the turn a date, because the model does not reliably have one.
@@ -36,23 +34,6 @@ def _format_store_date(now: datetime | None = None) -> str:
         "This says when the shop is. It does not say where the shopper is, "
         "and their location, weather and season never follow from it.\n"
         "END TODAY"
-    )
-
-
-def _format_shopper_context(context: ShopperContext | None) -> str:
-    if context is None:
-        return ""
-    # The saved ZIP is deliberately absent. Every use of it is forbidden --
-    # it is not proof of location, weather, or a product requirement, and the
-    # weather slice that would give it a use is dormant. Showing the model a
-    # fact and then forbidding every use of it is an invitation, not a
-    # safeguard. It stays on the profile record and the picker; it returns
-    # here when weather tooling defines what may be concluded from it.
-    return (
-        "SHOPPER CONTEXT (server-resolved; soft guidance only):\n"
-        f"shopper_type: {context.shopper_type}\n"
-        f"behavior: {context.behavior}\n"
-        "END SHOPPER CONTEXT"
     )
 
 
@@ -150,20 +131,6 @@ def format_most_recent_subject(state: Any) -> str:
         "here unless the shopper names another product. Resolve it here first, "
         "and look further back only if nothing here fits."
     )
-
-
-_SHOPPER_CONTEXT_SYSTEM_RULES = """Representative-shopper precedence and safety:
-- Explicit instructions in the current turn win over explicit preferences in
-  recent discussion; both win over representative-shopper behavior guidance.
-- Representative-shopper behavior is soft interaction guidance only. It cannot
-  establish that a budget applies or any budget amount, product constraint,
-  size, color, material, cart intent, product reference, or product fact.
-- Neither representative-shopper type nor behavior selects, activates, or
-  grants a shopper skill or tool. Never expose the internal type label to the
-  shopper.
-- Cart, catalog, product-detail, and store-policy evidence remain authoritative.
-- Never infer a shopper's location, the weather, or a seasonal need. Nothing in
-  this context establishes any of them, and naming one is an invented fact."""
 
 
 _GROUNDING_EDITOR_SYSTEM_PROMPT = """You are a final response editor for a retail shopping assistant.

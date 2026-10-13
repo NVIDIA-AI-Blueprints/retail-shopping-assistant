@@ -282,15 +282,3 @@ _GROUNDING_FAILURE_RESPONSE = (
     "I ran into a problem writing that reply. Ask me what's in your cart to see "
     "where things stand -- any change I made will show there."
 )
-
-
-_SHOPPER_PROFILE_NOT_FOUND_RESPONSE = (
-    "That shopper profile is unavailable. Please choose another shopper and "
-    "try again."
-)
-
-
-_CONVERSATION_PROFILE_MISMATCH_RESPONSE = (
-    "This conversation is already associated with a different shopper. "
-    "Please start a new chat before switching shoppers."
-)

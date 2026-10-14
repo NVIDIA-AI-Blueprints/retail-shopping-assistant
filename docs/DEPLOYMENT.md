@@ -396,8 +396,18 @@ docker compose -f docker-compose.yaml down
 docker compose -f docker-compose-model-local.yaml down   # if you started them
 ```
 
+### On NVIDIA Brev
+
 No GPUs of your own? [NVIDIA Brev](https://developer.nvidia.com/brev) offers
-pay-as-you-go GPU instances, and [BREV.md](BREV.md) has a walkthrough.
+pay-as-you-go GPU instances; its [documentation](https://docs.nvidia.com/brev/latest/index.html)
+covers creating one. What this project needs from it:
+
+1. A VM-mode instance with Jupyter, and a secure tunnel on port `3000`. Size the
+   GPUs from [GPU Sizing](#gpu-sizing); against hosted endpoints, any instance works.
+2. In a Jupyter terminal, clone the repository, then run
+   `notebook/1_Getting_Started.ipynb` cell by cell.
+3. Open the tunnel's shareable URL for port 3000, not `localhost:3000`. Start
+   chatting once the catalog indexer logs `index is current`.
 
 ## 🏭 Taking to Production
 

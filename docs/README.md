@@ -16,7 +16,7 @@ basis of whether you have GPUs.
 |------|---------------|----------|
 | **NVIDIA-hosted endpoints** | An API key, no local GPU | [Deployment Guide - Hosted Endpoints](DEPLOYMENT.md#-hosted-endpoints) |
 | **Self-hosted models (vLLM)** | GPUs, plus a Hugging Face token for gated checkpoints | [Deployment Guide - Locally Hosted Models](DEPLOYMENT.md#-locally-hosted-models) |
-| **Managed cloud GPU** | An NVIDIA Brev account | [Deploy on Brev](BREV.md) |
+| **Managed cloud GPU** | An NVIDIA Brev account | [Deployment Guide - On NVIDIA Brev](DEPLOYMENT.md#on-nvidia-brev) |
 
 The self-hosted path moves the language, text-embedding and guardrail models
 onto your GPUs. [Deployment Options](DEPLOYMENT.md#%EF%B8%8F-deployment-options)
@@ -66,7 +66,6 @@ hardware.
 | Document | What it covers |
 |----------|----------------|
 | [Deployment Guide](DEPLOYMENT.md) | Prerequisites, both deployment paths, production deployment, the full configuration reference, monitoring, troubleshooting, security, and scaling |
-| [Deploy on Brev](BREV.md) | Step-by-step deployment to a managed NVIDIA Brev GPU instance |
 | [Guardrails](GUARDRAILS.md) | The optional safety layer: the three judges, failure modes, configuration, what the shopper sees, and the service API |
 | [Observability](OBSERVABILITY.md) | Reading a shopper's session turn by turn, opening one turn's trace, and finding what the model was told |
 | [Performance](PERFORMANCE.md) | Latency budget, load methodology, vLLM saturation, and deployment sizing |

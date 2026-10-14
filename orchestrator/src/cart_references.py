@@ -98,13 +98,7 @@ def _cart_add_scope_failures(
     requested_products: list[tuple[str, ProductSummary]],
     available_products: Any,
 ) -> list[tuple[str, str]]:
-    """Which requested products fall outside this turn's explicit request.
-
-    Returns the ref beside its message. The ref is what a caller needs to know
-    which item failed, and recovering it by reading the message back would be
-    parsing prose for control state -- which is the thing this codebase refuses
-    to do everywhere else.
-    """
+    """(ref, message) for requested products outside this turn's explicit request."""
 
     explicitly_named = _explicitly_named_products(user_query, available_products)
     if not explicitly_named:
@@ -129,27 +123,26 @@ def _cart_add_scope_failures(
     return failures
 
 
-def _identified_in_the_current_showing(state: Any) -> set[str]:
-    """Products the record picked from the set now in front of the shopper.
-
-    An identification is filed against the showing it was made from, so this is
-    simply the newest showing's own list. When a newer set is presented it
-    becomes the newest, carrying its own choices and none of the older set's --
-    which is the lapse, expressed as a consequence of where the fact is kept
-    rather than as a rule that has to be remembered.
-    """
+def _newest_showing(state: Any) -> dict[str, Any]:
+    """The last set of products put in front of the shopper, or {}."""
 
     sets = [
         entry
         for entry in (getattr(state, "historical_product_sets", None) or [])
         if isinstance(entry, dict) and isinstance(entry.get("products"), list)
     ]
-    if not sets:
-        return set()
-    newest = max(sets, key=lambda entry: entry.get("turn_seq") or 0)
-    return {
-        str(ref) for ref in (newest.get("system_identified") or []) if ref
-    }
+    return max(sets, key=lambda entry: entry.get("turn_seq") or 0) if sets else {}
+
+
+def _identified_in_the_current_showing(state: Any) -> set[str]:
+    """Products the record picked from the newest showing.
+
+    Filed against the showing it was made from, so a newer showing retires
+    the older set's choices without a rule to remember.
+    """
+
+    newest = _newest_showing(state)
+    return {str(ref) for ref in (newest.get("system_identified") or []) if ref}
 
 
 def _reference_candidates(
@@ -175,21 +168,11 @@ def _the_only_one_on_screen_in_that_size(
     size: str | None,
     recently_shown: Sequence[Any] = (),
 ) -> bool:
-    """Whether the size the shopper gave leaves one thing they could have meant.
+    """Whether the size given leaves exactly one product on screen it could be.
 
-    "Add the black one in a 2" was refused with ten products in play -- six of
-    them clutches the same turn went and fetched because the sentence also
-    asked for a clutch. Of what was actually on screen when the shopper spoke,
-    the dress runs 2-12, the pumps 5-9 and the necklace is onesize. "In a 2"
-    leaves exactly one.
-
-    Both halves are facts. The shopper typed the size, and which products come
-    in a 2 is published by the catalog and recorded with the showing. Nothing
-    here reads what they meant; it counts what they could have meant.
-
-    Only the showing in front of them counts. Products the turn fetched
-    afterwards, for another role in the same sentence, were not on screen when
-    the reference was spoken and cannot be what it pointed at.
+    Counts, from the sizes recorded with the newest showing, which products
+    come in that size; it does not read what the shopper meant. Products the
+    turn fetched afterwards were not on screen and do not count.
     """
 
     from .conversation_products import _same_reference
@@ -213,12 +196,7 @@ def _the_only_one_on_screen_in_that_size(
 
 
 def _products_named_exactly(text: str, candidates: Any) -> list[Any]:
-    """Candidates whose full catalog name the shopper actually wrote.
-
-    Narrower than `_explicitly_named_products`, which also matches on token
-    overlap so a shortened or misspelt name still lands. That second half is a
-    reading; out-of-scope detection still wants it, a cart write does not.
-    """
+    """Candidates whose full catalog name the shopper actually wrote."""
 
     normalized_text = _normalize_product_name(text)
     if not normalized_text:
@@ -242,26 +220,17 @@ def _explicitly_named_products(
     text: str,
     available_products: Any,
 ) -> list[ProductSummary]:
-    normalized_text = _normalize_product_name(text)
-    if not normalized_text:
+    """Exact name matches, then products whose name tokens overlap the text.
+
+    The overlap half lets a shortened or misspelt name land; it is a reading,
+    used for out-of-scope detection and never to choose what is written.
+    """
+
+    if not _normalize_product_name(text):
         return []
-
-    padded_text = f" {normalized_text} "
-    matches: list[ProductSummary] = []
-    seen: set[str] = set()
     products = list(available_products)
-    for product in products:
-        normalized_name = _normalize_product_name(product.display_name)
-        if not normalized_name:
-            continue
-        if f" {normalized_name} " not in padded_text:
-            continue
-        key = product.product_id or product.display_name
-        if key in seen:
-            continue
-        seen.add(key)
-        matches.append(product)
-
+    matches: list[ProductSummary] = _products_named_exactly(text, products)
+    seen = {product.product_id or product.display_name for product in matches}
     query_tokens = set(_product_name_tokens(text))
     for product in products:
         key = product.product_id or product.display_name
@@ -280,23 +249,11 @@ def _explicitly_named_products(
     return matches
 
 
-#: The value, written the other way. Numbers only: a quantity of two is the
-#: same want whether the shopper typed it as a word or a digit.
-_SPELLED_NUMBERS = {
-    "1": "one", "2": "two", "3": "three", "4": "four", "5": "five",
-    "6": "six", "7": "seven", "8": "eight", "9": "nine", "10": "ten",
-    "11": "eleven", "12": "twelve",
-}
-
-
 def _shopper_words_this_conversation(state: Any) -> str:
-    """Everything the shopper has actually typed, this turn and before.
+    """Everything the shopper has typed, this turn and before.
 
-    A size settled one turn ago -- "do you have it in a 6?" answered, then "yes,
-    add it" -- is established in the conversation and quotable from it. Reading
-    only the current message refused adds for sizes the shopper had already
-    given, which is the failure the cart reference had before it learned to look
-    further back than this turn.
+    A size settled on an earlier turn ("do you have it in a 6?", then "yes, add
+    it") still settles the add.
     """
 
     parts = [str(getattr(state, "query", "") or "")]
@@ -308,17 +265,11 @@ def _shopper_words_this_conversation(state: Any) -> str:
 
 
 def _most_recently_shown(state: Any) -> list[dict]:
-    """The last set of products put in front of the shopper."""
+    """The products of the newest showing."""
 
-    sets = [
-        entry
-        for entry in (getattr(state, "historical_product_sets", None) or [])
-        if isinstance(entry, dict) and isinstance(entry.get("products"), list)
+    return [
+        item for item in _newest_showing(state).get("products") or [] if isinstance(item, dict)
     ]
-    if not sets:
-        return []
-    newest = max(sets, key=lambda entry: entry.get("turn_seq") or 0)
-    return [item for item in newest["products"] if isinstance(item, dict)]
 
 
 def _cart_product_choice_note(
@@ -331,13 +282,9 @@ def _cart_product_choice_note(
 ) -> str:
     """Say when a product reached the cart from a description rather than a name.
 
-    It discloses rather than refuses. The absence of confirmation is a gap in
-    our bookkeeping, not a fact about the world, and refusing on it costs a
-    turn every time it is wrong. A product nobody chose is caught by being
-    visible: the cart is on screen, a wrong line is one click to remove, and
-    the shopper is told which reading was taken.
-
-    Silent when the choice is settled by something checkable:
+    Discloses rather than refuses: a wrong line is visible and one click to
+    remove, while a refusal costs a turn whenever it misjudges. Silent when the
+    choice is settled by something checkable:
 
     - only one product it could have been
     - the shopper wrote the catalog's own name for it
@@ -375,25 +322,9 @@ def _cart_size_issue(
 ) -> str:
     """Say why this size cannot be added, or "" if it can.
 
-    Every product in the catalog states its sizes -- 136 carry a real range and
-    79 carry `onesize`, with no gaps -- so the tool has what it needs to decide
-    rather than trusting the caller to have asked. Left to prose alone, "always
-    confirm the size" held three times in four: a dress with six sizes reached
-    the cart with no size at all.
-
-    Sending no size is not the only way to add one nobody picked. Asked plainly
-    to "add the Jade Suede Heels", the model read the range off the product
-    detail, sent a 5, and passed a check that only asks whether the shop sells
-    a 5 -- so the empty-size gate held and the shopper still got a size they
-    had never mentioned, announced to them as "the smallest size they come in".
-    A rule they never gave.
-
-    So the size has to be one the conversation settles. Named is enough,
-    whenever it was named: "dresses in a 2" five turns back still settles "add
-    the lace one". A superlative is enough too, because it names a size by
-    description -- but it has to be the shopper's superlative, not one the
-    model supplies to fill the gap. Anything else is not a size to check, it
-    is a size to ask for.
+    A sized product needs a size the catalog sells and that the shopper's own
+    words settle, by naming it on any turn or by their own "smallest" or
+    "largest". A size the model picked from the range is asked for instead.
     """
 
     sizes = _advertised_sizes(product)
@@ -431,12 +362,8 @@ def _cart_size_issue(
 def _one_size_note(product: Any, size: str | None) -> str:
     """Say a size was dropped because this product comes in only one.
 
-    A size cannot be wrong on a product that has one -- there is nothing else
-    to have added -- so this is not a refusal. But it cannot be repeated back
-    either. Asked to "add the black one in a size 8", the assistant added a
-    one-size purse and told the shopper it was in size 8, a size that product
-    has never had. Dropping it keeps the cart line honest; saying so here is
-    what keeps the sentence honest too.
+    Not a refusal, but the dropped size must not be repeated back as the
+    product's size.
     """
 
     chosen = (size or "").strip()
@@ -453,8 +380,6 @@ def _one_size_note(product: Any, size: str | None) -> str:
 
 #: The shopper's own way of naming a size without saying the number.
 _SMALLEST_WORDS = ("smallest", "littlest", "tiniest")
-
-
 _LARGEST_WORDS = ("largest", "biggest")
 
 
@@ -465,9 +390,7 @@ def _size_the_conversation_settles(
 ) -> bool:
     """Whether the shopper's own words settle on this size.
 
-    Word boundaries matter more than they look: a bare `in` match puts "5"
-    inside "$159.99" and turns a price the assistant quoted into a size the
-    shopper chose.
+    Matched on word boundaries, so "5" inside "$159.99" is not a size.
     """
 
     if re.search(rf"\b{re.escape(chosen)}\b", catalog_vocabulary, flags=re.IGNORECASE):
@@ -483,18 +406,8 @@ def _size_the_conversation_settles(
 def _cart_resize_issue(product: Any, size: str) -> str:
     """Say why this line cannot move to this size, or "" if it can.
 
-    The add path above is deliberately permissive about a product the catalog
-    states one size for, or no sizes at all: refusing there would block a cart
-    on missing data rather than on a real disagreement. A resize is the other
-    way round. A product sold in one size has no second size to move to, so a
-    size against it is a line the model has misread rather than a size the
-    catalog is quiet about.
-
-    J06 t9 is that turn. Asked to "make those a 7" with heels in a 6 and a tote
-    bag in the cart, it sent the tote's CART_LINE_ID without reading the cart
-    first -- and the tote, onesize, became "size 7" while the heels stayed a 6.
-    Which line the shopper meant is the model's to read; that this one has no
-    size to change is the catalog's to say.
+    Stricter than an add: a product sold in one size (or with no sizes) has
+    no second size to move to, so a resize against it is a misread line.
     """
 
     sizes = _advertised_sizes(product)

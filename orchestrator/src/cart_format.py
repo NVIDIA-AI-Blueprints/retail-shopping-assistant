@@ -22,13 +22,10 @@ def _format_cart_add_result(
     cart: Cart,
     ready: list[str] | None = None,
 ) -> str:
-    """Report an add, including what was established but not written.
+    """Report an add, including items established but held back.
 
-    The add is all or nothing, so one unanswered item holds back the rest. That
-    is deliberate. What was not deliberate is that the held-back items vanished
-    from the result: a shopper who gave a correct size for the boots and a
-    letter size for the sweater was asked for both again, because nothing told
-    the model the boots were already settled.
+    The add is all or nothing; listing the held-back items keeps the model from
+    asking for them again.
     """
 
     lines = ["CART_ADD_RESULT"]
@@ -94,8 +91,7 @@ def _format_cart_lines(cart: Cart | CommerceCart) -> str:
     return "\n".join(lines)
 
 
-def _format_cart(cart: Cart) -> str:
-    return _format_cart_lines(cart)
+_format_cart = _format_cart_lines
 
 
 def _format_cart_remove_result(
@@ -142,14 +138,7 @@ def _format_size_change_result(
     old_line_removed: bool,
     old_line_id: str,
 ) -> str:
-    """Report a size change as the one change it is, or say what is left over.
-
-    The add runs before the remove, so that a failure between them leaves the
-    shopper an extra line rather than nothing. That is also why there are two
-    reports: on the unhappy path the cart really does hold both sizes, and the
-    turn has to say so and carry the id that finishes the job, rather than
-    announce a replacement that only half happened.
-    """
+    """Report a size change, or that the old line is still there and how to finish."""
 
     held = from_size or "onesize"
     if old_line_removed:
@@ -203,13 +192,10 @@ def _cart_line_key(line: dict) -> tuple:
 
 
 def format_cart_change(before: Cart | None, after: Cart | None) -> str:
-    """State what this turn did to the cart, as a fact.
+    """What this turn did to the cart, computed from the two snapshots.
 
-    The editor was already told not to claim a cart action absent from CURRENT
-    CART, and it still passed "I've added the tote bag back" on a turn where the
-    add failed and the cart was unchanged. A prohibition left it comparing two
-    lists and judging; this hands it the answer. Computed from the two
-    snapshots, so it cannot disagree with the cart.
+    Handed to the grounding editor as a fact, so it does not have to compare
+    two lists to know whether a change it is about to claim happened.
     """
 
     if before is None or after is None:

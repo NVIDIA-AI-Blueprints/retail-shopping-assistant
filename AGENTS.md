@@ -55,6 +55,8 @@ Top-level orchestration is via `docker-compose.yaml`; optional locally deployed 
 - API contract and SSE endpoint: `orchestrator/src/main.py`
 - Catalog capability cache/prompt projection: `orchestrator/src/catalog_capabilities.py`
 - Catalog intent validation/execution: `orchestrator/src/catalog_request.py`
+- Which advertised category or subcategory a product word maps to (vocabulary
+  judge and advertised-taxonomy comparison): `orchestrator/src/category_resolver.py`
 - Commerce service adapters: `orchestrator/src/commerce_tools.py`
 - Operator-managed store policy content: `shared/configs/orchestrator/store_policies.yaml`
 - Shopper behavior skills and references: `orchestrator/skills/shopper/`

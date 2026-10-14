@@ -29,6 +29,7 @@ from orchestrator.src.catalog_search import (
     SearchContext,
     search_catalog,
 )
+from orchestrator.src.category_resolver import VocabularyVerdict
 from orchestrator.src.runtime.control_signals import (
     NOT_CARRIED_KEY,
     REJECTIONS_KEY,
@@ -39,7 +40,6 @@ from orchestrator.src.tools.schemas import (
     _search_catalog_scopes_input_model,
     _search_catalog_tool_input_model,
 )
-from orchestrator.src.category_resolver import VocabularyVerdict
 from shared.commerce_contracts import (
     CatalogCapabilities,
     CatalogFilterCapability,

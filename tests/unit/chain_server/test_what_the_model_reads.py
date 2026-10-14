@@ -22,6 +22,7 @@ from chain_server.src.agenttypes import DialogueTurn, State
 from chain_server.src.runtime.identity import RequestIdentity
 from chain_server.src.runtime.runtime import DeepAgentsRuntime
 from chain_server.src.weather import WeatherConfig
+from shared.commerce_contracts import CatalogCapabilities
 
 SNAPSHOT = Path(__file__).with_name("model_facing_snapshot.json")
 #: The prompt states today's date; the snapshot holds the day it was taken.
@@ -32,6 +33,9 @@ SNAPSHOT_DAY = "Thursday 24 September 2026"
 def _built_agent(base_config: Any) -> dict[str, Any]:
     base_config.weather = WeatherConfig(enabled=True)
     runtime = DeepAgentsRuntime(base_config)
+    # The snapshot holds the prompt for an unreachable catalog, so it must not
+    # depend on whether a catalog service happens to be running locally.
+    runtime._catalog_capabilities.get = lambda: CatalogCapabilities(catalog_id="unavailable")
     identity = RequestIdentity(
         request_id="r1",
         session_id="s1",

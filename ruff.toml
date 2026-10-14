@@ -4,7 +4,7 @@ target-version = "py312"
 exclude = ["*.md"]
 src = [
     "catalog_retriever",
-    "orchestrator",
+    "chain_server",
     "guardrails",
     "memory_retriever",
     "shared",

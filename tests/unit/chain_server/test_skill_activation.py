@@ -1,0 +1,2199 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Unit tests for the enforced shopper-skill activation gate."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Callable, Collection, Mapping, Sequence
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
+
+import pytest
+from chain_server.src import catalog_search
+from chain_server.src.agenttypes import Cart, State
+from chain_server.src.catalog_request import CatalogSearchExecution
+from chain_server.src.fencing import MEDIA_FENCE
+from chain_server.src.runtime.identity import RequestIdentity
+from chain_server.src.runtime.runtime import (
+    DeepAgentsRuntime,
+)
+from chain_server.src.tools.loop_control import SERVER_CATALOG_CLARIFICATION
+from chain_server.src.tools.skill_gate import (
+    SKILL_ACTIVATION_COMPLETE,
+    SKILL_ACTIVATION_REQUIRED,
+    SKILL_ACTIVATION_TOOL_NAME,
+    SKILL_TOOL_NOT_GRANTED,
+    InputGuardrailToolGate,
+    ShopperSkillActivationError,
+    ShopperSkillActivationMiddleware,
+    SpeculativeToolExecutionBlocked,
+    selected_skill_names_for_turn,
+)
+from chain_server.src.tools.skills import _skill_activation_input_model
+from langchain.agents.middleware.types import ModelRequest, ModelResponse
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.tools import BaseTool, tool
+from langgraph.prebuilt.tool_node import ToolCallRequest
+from pydantic import Field, PrivateAttr
+from shared.commerce_contracts import (
+    CatalogCapabilities,
+    CatalogFilterCapability,
+    CatalogTaxonomyCapabilities,
+    CatalogTaxonomyCategory,
+    CatalogTaxonomySubcategory,
+    SearchCatalogResult,
+)
+
+REQUEST_ID = "request-a"
+SKILL_TOOL_GRANTS = {
+    "budget-shopping": frozenset(),
+    "cart-management": frozenset(
+        {
+            "add_cart_items_tool",
+            "get_cart_tool",
+            "remove_cart_item_tool",
+            "resolve_conversation_products_tool",
+            "search_catalog_tool",
+            "update_cart_items_tool",
+            "view_cart_total_tool",
+        }
+    ),
+    "destination-weather": frozenset({"get_weather_forecast_tool"}),
+    "outfit-styling": frozenset(
+        {
+            "check_active_promotions_tool",
+            "check_product_availability_tool",
+            "get_product_details_tool",
+            "resolve_conversation_products_tool",
+            "search_catalog_tool",
+        }
+    ),
+    "product-discovery": frozenset(
+        {
+            "check_active_promotions_tool",
+            "describe_catalog_tool",
+            "check_product_availability_tool",
+            "get_product_details_tool",
+            "resolve_conversation_products_tool",
+            "search_catalog_tool",
+        }
+    ),
+    "catalog-questions": frozenset(
+        {
+            "describe_catalog_tool",
+            "get_product_details_tool",
+            "search_catalog_tool",
+        }
+    ),
+    "store-policy-answers": frozenset({"get_store_policy_tool"}),
+}
+
+
+class _RecordingToolModel(BaseChatModel):
+    """Deterministic chat model that records each dynamically bound request."""
+
+    model_name: str
+    responses: list[AIMessage]
+    calls: list[dict[str, Any]] = Field(default_factory=list)
+    _response_index: int = PrivateAttr(default=0)
+
+    @property
+    def _llm_type(self) -> str:
+        return "recording-openai-compatible"
+
+    def _get_ls_params(
+        self,
+        stop: list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return {
+            "ls_provider": "openai",
+            "ls_model_name": self.model_name,
+            "ls_model_type": "chat",
+        }
+
+    def bind_tools(
+        self,
+        tools: Sequence[dict[str, Any] | type | Any | BaseTool],
+        *,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        return self.bind(
+            recording_tool_names=[_bound_tool_name(candidate) for candidate in tools],
+            recording_tool_choice=tool_choice,
+            recording_tool_settings=dict(kwargs),
+        )
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        tool_names = list(kwargs.pop("recording_tool_names", []))
+        tool_choice = kwargs.pop("recording_tool_choice", None)
+        tool_settings = dict(kwargs.pop("recording_tool_settings", {}))
+        system_prompt = "\n\n".join(
+            message.text
+            for message in messages
+            if isinstance(message, SystemMessage)
+        )
+        self.calls.append(
+            {
+                "tools": tool_names,
+                "tool_choice": tool_choice,
+                "settings": tool_settings,
+                "system_prompt": system_prompt,
+                "messages": [
+                    {"type": message.type, "text": message.text}
+                    for message in messages
+                ],
+            }
+        )
+        response = self.responses[self._response_index]
+        self._response_index += 1
+        return ChatResult(generations=[ChatGeneration(message=response)])
+
+
+def _bound_tool_name(candidate: Any) -> str:
+    if isinstance(candidate, dict):
+        function = candidate.get("function") or {}
+        return str(candidate.get("name") or function.get("name") or "")
+    return str(getattr(candidate, "name", ""))
+
+
+@tool
+def activate_shopper_skills_tool(skill_names: list[str]) -> str:
+    """Select shopper skills."""
+
+    return ", ".join(skill_names)
+
+
+@tool
+def search_catalog_tool(query: str) -> str:
+    """Search products."""
+
+    return query
+
+
+@tool
+def get_product_details_tool(product_ref: str) -> str:
+    """Read product details."""
+
+    return product_ref
+
+
+@tool
+def add_cart_items_tool(product_ref: str) -> str:
+    """Add a product to the cart."""
+
+    return product_ref
+
+
+def _middleware(
+    *,
+    previous_selected_skills: Sequence[str] = (),
+    spent_tool_context: Callable[[], Collection[str]] | None = None,
+    widen_for_tool: (
+        Callable[
+            [str, Collection[str]],
+            tuple[Sequence[str], Mapping[str, str]] | None,
+        ]
+        | None
+    ) = None,
+    input_guardrail_tool_gate: InputGuardrailToolGate | None = None,
+) -> ShopperSkillActivationMiddleware:
+    return ShopperSkillActivationMiddleware(
+        widen_for_tool=widen_for_tool,
+        granted_tool_context={
+            "search_catalog_tool": (
+                "Catalog capabilities:\nRetrieval modes: text, dense"
+            ),
+            "get_product_details_tool": "Read a product before quoting its price.",
+        },
+        spent_tool_context=spent_tool_context,
+        request_id=REQUEST_ID,
+        skill_descriptions={
+            "budget-shopping": "Use as a budget modifier.",
+            "cart-management": "Use for cart operations.",
+            "outfit-styling": (
+                "Use for outfit completion and conversational mid-browse styling."
+            ),
+            "product-discovery": "Use for browsing without styling intent.",
+            "store-policy-answers": "Use for store policies.",
+        },
+        skill_tool_grants=SKILL_TOOL_GRANTS,
+        previous_selected_skills=previous_selected_skills,
+        input_guardrail_tool_gate=input_guardrail_tool_gate,
+    )
+
+
+def _skill(role: str, group: str | None = None) -> SimpleNamespace:
+    return SimpleNamespace(role=role, exclusive_group=group)
+
+
+#: Three primaries in one group, which is what the shipped registry has.
+_THREE_PRIMARIES = {
+    "outfit-styling": _skill("primary", "product_procedure"),
+    "product-discovery": _skill("primary", "product_procedure"),
+    "catalog-questions": _skill("primary", "product_procedure"),
+    "budget-shopping": _skill("modifier"),
+    "cart-management": _skill("standalone"),
+    "store-policy-answers": _skill("standalone"),
+}
+
+
+def test_activation_schema_rejects_two_primary_procedures() -> None:
+    activation_input = _skill_activation_input_model(_THREE_PRIMARIES)
+
+    with pytest.raises(ValueError, match="select exactly one primary procedure"):
+        activation_input(
+            skill_names=["outfit-styling", "product-discovery"],
+        )
+
+    selected = activation_input(
+        skill_names=["outfit-styling", "budget-shopping"],
+    )
+    assert selected.skill_names == ["outfit-styling", "budget-shopping"]
+
+
+def test_two_primaries_are_answered_with_the_selections_to_send() -> None:
+    # J11: told only the rule, the model resent the same three skills and the
+    # turn closed without the search the add needed.
+    activation_input = _skill_activation_input_model(_THREE_PRIMARIES)
+
+    with pytest.raises(ValueError) as rejected:
+        activation_input(
+            skill_names=["outfit-styling", "cart-management", "product-discovery"],
+        )
+
+    assert (
+        'Send one of: ["outfit-styling", "cart-management"] or '
+        '["cart-management", "product-discovery"]'
+    ) in str(rejected.value)
+
+
+def test_every_primary_in_a_group_is_exclusive_with_every_other() -> None:
+    """The pair that used to be hardcoded was two of three.
+
+    `catalog-questions` declares the same `exclusive_group` as the other two.
+    Measured on the shipped registry before this changed: selecting it beside
+    product-discovery was accepted, because the check intersected against a
+    literal set that did not contain it.
+    """
+
+    activation_input = _skill_activation_input_model(_THREE_PRIMARIES)
+    primaries = ["outfit-styling", "product-discovery", "catalog-questions"]
+
+    for first in primaries:
+        for second in primaries:
+            if first == second:
+                continue
+            with pytest.raises(
+                ValueError, match="select exactly one primary procedure"
+            ):
+                activation_input(skill_names=[first, second])
+
+
+def test_activation_schema_requires_primary_for_budget_only() -> None:
+    activation_input = _skill_activation_input_model(_THREE_PRIMARIES)
+
+    with pytest.raises(
+        ValueError,
+        match="budget-shopping is a modifier and requires exactly one primary",
+    ):
+        activation_input(
+            skill_names=["budget-shopping"],
+        )
+
+
+def test_a_modifier_may_accompany_any_primary_in_the_group() -> None:
+    """"Do you have anything for $5 to $10" is a budget and a shop question.
+
+    It was rejected as a stranded modifier, and the shopper got "What product
+    or outfit would you like to find within your budget?" instead of an answer
+    -- because catalog-questions did not count as a primary.
+    """
+
+    activation_input = _skill_activation_input_model(_THREE_PRIMARIES)
+
+    for primary in ("outfit-styling", "product-discovery", "catalog-questions"):
+        selected = activation_input(skill_names=[primary, "budget-shopping"])
+        assert set(selected.skill_names) == {primary, "budget-shopping"}
+
+
+def test_the_schema_names_every_primary_to_the_model() -> None:
+    """The allowed-values description is the channel that binds the choice.
+
+    It named two primaries while three were registered, so the one skill that
+    could answer a question about the shop was never offered as an option.
+    """
+
+    activation_input = _skill_activation_input_model(_THREE_PRIMARIES)
+    description = activation_input.model_fields["skill_names"].description
+
+    for primary in ("outfit-styling", "product-discovery", "catalog-questions"):
+        assert primary in description
+    assert "budget-shopping" in description
+
+
+def test_enforcement_matches_the_shipped_frontmatter() -> None:
+    """Read the real registry, not a fixture.
+
+    Nothing asserted that the enforcement agreed with the frontmatter, which is
+    exactly how a third primary shipped with `exclusive_group:
+    product_procedure` and went unseen for a day.
+    """
+
+    from chain_server.src.tools.policy import load_shopper_skill_registry
+    from chain_server.src.tools.skills import primary_skills_by_group
+
+    registry = load_shopper_skill_registry(
+        Path(__file__).resolve().parents[3] / "chain_server" / "skills"
+    )
+    groups = primary_skills_by_group(registry)
+
+    declared = {
+        name
+        for name, skill in registry.items()
+        if skill.role == "primary"
+    }
+    grouped = {name for names in groups.values() for name in names}
+    assert declared == grouped, "a primary skill is missing from its group"
+
+    activation_input = _skill_activation_input_model(registry)
+    description = activation_input.model_fields["skill_names"].description
+    for name in declared:
+        assert name in description, f"{name} is invisible to the model"
+
+    for names in groups.values():
+        for first in names:
+            for second in names:
+                if first == second:
+                    continue
+                with pytest.raises(
+                    ValueError, match="select exactly one primary procedure"
+                ):
+                    activation_input(skill_names=[first, second])
+
+
+def test_activation_schema_allows_standalone_cart_and_policy_skills() -> None:
+    activation_input = _skill_activation_input_model(_THREE_PRIMARIES)
+
+    assert activation_input(
+        skill_names=["cart-management"],
+    ).skill_names == ["cart-management"]
+    assert activation_input(
+        skill_names=["store-policy-answers"],
+    ).skill_names == ["store-policy-answers"]
+
+
+_ANSWERING_PROMPT = (
+    "## Shopper Assistant\n"
+    "Ground every product claim in tool evidence, order your tool calls, and "
+    "word the reply as a shop assistant would."
+)
+
+
+def _model_request(
+    messages: list[Any] | None = None,
+    *,
+    tools: list[BaseTool] | None = None,
+    system_prompt: str | None = None,
+) -> ModelRequest:
+    messages = messages or [HumanMessage(content=f"REQUEST ID: {REQUEST_ID}")]
+    return ModelRequest(
+        model=cast(Any, object()),
+        messages=messages,
+        system_prompt=system_prompt,
+        tools=tools
+        or [
+            activate_shopper_skills_tool,
+            search_catalog_tool,
+            get_product_details_tool,
+            add_cart_items_tool,
+        ],
+        state={"messages": messages},
+    )
+
+
+def _capture_request(
+    middleware: ShopperSkillActivationMiddleware,
+    request: ModelRequest,
+) -> ModelRequest:
+    captured: list[ModelRequest] = []
+
+    def handler(prepared: ModelRequest) -> ModelResponse:
+        captured.append(prepared)
+        if prepared.tool_choice == SKILL_ACTIVATION_TOOL_NAME:
+            return ModelResponse(
+                result=[
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "activation-call",
+                                "name": SKILL_ACTIVATION_TOOL_NAME,
+                                "args": {
+                                    "skill_names": ["outfit-styling"],
+                                },
+                            }
+                        ],
+                    )
+                ]
+            )
+        return ModelResponse(result=[AIMessage(content="done")])
+
+    middleware.wrap_model_call(request, handler)
+    return captured[0]
+
+
+def _tool_request(
+    name: str,
+    messages: list[Any],
+    args: dict[str, Any] | None = None,
+) -> ToolCallRequest:
+    tool = (
+        activate_shopper_skills_tool
+        if name == SKILL_ACTIVATION_TOOL_NAME
+        else {
+            "add_cart_items_tool": add_cart_items_tool,
+            "remove_cart_item_tool": add_cart_items_tool,
+            "update_cart_items_tool": add_cart_items_tool,
+            "get_cart_tool": add_cart_items_tool,
+            "get_product_details_tool": get_product_details_tool,
+            "search_catalog_tool": search_catalog_tool,
+        }[name]
+    )
+    return ToolCallRequest(
+        tool_call={
+            "id": f"{name}-call",
+            "name": name,
+            "args": args or {},
+            "type": "tool_call",
+        },
+        tool=tool,
+        state={"messages": messages},
+        runtime=cast(Any, None),
+    )
+
+
+def _activated_messages(
+    request_id: str = REQUEST_ID,
+    *,
+    skill_name: str = "outfit-styling",
+    query: str | None = None,
+) -> list[Any]:
+    request_text = f"REQUEST ID: {request_id}"
+    if query:
+        request_text += f"\nUSER QUERY: {query}"
+    return [
+        HumanMessage(content=request_text),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "activation-call",
+                    "name": SKILL_ACTIVATION_TOOL_NAME,
+                    "args": {
+                        "skill_names": [skill_name],
+                    },
+                }
+            ],
+        ),
+        ToolMessage(
+            content=(
+                f"{SKILL_ACTIVATION_COMPLETE} "
+                f"/shopper/{skill_name}/SKILL.md"
+            ),
+            name=SKILL_ACTIVATION_TOOL_NAME,
+            tool_call_id="activation-call",
+        ),
+    ]
+
+
+def test_pending_phase_forces_only_the_activation_tool() -> None:
+    prepared = _capture_request(_middleware(), _model_request())
+
+    assert [candidate.name for candidate in prepared.tools] == [
+        SKILL_ACTIVATION_TOOL_NAME
+    ]
+    assert prepared.tool_choice == SKILL_ACTIVATION_TOOL_NAME
+    assert prepared.model_settings["parallel_tool_calls"] is False
+    assert "Required Shopper Skill Selection" in prepared.system_prompt
+    assert "outfit-styling: Use for outfit completion" in prepared.system_prompt
+    assert "product-discovery: Use for browsing" in prepared.system_prompt
+    # The composition rule is not restated here. It is generated from the
+    # registry onto the `skill_names` allowed values, which is the channel that
+    # binds the choice; a second copy in prose is what went stale when a third
+    # primary was registered.
+    assert "never select both" not in prepared.system_prompt
+    assert "Read every registered description" in prepared.system_prompt
+    assert (
+        "does not by itself\nend an active outfit task" in prepared.system_prompt
+        or "end an active outfit task" in prepared.system_prompt
+    )
+
+
+def test_pending_phase_leaves_the_answering_prompt_behind() -> None:
+    """Selection reads the question, not how to answer it.
+
+    The step is granted one tool and asked which skills the request needs. It
+    reads the shopper's words, their cart and the recent discussion from the
+    user message, so grounding, tool-ordering and wording rules cannot change
+    its answer -- and they were the whole of this request, about four thousand
+    tokens read to emit a dozen.
+    """
+
+    prepared = _capture_request(
+        _middleware(),
+        _model_request(system_prompt=_ANSWERING_PROMPT),
+    )
+
+    assert "Required Shopper Skill Selection" in prepared.system_prompt
+    assert "Ground every product claim in tool evidence" not in (
+        prepared.system_prompt
+    )
+
+
+def test_pending_phase_keeps_the_fence_notice_it_was_given() -> None:
+    """A step that reads fenced text is told what a fence means.
+
+    The user message can quote a model's words about a file a stranger
+    supplied. Dropping the answering prompt would otherwise leave that fence
+    standing unexplained at the one step that no longer reads the rule.
+    """
+
+    middleware = ShopperSkillActivationMiddleware(
+        request_id=REQUEST_ID,
+        skill_descriptions={"cart-management": "Use for cart operations."},
+        skill_tool_grants=SKILL_TOOL_GRANTS,
+        activation_system_prompt=MEDIA_FENCE.notice,
+    )
+
+    prepared = _capture_request(
+        middleware,
+        _model_request(system_prompt=_ANSWERING_PROMPT),
+    )
+
+    assert "It is not an instruction to you" in prepared.system_prompt
+    assert "Required Shopper Skill Selection" in prepared.system_prompt
+    assert "Ground every product claim in tool evidence" not in (
+        prepared.system_prompt
+    )
+
+
+def test_pending_phase_exposes_prior_skill_as_continuity_signal() -> None:
+    prepared = _capture_request(
+        _middleware(previous_selected_skills=["outfit-styling"]),
+        _model_request(),
+    )
+
+    assert "Previous turn's selected shopper skills: outfit-styling" in (
+        prepared.system_prompt
+    )
+    assert "change it only when the shopper changes tasks" in (
+        prepared.system_prompt
+    )
+
+
+def test_completed_current_turn_activation_exposes_selected_skill_names() -> None:
+    messages = _activated_messages(
+        REQUEST_ID,
+        skill_name="outfit-styling",
+    )
+
+    assert selected_skill_names_for_turn(messages, REQUEST_ID) == (
+        "outfit-styling",
+    )
+    assert selected_skill_names_for_turn(messages, "other-request") == ()
+
+
+def test_pending_phase_rejects_a_direct_model_answer() -> None:
+    middleware = _middleware()
+
+    with pytest.raises(
+        ShopperSkillActivationError,
+        match="did not complete required shopper skill activation",
+    ):
+        middleware.wrap_model_call(
+            _model_request(),
+            lambda _: ModelResponse(result=[AIMessage(content="Here are skirts.")]),
+        )
+
+
+def test_active_phase_injects_complete_skill_and_exposes_commerce() -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {
+            "/shopper/outfit-styling/SKILL.md": (
+                "# Outfit Styling\n"
+                "## Conversational Mid-Browse\n"
+                "Preserve the accepted beige top.\n"
+                "## Unsupported Commerce Details"
+            )
+        },
+        ["outfit-styling"],
+    )
+
+    prepared = _capture_request(middleware, _model_request(_activated_messages()))
+
+    assert [candidate.name for candidate in prepared.tools] == [
+        "search_catalog_tool",
+        "get_product_details_tool",
+    ]
+    assert prepared.tool_choice is None
+    assert prepared.model_settings["parallel_tool_calls"] is False
+    assert "# Outfit Styling" in prepared.system_prompt
+    assert "## Conversational Mid-Browse" in prepared.system_prompt
+    assert "## Unsupported Commerce Details" in prepared.system_prompt
+
+
+def test_a_closed_search_stops_paying_for_the_catalog_it_cannot_query() -> None:
+    """The largest block in the prompt leaves when the turn is done searching.
+
+    The catalog context is the advertised taxonomy, every hard filter's exact
+    enum, and the per-category field availability -- about 2,900 tokens whose
+    only use is composing a search. Once the search closes the turn is told
+    not to search again, and 389 of 1,302 measured work calls were carrying
+    the block anyway. The grant is unchanged, so this is not a capability
+    being removed; it is instructions for an action already forbidden.
+    """
+
+    spent: set[str] = set()
+    middleware = _middleware(spent_tool_context=lambda: frozenset(spent))
+    middleware.activate(
+        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+        ["outfit-styling"],
+    )
+
+    while_open = _capture_request(
+        middleware, _model_request(_activated_messages())
+    ).system_prompt
+    assert "Retrieval modes" in while_open
+    assert "before quoting its price" in while_open
+
+    spent.add("search_catalog_tool")
+    once_closed = _capture_request(
+        middleware, _model_request(_activated_messages())
+    ).system_prompt
+
+    assert "Retrieval modes" not in once_closed
+    # Only the finished tool's context goes. A turn that closed its search
+    # may still owe a detail read, and taking one withdrawal as a general
+    # purge is how a cheap saving becomes a capability loss.
+    assert "before quoting its price" in once_closed
+    # The skill still has to arrive, or the turn loses the procedure it is
+    # midway through performing.
+    assert "# Outfit Styling" in once_closed
+
+
+def test_the_catalog_returns_to_a_turn_that_reopens_its_search() -> None:
+    """Withdrawal tracks the current request, not a one-way latch."""
+
+    closed = False
+    middleware = _middleware(
+        spent_tool_context=lambda: (
+            frozenset({"search_catalog_tool"}) if closed else frozenset()
+        )
+    )
+    middleware.activate(
+        {"/shopper/product-discovery/SKILL.md": "# Product Discovery"},
+        ["product-discovery"],
+    )
+
+    closed = True
+    assert (
+        "Retrieval modes"
+        not in _capture_request(
+            middleware, _model_request(_activated_messages())
+        ).system_prompt
+    )
+    closed = False
+    assert (
+        "Retrieval modes"
+        in _capture_request(
+            middleware, _model_request(_activated_messages())
+        ).system_prompt
+    )
+
+
+def test_active_phase_rejects_multiple_shopping_tools_in_one_model_step() -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {"/shopper/product-discovery/SKILL.md": "# Product Discovery"},
+        ["product-discovery"],
+    )
+
+    with pytest.raises(
+        ShopperSkillActivationError,
+        match="multiple shopping tools in one step",
+    ):
+        middleware.wrap_model_call(
+            _model_request(_activated_messages()),
+            lambda _: ModelResponse(
+                result=[
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "search-a",
+                                "name": "search_catalog_tool",
+                                "args": {"query": "tops"},
+                            },
+                            {
+                                "id": "search-b",
+                                "name": "search_catalog_tool",
+                                "args": {"query": "skirts"},
+                            },
+                        ],
+                    )
+                ]
+            ),
+        )
+
+
+def test_failed_activation_exposes_no_tools() -> None:
+    middleware = _middleware()
+    middleware.fail()
+
+    prepared = _capture_request(middleware, _model_request())
+
+    assert prepared.tools == []
+    assert prepared.tool_choice is None
+    assert "Shopper Skill Activation Failed" in prepared.system_prompt
+
+
+def test_same_batch_activation_does_not_unlock_commerce() -> None:
+    messages = [
+        HumanMessage(content=f"REQUEST ID: {REQUEST_ID}"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "activation-call",
+                    "name": SKILL_ACTIVATION_TOOL_NAME,
+                    "args": {
+                        "skill_names": ["outfit-styling"],
+                    },
+                },
+                {
+                    "id": "search-call",
+                    "name": "search_catalog_tool",
+                    "args": {"query": "bottoms for a beige top"},
+                },
+            ],
+        ),
+    ]
+    handled: list[ToolCallRequest] = []
+
+    result = _middleware().wrap_tool_call(
+        _tool_request("search_catalog_tool", messages),
+        lambda request: handled.append(request),
+    )
+
+    assert handled == []
+    assert isinstance(result, ToolMessage)
+    assert result.status == "success"
+    assert str(result.content).startswith(SKILL_ACTIVATION_REQUIRED)
+
+
+def test_previous_turn_activation_does_not_unlock_current_turn() -> None:
+    messages = [
+        *_activated_messages("old-request"),
+        HumanMessage(content=f"REQUEST ID: {REQUEST_ID}"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "search-call",
+                    "name": "search_catalog_tool",
+                    "args": {"query": "skirts"},
+                }
+            ],
+        ),
+    ]
+
+    result = _middleware().wrap_tool_call(
+        _tool_request("search_catalog_tool", messages),
+        lambda _: ToolMessage(content="should not run", tool_call_id="search-call"),
+    )
+
+    assert isinstance(result, ToolMessage)
+    assert str(result.content).startswith(SKILL_ACTIVATION_REQUIRED)
+
+
+def test_current_turn_activation_unlocks_commerce() -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+        ["outfit-styling"],
+    )
+    request = _tool_request("search_catalog_tool", _activated_messages())
+    expected = ToolMessage(content="catalog result", tool_call_id="search-call")
+    handled: list[ToolCallRequest] = []
+
+    result = middleware.wrap_tool_call(
+        request,
+        lambda prepared: handled.append(prepared) or expected,
+    )
+
+    assert handled == [request]
+    assert result is expected
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "add_cart_items_tool",
+        "remove_cart_item_tool",
+        "update_cart_items_tool",
+    ],
+)
+def test_outfit_styling_rejects_cart_mutation_before_execution(
+    tool_name: str,
+) -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+        ["outfit-styling"],
+    )
+    request = _tool_request(tool_name, _activated_messages())
+    handled: list[ToolCallRequest] = []
+
+    result = middleware.wrap_tool_call(request, handled.append)
+
+    assert handled == []
+    assert isinstance(result, ToolMessage)
+    content = str(result.content)
+    assert content.startswith(SKILL_TOOL_NOT_GRANTED)
+    # A turn told only "continue using only the tools available" once said
+    # "I've added the Ombre Canvas Tote Bag to your cart" over an empty cart.
+    # Asserted here rather than on the message alone, because what went wrong
+    # was the model reading this exact reply.
+    assert "the cart is unchanged" in content
+    assert "do not tell the shopper it was done" in content
+    assert "offer to add" in content
+    assert "Continue using only the tools available" not in content
+
+
+def test_browse_only_product_discovery_rejects_cart_mutation() -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {"/shopper/product-discovery/SKILL.md": "# Product Discovery"},
+        ["product-discovery"],
+    )
+    messages = _activated_messages(
+        skill_name="product-discovery",
+        query="Show me casual black shoes",
+    )
+
+    prepared = _capture_request(middleware, _model_request(messages))
+
+    assert [candidate.name for candidate in prepared.tools] == [
+        "search_catalog_tool",
+        "get_product_details_tool",
+    ]
+    request = _tool_request(
+        "add_cart_items_tool",
+        messages,
+        {"items": [{"product_ref": "shoe-a"}]},
+    )
+    handled: list[ToolCallRequest] = []
+    result = middleware.wrap_tool_call(request, handled.append)
+    assert handled == []
+    assert isinstance(result, ToolMessage)
+    assert str(result.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+
+def _widening(
+    granting: Mapping[str, str],
+) -> Callable[
+    [str, Collection[str]],
+    tuple[Sequence[str], Mapping[str, str]] | None,
+]:
+    """Stand in for the runtime's answer: a legal selection, or nothing.
+
+    The gate asks which skill grants a refused tool and whether adding it is
+    a selection the model could have made. Both halves are the runtime's to
+    answer, because the registry and the selection model live there, so a
+    tool absent from `granting` here is how this states the runtime's no --
+    a second primary from one exclusive group, or a skill off the registry.
+    """
+
+    def widen(
+        tool_name: str,
+        selected: Collection[str],
+    ) -> tuple[Sequence[str], Mapping[str, str]] | None:
+        candidate = granting.get(tool_name)
+        if candidate is None:
+            return None
+        names = [*dict.fromkeys(selected), candidate]
+        return names, {
+            f"/shopper/{name}/SKILL.md": f"# {name}" for name in names
+        }
+
+    return widen
+
+
+def test_a_refused_call_gains_the_skill_that_grants_it() -> None:
+    """A read runs in the step that asked for it.
+
+    A turn selects its skills at its first token, so a styling turn that
+    wants to check what is already in the cart holds no cart tool. The
+    refusal would name `cart-management` and ask the model to say it back;
+    for a read, the gate adds the skill itself.
+    """
+
+    middleware = _middleware(
+        widen_for_tool=_widening({"get_cart_tool": "cart-management"}),
+    )
+    middleware.activate(
+        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+        ["outfit-styling"],
+    )
+    messages = _activated_messages(query="what goes with what is in my cart")
+    request = _tool_request("get_cart_tool", messages)
+    handled: list[ToolCallRequest] = []
+
+    result = middleware.wrap_tool_call(request, handled.append)
+
+    assert handled == [request]
+    assert result is None
+    # The grant outlives the call that earned it, and keeps what the turn
+    # opened with.
+    middleware._widen_for_tool = lambda _tool, _selected: None
+    again = _tool_request("get_cart_tool", messages)
+    assert middleware.wrap_tool_call(again, handled.append) is None
+    assert handled == [request, again]
+    prepared = _capture_request(middleware, _model_request(messages))
+    assert "search_catalog_tool" in [candidate.name for candidate in prepared.tools]
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "add_cart_items_tool",
+        "remove_cart_item_tool",
+        "update_cart_items_tool",
+    ],
+)
+def test_a_cart_change_is_not_widened_into(tool_name: str) -> None:
+    """Only the shopper's words can authorise a cart change.
+
+    Widening answers what a tool call asked for, and a call is chosen after
+    tool results are read. In replay, the only cart writes that came through
+    widening were the two nobody asked for: a styling turn that found an item
+    and added it. So a turn that did not open with cart-management gets no
+    cart change, whether it reaches for one directly or after a read has
+    widened the turn into cart-management.
+    """
+
+    middleware = _middleware(
+        widen_for_tool=_widening(
+            {
+                "get_cart_tool": "cart-management",
+                tool_name: "cart-management",
+            }
+        ),
+    )
+    middleware.activate(
+        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+        ["outfit-styling"],
+    )
+    messages = _activated_messages()
+    handled: list[ToolCallRequest] = []
+
+    refused = middleware.wrap_tool_call(
+        _tool_request(tool_name, messages), handled.append
+    )
+    assert handled == []
+    assert str(refused.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+    read = _tool_request("get_cart_tool", messages)
+    assert middleware.wrap_tool_call(read, handled.append) is None
+    assert handled == [read]
+
+    refused = middleware.wrap_tool_call(
+        _tool_request(tool_name, messages), handled.append
+    )
+    assert handled == [read]
+    assert "the cart is unchanged" in str(refused.content)
+
+
+def test_a_turn_that_opened_for_the_cart_changes_it() -> None:
+    middleware = _middleware()
+    middleware.activate(
+        {
+            "/shopper/cart-management/SKILL.md": "# Cart",
+            "/shopper/outfit-styling/SKILL.md": "# Outfit Styling",
+        },
+        ["cart-management", "outfit-styling"],
+    )
+    request = _tool_request(
+        "add_cart_items_tool",
+        _activated_messages(query="add the Ombre Canvas Tote Bag"),
+        {"items": [{"product_ref": "tote-a"}]},
+    )
+    handled: list[ToolCallRequest] = []
+
+    assert middleware.wrap_tool_call(request, handled.append) is None
+    assert handled == [request]
+
+
+def test_a_selection_the_model_could_not_make_is_not_made_for_it() -> None:
+    """No widening means the honest refusal, not a tool taken anyway.
+
+    `check_active_promotions_tool` is granted by `outfit-styling` and
+    `product-discovery` alone, two primaries in one exclusive group. A turn
+    holding the third, `catalog-questions`, cannot be widened into either
+    without seating two primaries, so the runtime answers nothing and the
+    turn hears what it heard before.
+    """
+
+    middleware = _middleware(
+        widen_for_tool=_widening({"add_cart_items_tool": "cart-management"}),
+    )
+    middleware.activate(
+        {"/shopper/product-discovery/SKILL.md": "# Product Discovery"},
+        ["product-discovery"],
+    )
+    messages = _activated_messages(skill_name="product-discovery")
+    request = _tool_request("get_product_details_tool", messages)
+    handled: list[ToolCallRequest] = []
+
+    # Granted already, so nothing is widened and the call simply runs.
+    assert middleware.wrap_tool_call(request, handled.append) is None
+    assert handled == [request]
+
+    refused = _tool_request("update_cart_items_tool", messages)
+    unhandled: list[ToolCallRequest] = []
+    result = middleware.wrap_tool_call(refused, unhandled.append)
+
+    assert unhandled == []
+    assert isinstance(result, ToolMessage)
+    assert str(result.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+
+def test_a_turn_past_the_activation_cap_still_hears_no() -> None:
+    """The cap bounds widening too, or a turn could walk the whole registry."""
+
+    middleware = _middleware(
+        widen_for_tool=_widening({"add_cart_items_tool": "cart-management"}),
+    )
+    for skill in ("outfit-styling", "product-discovery", "outfit-styling"):
+        middleware.activate({f"/shopper/{skill}/SKILL.md": f"# {skill}"}, [skill])
+
+    request = _tool_request(
+        "add_cart_items_tool",
+        _activated_messages(),
+        {"items": [{"product_ref": "tote-a"}]},
+    )
+    handled: list[ToolCallRequest] = []
+    result = middleware.wrap_tool_call(request, handled.append)
+
+    assert handled == []
+    assert isinstance(result, ToolMessage)
+    assert str(result.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+
+def test_a_granted_call_is_never_asked_what_would_grant_it() -> None:
+    """What the turns that need nothing pay for this: nothing.
+
+    Widening is reached from the refusal branch alone, so a turn that never
+    calls past its grants never consults the runtime and never loads a skill
+    it did not select.
+    """
+
+    asked: list[str] = []
+
+    def widen(
+        tool_name: str,
+        selected: Collection[str],
+    ) -> tuple[Sequence[str], Mapping[str, str]] | None:
+        asked.append(tool_name)
+        return None
+
+    middleware = _middleware(widen_for_tool=widen)
+    middleware.activate(
+        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+        ["outfit-styling"],
+    )
+    messages = _activated_messages()
+    handled: list[ToolCallRequest] = []
+
+    for tool_name in ("search_catalog_tool", "get_product_details_tool"):
+        middleware.wrap_tool_call(
+            _tool_request(tool_name, messages),
+            handled.append,
+        )
+
+    assert len(handled) == 2
+    assert asked == []
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="Constraint provenance remains an unresolved semantic-assurance boundary.",
+)
+def test_invented_catalog_constraint_is_rejected_before_execution() -> None:
+    """An advertised filter is not authorized merely because it is valid."""
+
+    middleware = _middleware()
+    middleware.activate(
+        {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+        ["outfit-styling"],
+    )
+    request = _tool_request(
+        "search_catalog_tool",
+        _activated_messages(query="Heels or flats for this look?"),
+        {"required_constraints": {"color": ["black"]}},
+    )
+    handled: list[ToolCallRequest] = []
+
+    result = middleware.wrap_tool_call(request, handled.append)
+
+    assert handled == []
+    assert isinstance(result, ToolMessage)
+    assert str(result.content).startswith("CATALOG_CALL_NOT_AUTHORIZED:")
+
+
+def test_cart_management_alone_can_find_and_add_a_named_product() -> None:
+    # J11: "add the Ombre Canvas Tote Bag", never shown, needed a search the cart
+    # skill could not make, so the model reached for a primary as well and the
+    # pair it chose was refused.
+    middleware = _middleware()
+    middleware.activate(
+        {"/shopper/cart-management/SKILL.md": "# Cart Management"},
+        ["cart-management"],
+    )
+    messages = _activated_messages()
+    prepared = _capture_request(middleware, _model_request(messages))
+
+    assert [candidate.name for candidate in prepared.tools] == [
+        "search_catalog_tool",
+        "add_cart_items_tool",
+    ]
+    request = _tool_request("add_cart_items_tool", messages)
+    expected = ToolMessage(content="cart updated", tool_call_id="add-call")
+    result = middleware.wrap_tool_call(request, lambda _: expected)
+    assert result is expected
+
+
+def test_activation_tool_is_always_allowed() -> None:
+    request = _tool_request(SKILL_ACTIVATION_TOOL_NAME, [])
+    expected = ToolMessage(content="loaded", tool_call_id="activation-call")
+
+    result = _middleware().wrap_tool_call(request, lambda _: expected)
+
+    assert result is expected
+
+
+@pytest.mark.asyncio
+async def test_speculative_tool_gate_waits_for_input_allow() -> None:
+    gate = InputGuardrailToolGate()
+    middleware = _middleware(input_guardrail_tool_gate=gate)
+    request = _tool_request(SKILL_ACTIVATION_TOOL_NAME, [])
+    expected = ToolMessage(content="loaded", tool_call_id="activation-call")
+    handled: list[ToolCallRequest] = []
+
+    async def handler(prepared: ToolCallRequest) -> ToolMessage:
+        handled.append(prepared)
+        return expected
+
+    pending = asyncio.create_task(middleware.awrap_tool_call(request, handler))
+    await asyncio.sleep(0)
+
+    assert handled == []
+    assert not pending.done()
+
+    gate.allow()
+
+    assert await pending is expected
+    assert handled == [request]
+
+
+@pytest.mark.asyncio
+async def test_speculative_tool_gate_denial_executes_no_tool() -> None:
+    gate = InputGuardrailToolGate()
+    middleware = _middleware(input_guardrail_tool_gate=gate)
+    request = _tool_request(SKILL_ACTIVATION_TOOL_NAME, [])
+    handled: list[ToolCallRequest] = []
+
+    async def handler(prepared: ToolCallRequest) -> ToolMessage:
+        handled.append(prepared)
+        return ToolMessage(content="loaded", tool_call_id="activation-call")
+
+    pending = asyncio.create_task(middleware.awrap_tool_call(request, handler))
+    await asyncio.sleep(0)
+    gate.deny()
+
+    with pytest.raises(SpeculativeToolExecutionBlocked):
+        await pending
+    assert handled == []
+
+
+def test_speculative_tool_gate_fails_closed_on_sync_path() -> None:
+    gate = InputGuardrailToolGate()
+    middleware = _middleware(input_guardrail_tool_gate=gate)
+    request = _tool_request(SKILL_ACTIVATION_TOOL_NAME, [])
+    handled: list[ToolCallRequest] = []
+
+    with pytest.raises(SpeculativeToolExecutionBlocked):
+        middleware.wrap_tool_call(request, handled.append)
+
+    assert handled == []
+
+
+@pytest.mark.asyncio
+async def test_compiled_agent_stops_at_activation_tool_until_input_allow(
+    base_config: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prove the real async graph uses the guardrail-aware tool wrapper."""
+
+    model_name = "compiled-speculative-guardrail-gate-test"
+    base_config.llm_name = model_name
+    model = _RecordingToolModel(
+        model_name=model_name,
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "activate-skill",
+                        "name": SKILL_ACTIVATION_TOOL_NAME,
+                        "args": {"skill_names": ["product-discovery"]},
+                    }
+                ],
+            ),
+            AIMessage(content="Ready to shop."),
+        ],
+    )
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+    identity = RequestIdentity(
+        session_id="session-gate",
+        conversation_id="conversation-gate",
+        cart_id="cart-gate",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id="request-gate",
+    )
+    gate = InputGuardrailToolGate()
+    agent = runtime._create_agent(
+        State(user_id=1, query="Show me dresses."),
+        identity,
+        CatalogCapabilities(
+            catalog_id="test-catalog",
+            retrieval_modes=["text"],
+            filters={},
+        ),
+        input_guardrail_tool_gate=gate,
+    )
+
+    pending = asyncio.create_task(
+        agent.ainvoke(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": (
+                            "REQUEST ID: request-gate\n"
+                            "USER QUERY: Show me dresses."
+                        ),
+                    }
+                ]
+            },
+            config={"configurable": {"thread_id": identity.conversation_id}},
+        )
+    )
+    for _ in range(100):
+        if model.calls:
+            break
+        await asyncio.sleep(0.01)
+
+    assert len(model.calls) == 1
+    assert not pending.done()
+
+    gate.allow()
+    result = await asyncio.wait_for(pending, timeout=2)
+
+    assert len(model.calls) == 2
+    activation_results = [
+        message
+        for message in result["messages"]
+        if isinstance(message, ToolMessage)
+        and message.name == SKILL_ACTIVATION_TOOL_NAME
+    ]
+    assert len(activation_results) == 1
+    assert str(activation_results[0].content).startswith(
+        SKILL_ACTIVATION_COMPLETE
+    )
+    assert result["messages"][-1].content == "Ready to shop."
+
+
+def test_pending_phase_rejects_multiple_activation_calls() -> None:
+    """Competing activation calls execute neither selection."""
+
+    response = _middleware().wrap_model_call(
+        _model_request(),
+        lambda _: ModelResponse(
+            result=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "activate-discovery",
+                            "name": SKILL_ACTIVATION_TOOL_NAME,
+                            "args": {"skill_names": ["product-discovery"]},
+                        },
+                        {
+                            "id": "activate-styling",
+                            "name": SKILL_ACTIVATION_TOOL_NAME,
+                            "args": {"skill_names": ["outfit-styling"]},
+                        },
+                    ],
+                )
+            ]
+        ),
+    )
+
+    assert response.result == [
+        AIMessage(content="What product or shopping task would you like help with?")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_compiled_agent_bounds_repeated_invalid_budget_activation(
+    base_config: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repeated modifier-only selection clarifies instead of exhausting the graph."""
+
+    model_name = "compiled-budget-activation-recovery-test"
+    base_config.llm_name = model_name
+    model = _RecordingToolModel(
+        model_name=model_name,
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": f"budget-only-{attempt}",
+                        "name": SKILL_ACTIVATION_TOOL_NAME,
+                        "args": {"skill_names": ["budget-shopping"]},
+                    }
+                ],
+            )
+            for attempt in (1, 2)
+        ],
+    )
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+    identity = RequestIdentity(
+        session_id="session-budget",
+        conversation_id="conversation-budget",
+        cart_id="cart-budget",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id="request-budget",
+    )
+    agent = runtime._create_agent(
+        State(user_id=1, query="I need to stay under $100 total."),
+        identity,
+        CatalogCapabilities(
+            catalog_id="test-catalog",
+            retrieval_modes=["text"],
+            filters={},
+        ),
+    )
+
+    result = await agent.ainvoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "REQUEST ID: request-budget\n"
+                        "USER QUERY: I need to stay under $100 total."
+                    ),
+                }
+            ]
+        },
+        config={"configurable": {"thread_id": identity.conversation_id}},
+    )
+
+    assert len(model.calls) == 2
+    activation_results = [
+        message
+        for message in result["messages"]
+        if isinstance(message, ToolMessage)
+        and message.name == SKILL_ACTIVATION_TOOL_NAME
+    ]
+    assert len(activation_results) == 2
+    assert activation_results[0].status == "error"
+    assert str(activation_results[0].content).startswith(
+        "SHOPPER_SKILL_ACTIVATION_INVALID:"
+    )
+    assert activation_results[1].status == "error"
+    assert str(activation_results[1].content).startswith(
+        "SHOPPER_SKILL_ACTIVATION_CLARIFICATION_REQUIRED:"
+    )
+    assert result["messages"][-1].content == (
+        "What product or outfit would you like to find within your budget?"
+    )
+    assert not any(
+        isinstance(message, ToolMessage)
+        and message.name != SKILL_ACTIVATION_TOOL_NAME
+        for message in result["messages"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_compiled_agent_loads_skill_and_grants_what_the_call_names(
+    base_config: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise the real agent loop across activation and commerce phases."""
+
+    model_name = "compiled-skill-activation-test"
+    base_config.llm_name = model_name
+    model = _RecordingToolModel(
+        model_name=model_name,
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "invalid-activation",
+                        "name": SKILL_ACTIVATION_TOOL_NAME,
+                        "args": {
+                            "skill_names": [
+                                "outfit-styling",
+                                "product-discovery",
+                            ],
+                        },
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "activate-skill",
+                        "name": SKILL_ACTIVATION_TOOL_NAME,
+                        "args": {
+                            "skill_names": ["outfit-styling"],
+                        },
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "read-cart",
+                        "name": "get_cart_tool",
+                        "args": {},
+                    }
+                ],
+            ),
+            AIMessage(content="I can help with products for this outfit."),
+        ],
+    )
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+    monkeypatch.setattr(runtime, "_read_cart", lambda _: Cart())
+    identity = RequestIdentity(
+        session_id="session-a",
+        conversation_id="conversation-a",
+        cart_id="cart-a",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id=REQUEST_ID,
+    )
+    state = State(
+        user_id=1,
+        query="What bottoms go with the beige top?",
+        previous_selected_skill_names=["outfit-styling"],
+    )
+    agent = runtime._create_agent(
+        state,
+        identity,
+        CatalogCapabilities(
+            catalog_id="test-catalog",
+            retrieval_modes=["text"],
+            filters={},
+        ),
+    )
+
+    result = await agent.ainvoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        f"REQUEST ID: {REQUEST_ID}\n"
+                        "USER QUERY: What bottoms go with the beige top?"
+                    ),
+                }
+            ]
+        },
+        config={"configurable": {"thread_id": identity.conversation_id}},
+    )
+
+    assert len(model.calls) == 4
+    first_call, retry_call, shopping_call, _ = model.calls
+    assert first_call["tools"] == [SKILL_ACTIVATION_TOOL_NAME]
+    assert first_call["tool_choice"] == SKILL_ACTIVATION_TOOL_NAME
+    assert first_call["settings"]["parallel_tool_calls"] is False
+    assert "## Active Shopper Skills" not in first_call["system_prompt"]
+    assert "outfit-styling: Customer-facing fashion styling" in (
+        first_call["system_prompt"]
+    )
+    assert "product-discovery: General product search" in (
+        first_call["system_prompt"]
+    )
+    assert "Previous turn's selected shopper skills: outfit-styling" in (
+        first_call["system_prompt"]
+    )
+
+    assert retry_call["tools"] == [SKILL_ACTIVATION_TOOL_NAME]
+    assert retry_call["tool_choice"] == SKILL_ACTIVATION_TOOL_NAME
+    assert SKILL_ACTIVATION_TOOL_NAME not in shopping_call["tools"]
+    assert "search_catalog_tool" in shopping_call["tools"]
+    assert "get_product_details_tool" in shopping_call["tools"]
+    assert "check_product_availability_tool" in shopping_call["tools"]
+    assert "check_active_promotions_tool" in shopping_call["tools"]
+    assert "get_cart_tool" not in shopping_call["tools"]
+    assert "add_cart_items_tool" not in shopping_call["tools"]
+    # `read_file` is no longer registered at all. The skills are injected in
+    # full by the activation middleware, so nothing needs to fetch them, and
+    # the base prompt can now truthfully say there is no filesystem.
+    assert "read_file" not in shopping_call["tools"]
+    assert "## Active Shopper Skills" in shopping_call["system_prompt"]
+    # The turn selected `outfit-styling`, which grants no cart tool, and read
+    # the cart anyway. That used to be answered with a refusal naming the
+    # skill the model should select instead -- a skill this code had just
+    # looked up to write the message with. It adds it instead, so the read
+    # runs in the step that asked for it.
+    cart_reads = [
+        message
+        for message in result["messages"]
+        if isinstance(message, ToolMessage)
+        and message.name == "get_cart_tool"
+    ]
+    assert len(cart_reads) == 1
+    assert not str(cart_reads[0].content).startswith(SKILL_TOOL_NOT_GRANTED)
+    assert str(cart_reads[0].content) == "(empty)"
+    assert result["messages"][-1].content == (
+        "I can help with products for this outfit."
+    )
+
+
+@pytest.mark.asyncio
+async def test_compiled_agent_answers_promotions_without_catalog_search(
+    base_config: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A promotions lookup uses its granted stub instead of catalog retrieval."""
+
+
+    model_name = "compiled-promotions-test"
+    base_config.llm_name = model_name
+    model = _RecordingToolModel(
+        model_name=model_name,
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "activate-product-discovery",
+                        "name": SKILL_ACTIVATION_TOOL_NAME,
+                        "args": {"skill_names": ["product-discovery"]},
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "check-promotions",
+                        "name": "check_active_promotions_tool",
+                        "args": {},
+                    }
+                ],
+            ),
+            AIMessage(
+                content=(
+                    "No active sale or promotion is available through the assistant "
+                    "right now."
+                )
+            ),
+        ],
+    )
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+
+    def fail_catalog_search(*_args, **_kwargs):
+        raise AssertionError("promotions lookup must not execute catalog search")
+
+    monkeypatch.setattr(
+        catalog_search,
+        "execute_catalog_search",
+        fail_catalog_search,
+    )
+    identity = RequestIdentity(
+        session_id="session-promotions",
+        conversation_id="conversation-promotions",
+        cart_id="cart-promotions",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id=REQUEST_ID,
+    )
+    agent = runtime._create_agent(
+        State(user_id=1, query="Any sales on shoes?"),
+        identity,
+        CatalogCapabilities(
+            catalog_id="test-catalog",
+            retrieval_modes=["text"],
+            filters={},
+        ),
+    )
+
+    result = await agent.ainvoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        f"REQUEST ID: {REQUEST_ID}\n"
+                        "USER QUERY: Any sales on shoes?"
+                    ),
+                }
+            ]
+        },
+        config={"configurable": {"thread_id": identity.conversation_id}},
+    )
+
+    assert len(model.calls) == 3
+    assert model.calls[0]["tools"] == [SKILL_ACTIVATION_TOOL_NAME]
+    assert "check_active_promotions_tool" in model.calls[1]["tools"]
+    assert "search_catalog_tool" in model.calls[1]["tools"]
+    assert "get_cart_tool" not in model.calls[1]["tools"]
+    promotion_results = [
+        message
+        for message in result["messages"]
+        if isinstance(message, ToolMessage)
+        and message.name == "check_active_promotions_tool"
+    ]
+    assert len(promotion_results) == 1
+    expected = (
+        "No active sale or promotion is available through the assistant right now."
+    )
+    assert expected in str(promotion_results[0].content)
+    assert not any(
+        isinstance(message, ToolMessage) and message.name == "search_catalog_tool"
+        for message in result["messages"]
+    )
+    assert result["messages"][-1].content == expected
+
+
+@pytest.mark.asyncio
+async def test_compiled_agent_will_not_seat_a_second_primary_to_grant_a_tool(
+    base_config: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one-primary invariant outranks granting the call what it asked for.
+
+    `check_active_promotions_tool` is granted by `outfit-styling` and
+    `product-discovery` alone, and this turn holds `catalog-questions`: all
+    three are primaries in `product_procedure`, so every widening available
+    would seat two. The runtime validates a candidate against the same model
+    the activation tool validates against, so it offers none and the turn
+    hears the refusal rather than a selection it could not have made.
+    """
+
+    model_name = "compiled-second-primary-test"
+    base_config.llm_name = model_name
+    model = _RecordingToolModel(
+        model_name=model_name,
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "activate-catalog-questions",
+                        "name": SKILL_ACTIVATION_TOOL_NAME,
+                        "args": {"skill_names": ["catalog-questions"]},
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "check-promotions",
+                        "name": "check_active_promotions_tool",
+                        "args": {},
+                    }
+                ],
+            ),
+            AIMessage(content="Here is what the shop carries."),
+        ],
+    )
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+    identity = RequestIdentity(
+        session_id="session-second-primary",
+        conversation_id="conversation-second-primary",
+        cart_id="cart-second-primary",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id=REQUEST_ID,
+    )
+    agent = runtime._create_agent(
+        State(user_id=1, query="What kinds of shoes do you carry?"),
+        identity,
+        CatalogCapabilities(
+            catalog_id="test-catalog",
+            retrieval_modes=["text"],
+            filters={},
+        ),
+    )
+
+    result = await agent.ainvoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        f"REQUEST ID: {REQUEST_ID}\n"
+                        "USER QUERY: What kinds of shoes do you carry?"
+                    ),
+                }
+            ]
+        },
+        config={"configurable": {"thread_id": identity.conversation_id}},
+    )
+
+    refused = [
+        message
+        for message in result["messages"]
+        if isinstance(message, ToolMessage)
+        and message.name == "check_active_promotions_tool"
+    ]
+    assert len(refused) == 1
+    content = str(refused[0].content)
+    assert content.startswith(SKILL_TOOL_NOT_GRANTED)
+    assert "outfit-styling" in content
+    assert "product-discovery" in content
+
+
+@pytest.mark.asyncio
+async def test_compiled_agent_allows_one_invalid_taxonomy_repair_then_synthesizes(
+    base_config: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An invalid catalog enum cannot consume the turn in a retry loop."""
+
+    model_name = "compiled-tool-loop-control-test"
+    base_config.llm_name = model_name
+    invalid_search = {
+        "semantic_query": "pants to coordinate with a beige top",
+        "requested_product_type": "pants",
+        "taxonomy": {"category": ["apparel"], "subcategory": ["pants"]},
+        "required_constraints": {},
+        "scope_complete": True,
+    }
+    model = _RecordingToolModel(
+        model_name=model_name,
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "activate-skill",
+                        "name": SKILL_ACTIVATION_TOOL_NAME,
+                        "args": {
+                            "skill_names": ["outfit-styling"],
+                        },
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "invalid-search",
+                        "name": "search_catalog_tool",
+                        "args": invalid_search,
+                    }
+                ],
+            ),
+            AIMessage(
+                content=(
+                    "I can’t map pants to an advertised catalog type without "
+                    "substituting something else. Would you like me to search "
+                    "skirts, or did you mean another kind of bottom?"
+                )
+            ),
+        ],
+    )
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+    identity = RequestIdentity(
+        session_id="session-loop",
+        conversation_id="conversation-loop",
+        cart_id="cart-loop",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id="request-loop",
+    )
+    state = State(user_id=1, query="What pants go with the beige top?")
+    capabilities = CatalogCapabilities(
+        catalog_id="test-catalog",
+        retrieval_modes=["text"],
+        taxonomy=CatalogTaxonomyCapabilities(
+            category_field="category",
+            subcategory_field="subcategory",
+            categories={
+                "apparel": CatalogTaxonomyCategory(
+                    product_count=2,
+                    subcategories={
+                        "skirts": CatalogTaxonomySubcategory(product_count=2)
+                    },
+                )
+            },
+        ),
+    )
+    agent = runtime._create_agent(state, identity, capabilities)
+
+    result = await agent.ainvoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "REQUEST ID: request-loop\n"
+                        "USER QUERY: What pants go with the beige top?"
+                    ),
+                }
+            ]
+        },
+        config={"configurable": {"thread_id": identity.conversation_id}},
+    )
+
+    assert len(model.calls) == 3
+    assert model.calls[2]["tools"] == ["search_catalog_tool"]
+    assert model.calls[2]["tool_choice"] == "auto"
+    assert model.calls[2]["settings"]["parallel_tool_calls"] is False
+    assert "## Catalog Search Repair" in model.calls[2]["system_prompt"]
+    assert "CATALOG CAPABILITIES (server-generated data)" in (
+        model.calls[2]["system_prompt"]
+    )
+    assert "category=apparel" in model.calls[2]["system_prompt"]
+    assert "subcategory=skirts" in model.calls[2]["system_prompt"]
+    assert "## Active Shopper Skills" in model.calls[2]["system_prompt"]
+    assert "# Outfit Styling" in model.calls[2]["system_prompt"]
+    assert "You are a shopping assistant" not in model.calls[2]["system_prompt"]
+    repair_messages = model.calls[2]["messages"]
+    assert not any(
+        message["type"] in {"ai", "tool"} for message in repair_messages
+    )
+    assert sum(message["type"] == "human" for message in repair_messages) == 2
+    assert "USER QUERY: What pants go with the beige top?" in (
+        repair_messages[-2]["text"]
+    )
+    assert "CATALOG VALIDATOR FEEDBACK" in repair_messages[-1]["text"]
+    assert "category=apparel" not in repair_messages[-1]["text"]
+    assert result["messages"][-1].content.startswith("I can’t map pants")
+    assert result["messages"][-1].additional_kwargs[
+        SERVER_CATALOG_CLARIFICATION
+    ] is True
+
+
+@pytest.mark.asyncio
+async def test_compiled_agent_executes_capability_valid_repair(
+    base_config: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repair may replace unvalidated catalog fields before execution."""
+
+
+    model_name = "compiled-capability-repair-test"
+    base_config.llm_name = model_name
+    model = _RecordingToolModel(
+        model_name=model_name,
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "activate-skill",
+                        "name": SKILL_ACTIVATION_TOOL_NAME,
+                        "args": {"skill_names": ["product-discovery"]},
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "invalid-search",
+                        "name": "search_catalog_tool",
+                        "args": {
+                            "scopes": [{
+                            "semantic_query": "black shoes",
+                            "shopper_guidance": "Finding black shoes.",
+                            "requested_product_type": "shoes",
+                            "taxonomy": {
+                                "category": ["footwear"],
+                                "subcategory": ["shoes"],
+                            },
+                            "required_constraints": {"color": ["black"]},
+                            "scope_complete": True,
+                            "search_mode": "typo-mode",}],
+                        },
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "valid-repair",
+                        "name": "search_catalog_tool",
+                        "args": {
+                            "scopes": [{
+                            "semantic_query": "black shoes",
+                            "shopper_guidance": "Finding black shoes.",
+                            "requested_product_type": "shoes",
+                            "taxonomy": {
+                                "category": ["footwear"],
+                                "subcategory": ["flats"],
+                            },
+                            "required_constraints": {
+                                "primary_color": ["black"]
+                            },
+                            "scope_complete": True,
+                            "search_mode": "text",}],
+                        },
+                    }
+                ],
+            ),
+            AIMessage(content="I found no black flats in the current catalog."),
+        ],
+    )
+    runtime = DeepAgentsRuntime(base_config)
+    monkeypatch.setattr(runtime, "_create_chat_model", lambda: model)
+    executed_plans = []
+
+    def execute_catalog_search(plan, *_args, **_kwargs):
+        executed_plans.append(plan)
+        return CatalogSearchExecution(
+            result=SearchCatalogResult(ok=True, products=[])
+        )
+
+    monkeypatch.setattr(
+        catalog_search,
+        "execute_catalog_search",
+        execute_catalog_search,
+    )
+    identity = RequestIdentity(
+        session_id="session-capability-repair",
+        conversation_id="conversation-capability-repair",
+        cart_id="cart-capability-repair",
+        context_user_id=1,
+        cart_user_id=1,
+        request_id="request-capability-repair",
+    )
+    capabilities = CatalogCapabilities(
+        catalog_id="test-catalog",
+        retrieval_modes=["text"],
+        filters={
+            "category": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["category"],
+                values=["footwear"],
+            ),
+            "subcategory": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["subcategory"],
+                values=["flats"],
+            ),
+            "primary_color": CatalogFilterCapability(
+                type="enum",
+                operators=["in"],
+                source_fields=["primary_color"],
+                values=["black"],
+            )
+        },
+        taxonomy=CatalogTaxonomyCapabilities(
+            category_field="category",
+            subcategory_field="subcategory",
+            categories={
+                "footwear": CatalogTaxonomyCategory(
+                    product_count=1,
+                    subcategories={
+                        "flats": CatalogTaxonomySubcategory(product_count=1)
+                    },
+                )
+            },
+        ),
+    )
+    agent = runtime._create_agent(
+        State(user_id=1, query="Show me black shoes."),
+        identity,
+        capabilities,
+    )
+
+    result = await agent.ainvoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "REQUEST ID: request-capability-repair\n"
+                        "USER QUERY: Show me black shoes."
+                    ),
+                }
+            ]
+        },
+        config={"configurable": {"thread_id": identity.conversation_id}},
+    )
+
+    # The shopper's own search runs first. A scope that finds nothing is then
+    # re-run without the constraints that may give, so the reply can show what
+    # the shop does have rather than asking which absence to explore.
+    assert executed_plans[0].hard_filters["primary_color"] == ["black"]
+    for relaxation in executed_plans[1:]:
+        assert "primary_color" not in relaxation.hard_filters
+    assert executed_plans[0].hard_filters["primary_color"] == ["black"]
+    assert "color" not in executed_plans[0].hard_filters
+    assert executed_plans[0].search_mode == "text"
+    assert model.calls[2]["tools"] == ["search_catalog_tool"]
+    assert model.calls[3]["tools"] == []
+    assert result["messages"][-1].content.startswith("I found no black flats")
+
+
+def test_a_turn_may_correct_the_skills_it_opened_with() -> None:
+    """The selection made at the first token is not always the right one.
+
+    A styling turn that wants to read the cart is refused the tool for the
+    grant. A second activation used to return False, change no grants, and
+    report itself already complete, so the turn could not acquire the tool it
+    needed. A corrected selection grants reads; a cart change still needs the
+    opening selection, which came from the shopper's words alone.
+    """
+
+    middleware = _middleware()
+    middleware.activate(
+        {
+            "/shopper/outfit-styling/SKILL.md": "# Outfit Styling",
+            "/shopper/budget-shopping/SKILL.md": "# Budget",
+        },
+        ["outfit-styling", "budget-shopping"],
+    )
+    refused = middleware.wrap_tool_call(
+        _tool_request("get_cart_tool", _activated_messages()), lambda r: r
+    )
+    assert str(refused.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+    corrected = middleware.activate(
+        {"/shopper/cart-management/SKILL.md": "# Cart"}, ["cart-management"]
+    )
+
+    assert corrected is True
+    handled: list[ToolCallRequest] = []
+    result = middleware.wrap_tool_call(
+        _tool_request("get_cart_tool", _activated_messages()),
+        handled.append,
+    )
+    assert handled, "the corrected selection must grant the tool"
+    assert not str(getattr(result, "content", "")).startswith(
+        SKILL_TOOL_NOT_GRANTED
+    )
+    refused = middleware.wrap_tool_call(
+        _tool_request("add_cart_items_tool", _activated_messages()),
+        handled.append,
+    )
+    assert len(handled) == 1
+    assert "the cart is unchanged" in str(refused.content)
+
+
+def test_a_turn_cannot_reselect_for_ever() -> None:
+    """Past the cap the answer is no, rather than a success granting nothing.
+
+    Told to activate and retry, a model that cannot find the tool it wants
+    otherwise loops -- activate, refused, activate, refused -- until the turn
+    dies on the recursion limit and the shopper is told an error occurred.
+    """
+
+    middleware = _middleware()
+    for _ in range(3):
+        assert middleware.activate(
+            {"/shopper/outfit-styling/SKILL.md": "# Outfit Styling"},
+            ["outfit-styling"],
+        )
+    assert (
+        middleware.activate(
+            {"/shopper/cart-management/SKILL.md": "# Cart"}, ["cart-management"]
+        )
+        is False
+    )
+    # And the grants stay where the last accepted selection left them.
+    refused = middleware.wrap_tool_call(
+        _tool_request("add_cart_items_tool", _activated_messages()), lambda r: r
+    )
+    assert str(refused.content).startswith(SKILL_TOOL_NOT_GRANTED)
+
+
+def test_skills_named_in_the_activation_tool_are_registered() -> None:
+    """The one place a skill name is still written literally.
+
+    The exclusivity rule was an enumeration of a group's members, so it went
+    stale when a third member was registered and is now generated. What is
+    left is a composition rule about two specific skills, weather and styling,
+    where naming them is what makes it actionable. So the names stay, and this
+    asserts they still exist.
+    """
+
+    import re
+
+    from chain_server.src.tools.policy import load_shopper_skill_registry
+
+    runtime_source = (
+        Path(__file__).resolve().parents[3]
+        / "chain_server"
+        / "src"
+        / "tools"
+        / "skills.py"
+    ).read_text()
+    start = runtime_source.index("def activate_shopper_skills_tool(")
+    docstring = runtime_source[start : runtime_source.index('"""', start + 400)]
+
+    registry = load_shopper_skill_registry(
+        Path(__file__).resolve().parents[3] / "chain_server" / "skills"
+    )
+    named = set(re.findall(r"`([a-z][a-z-]+)`", docstring))
+    assert named, "the composition rule names no skill at all"
+    unknown = named - set(registry)
+    assert not unknown, f"activation tool names unregistered skills: {unknown}"

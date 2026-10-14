@@ -12,7 +12,7 @@ tests/
 ├── requirements-dev.txt    # Dependencies needed to run the unit suite
 ├── requirements.txt        # Dependencies for the integration scripts
 ├── unit/                   # Offline, hermetic unit tests (see below)
-│   ├── orchestrator/
+│   ├── chain_server/
 │   ├── catalog_retriever/
 │   ├── memory_retriever/
 │   └── guardrails/
@@ -59,7 +59,7 @@ python skills/retail-test-runner/scripts/run_retail_tests.py unit \
 
 Fixtures available from `conftest.py`:
 
-- `base_config` / `valid_config_dict`: representative orchestrator configs.
+- `base_config` / `valid_config_dict`: representative chain-server configs.
 - `fake_response_cls`: a tiny `requests.Response` stand-in for HTTP stubs.
 - `make_openai_chat_response`: factory for fake OpenAI chat responses.
 - `stream_writer_capture`: intercepts `langgraph.config.get_stream_writer`

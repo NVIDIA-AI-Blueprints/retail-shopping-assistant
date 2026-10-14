@@ -4,13 +4,13 @@
 
 """Check that AGENTS.md's config-field references still name real fields.
 
-AGENTS.md documents runtime behaviour by naming `OrchestratorConfig` fields
+AGENTS.md documents runtime behaviour by naming `ChainServerConfig` fields
 (e.g. `` `deepagents_execution_timeout_seconds` ``) instead of hardcoding
 their current values, so the doc can't silently drift from a config default
 the way a hardcoded number ("45 seconds") could. This script is the guard
 for that convention: it extracts every backtick-quoted, config-field-shaped
 identifier from AGENTS.md and confirms each one is an actual
-`OrchestratorConfig` field. It does not (and should not) try to catch every
+`ChainServerConfig` field. It does not (and should not) try to catch every
 possible doc/code drift -- just this one, narrow, previously-real case.
 """
 
@@ -23,19 +23,19 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 AGENTS_MD = REPO_ROOT / "AGENTS.md"
-CONFIG_PY = REPO_ROOT / "orchestrator" / "src" / "config.py"
+CONFIG_PY = REPO_ROOT / "chain_server" / "src" / "config.py"
 
 # Identifiers that look like config fields (snake_case, ends the way our
-# knobs do) but are documented as env var names, not OrchestratorConfig
+# knobs do) but are documented as env var names, not ChainServerConfig
 # attributes -- e.g. `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` is checked
 # separately since it's upper-cased and not a Python attribute.
 _FIELD_PATTERN = re.compile(r"`([a-z][a-z0-9_]*_(?:seconds|turn|chars|tokens))`")
 
 
-def _orchestrator_config_fields() -> set[str]:
-    """Field names on OrchestratorConfig, read by parsing the source directly.
+def _chain_server_config_fields() -> set[str]:
+    """Field names on ChainServerConfig, read by parsing the source directly.
 
-    Importing orchestrator.src.config would pull in its runtime deps
+    Importing chain_server.src.config would pull in its runtime deps
     (pydantic, yaml, shared.model_config), which this check has no other
     reason to require -- CI's lint job doesn't install them. Parsing the AST
     keeps this script dependency-free.
@@ -43,24 +43,24 @@ def _orchestrator_config_fields() -> set[str]:
 
     tree = ast.parse(CONFIG_PY.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == "OrchestratorConfig":
+        if isinstance(node, ast.ClassDef) and node.name == "ChainServerConfig":
             return {
                 stmt.target.id
                 for stmt in node.body
                 if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
             }
-    raise RuntimeError(f"OrchestratorConfig class not found in {CONFIG_PY}")
+    raise RuntimeError(f"ChainServerConfig class not found in {CONFIG_PY}")
 
 
 def main() -> int:
-    known_fields = _orchestrator_config_fields()
+    known_fields = _chain_server_config_fields()
     text = AGENTS_MD.read_text(encoding="utf-8")
     referenced = set(_FIELD_PATTERN.findall(text))
     unknown = sorted(referenced - known_fields)
     if unknown:
         print(
             "AGENTS.md references config fields that no longer exist on "
-            f"OrchestratorConfig: {unknown}",
+            f"ChainServerConfig: {unknown}",
             file=sys.stderr,
         )
         return 1

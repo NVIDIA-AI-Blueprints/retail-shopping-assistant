@@ -169,7 +169,7 @@ jobs:
         continue-on-error: true
         run: |
           if ! curl -sf http://127.0.0.1:8009/ready > /dev/null; then
-            echo "⚠️ orchestrator is not ready; skipping the replay"
+            echo "⚠️ chain-server is not ready; skipping the replay"
             exit 1
           fi
           scenarios=$(ls tests/evaluation/datasets/val/scripts/probes/P*.yaml \

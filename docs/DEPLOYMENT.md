@@ -113,7 +113,7 @@ the templates, so your filled-in copy stays out of git along with its keys.
 For an existing deployment, restart the catalog service when changing the
 embedding model or catalog data source. Its fingerprint reuses only
 matching complete collections and rebuilds mismatches. After the catalog is
-healthy, restart the orchestrator so its process-lifetime cached capability
+healthy, restart the chain server so its process-lifetime cached capability
 contract matches the active catalog.
 
 ## 🎛️ Deployment Options
@@ -156,7 +156,7 @@ of them there.
 Feature defaults are declared once, in the service's config file. Compose and
 the env profiles pass the environment variable through without a default of
 their own, so an empty value means "not set" and the config file decides; for
-guardrails, that is `shared/configs/orchestrator/config.yaml`.
+guardrails, that is `shared/configs/chain_server/config.yaml`.
 
 ## 🏠 Locally Hosted Models
 
@@ -353,7 +353,7 @@ docker compose -f docker-compose-model-local.yaml ps
 # Each model server lists the model it serves
 for port in 8000 8001 8003 8004 8005; do curl -s http://localhost:$port/v1/models; echo; done
 
-curl http://localhost:8009/ready    # orchestrator
+curl http://localhost:8009/ready    # chain server
 curl http://localhost:8010/ready    # catalog: 503 until the index is built
 curl http://localhost:8011/ready    # memory: 503 until migrations finish
 curl http://localhost:3000
@@ -409,11 +409,11 @@ section lists what changes before shoppers can reach it and as traffic grows.
 ### Secure the Deployment
 
 - **Put authentication in front of `/api`.** The UI proxies `/api/*` to the
-  orchestrator unchanged. Anyone who can reach port 3000 or 8009 can start
+  chain server unchanged. Anyone who can reach port 3000 or 8009 can start
   turns, and anyone who learns a `cart_id` can read and change that cart.
   Serve the UI and API over HTTPS.
 - **Keep internal services off public interfaces.** The memory service (8011)
-  binds to loopback. The orchestrator (8009), catalog retriever (8010), rails
+  binds to loopback. The chain server (8009), catalog retriever (8010), rails
   (8012), Milvus (19530, 9091) and Phoenix (6006) publish on every interface
   for local convenience. Bind them to `127.0.0.1` or firewall them; only the
   UI needs to be reachable.
@@ -441,7 +441,7 @@ cost control, serve the models on your own GPUs with vLLM:
 
 ### Scale Out
 
-- **Orchestrator:** any replica can serve any turn. A turn's graph checkpoint
+- **Chain server:** any replica can serve any turn. A turn's graph checkpoint
   is keyed on `(conversation_id, request_id)`, and the durable record of the
   conversation lives in the memory service, so nothing ties a conversation to
   one worker.
@@ -474,7 +474,7 @@ are for whoever writes them.
 
 - **No session affinity.** A graph checkpoint is keyed on
   `(conversation_id, request_id)`, so two turns of one conversation never share
-  one and nothing carries across turns inside a pod. Any orchestrator replica
+  one and nothing carries across turns inside a pod. Any chain-server replica
   can serve any turn. Verified by running a four-turn conversation, including a
   referring expression and a cart write, with every turn on a different pod.
 - **Probes are distinct.** `/health` is liveness and stays on the event loop, so
@@ -484,7 +484,7 @@ are for whoever writes them.
   and turns a partial outage into a total one.
 - **Draining works.** uvicorn is PID 1 in every container, so SIGTERM starts a
   drain rather than stopping at a shell. `terminationGracePeriodSeconds` must
-  exceed `SHUTDOWN_GRACE_SECONDS` (160 for the orchestrator, which must clear a
+  exceed `SHUTDOWN_GRACE_SECONDS` (160 for the chain server, which must clear a
   turn that may run to `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS`) or the kubelet
   sends SIGKILL mid-drain.
 - **Streaming.** The Ingress must not buffer and must allow a whole turn:
@@ -552,7 +552,7 @@ profile, together: hosts name the same model differently
 ### Environment Variables
 
 A default written as a `config.yaml` key lives only in
-`shared/configs/orchestrator/config.yaml`; look it up there. The variable
+`shared/configs/chain_server/config.yaml`; look it up there. The variable
 overrides it, and left empty it leaves the key in place. `docker-compose.yaml`
 passes these variables through empty and `.env.example` leaves most of them
 empty, so change a default in `config.yaml`. A few guardrails variables are set
@@ -578,7 +578,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `VLM_API_KEY` | Optional VLM media perception API key; Compose falls back to `NVIDIA_API_KEY` when unset | When `vlm` uses an authenticated endpoint and `NVIDIA_API_KEY` is unset | `NVIDIA_API_KEY` |
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
-| `GUARDRAILS_URL` | Orchestrator URL for the guardrail service | No | `http://rails:8012` |
+| `GUARDRAILS_URL` | Chain-server URL for the guardrail service | No | `http://rails:8012` |
 | `RAILS_CONTENT_BASE_URL` / `RAILS_CONTENT_MODEL` | Endpoint and model for current text/image content safety | With guardrails | `.env.example` |
 | `RAILS_TOPIC_BASE_URL` / `RAILS_TOPIC_MODEL` | Topic-control endpoint and model. The dedicated Topic Control model is preferred; selecting Content Safety applies the configured retail policy through `custom_policy` | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_API_KEY` | Key for the independently routed video safety judge; Compose falls back to the VLM/NVIDIA key | When the video safety endpoint requires authentication | `RAIL_API_KEY` in `.env.example`; `VLM_API_KEY` in Compose alone |
@@ -587,10 +587,10 @@ set there; a unit test fails if the two differ, so change both together.
 | `MULTIMODAL_SAFETY_VIDEO_FPS` | Temporal sampling rate sent to Nemotron Omni. The complete video object and embedded audio are submitted, but the model evaluates sampled frames | No | `rails.py` (2.0) |
 | `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the content and topic input rails in `parallel` or `sequential` mode | No | `shared/configs/rails/config.yml`: `rails.input.parallel` (parallel) |
 | `GUARDRAILS_AVAILABLE` | `false` deploys without guardrails: no guardrail model is called or needs a key, `.env.local-models` starts no guardrail model, the UI hides the Guardrails toggle, and a request with `guardrails: true` gets a 400. Cannot be combined with `GUARDRAILS_ENABLED=true`. Read from the environment only, as both services and `.env.local-models` need it | No | true |
-| `GUARDRAILS_ENABLED` | Default orchestrator guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Set false to turn guardrails off by default | No | `config.yaml`: `guardrails_enabled` (on; off when `GUARDRAILS_AVAILABLE=false`) |
+| `GUARDRAILS_ENABLED` | Default chain-server guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Set false to turn guardrails off by default | No | `config.yaml`: `guardrails_enabled` (on; off when `GUARDRAILS_AVAILABLE=false`) |
 | `GUARDRAILS_CLIENT_CAN_DISABLE` | With guardrails enabled, whether a request's `guardrails: false` is honoured. On by default, so the UI toggle can show before and after; set `false` to lock guardrails on | No | true |
 | `GUARDRAILS_FAILURE_MODE` | Required-check error/timeout behavior: `open` bypasses and `closed` stops the turn. Explicit unsafe decisions always block in either mode | No | `config.yaml`: `guardrails_failure_mode` (closed) |
-| `GUARDRAILS_TIMEOUT_SECONDS` | Timeout for each isolated guardrail service decision. Both services read it: the orchestrator bounds its call, the guardrail service bounds the judges behind it | No | `config.yaml`: `guardrails_timeout_seconds`, and `rails.py` (15.0) |
+| `GUARDRAILS_TIMEOUT_SECONDS` | Timeout for each isolated guardrail service decision. Both services read it: the chain server bounds its call, the guardrail service bounds the judges behind it | No | `config.yaml`: `guardrails_timeout_seconds`, and `rails.py` (15.0) |
 | `GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` | For guarded text-only turns, overlap the first app-model step with input guardrails while holding every tool behind the allow decision. Reduces latency but blocked turns can still incur one app-model request. Media remains sequential | No | `config.yaml`: `guardrails_speculative_main_model_enabled` (off) |
 | `GUARDRAILS_SUPPORTED_MODALITIES` | Modalities enforced by guardrails and advertised to clients | No | `config.yaml`: `guardrails_supported_modalities` |
 | `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` | Shared deadline for the Deep Agents graph and grounding editor before the durable turn fails cleanly | No | `config.yaml`: `deepagents_execution_timeout_seconds` |
@@ -599,8 +599,8 @@ set there; a unit test fails if the two differ, so change both together.
 | `GROUNDING_REWRITE_ENABLED` | Let the grounding editor rewrite a reply that drifted from tool evidence | No | `config.yaml`: `grounding_rewrite_enabled` |
 | `GROUNDING_REWRITE_MAX_EVIDENCE_CHARS` | Ceiling on the evidence passed to that editor | No | `config.yaml`: `grounding_rewrite_max_evidence_chars` |
 | `EXPOSE_AGENT_DIAGNOSTICS` | Expose detailed agent/tool traces in query responses; enable only behind a trusted operator or evaluation surface | No | `config.yaml`: `expose_agent_diagnostics` (off) |
-| `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional orchestrator timeout for catalog search requests | No | no timeout |
-| `CATALOG_RETRIEVER_URL` / `MEMORY_RETRIEVER_URL` | Where the orchestrator reaches the retrieval services | No | `config.yaml`: `retriever_port`, `memory_port` |
+| `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional chain-server timeout for catalog search requests | No | no timeout |
+| `CATALOG_RETRIEVER_URL` / `MEMORY_RETRIEVER_URL` | Where the chain server reaches the retrieval services | No | `config.yaml`: `retriever_port`, `memory_port` |
 | `CATALOG_VECTOR_INDEX_TYPE` | Vector index for both catalog collections: `AUTOINDEX` (CPU) or `GPU_CAGRA` (needs the Milvus `-gpu` image); see [Vector Search](VECTOR_SEARCH.md) | No | `catalog_retriever/config.yaml`: `vector_index.type` (`AUTOINDEX`) |
 | `CATALOG_GPU_SEARCH` | With `GPU_CAGRA`, search on the GPU too rather than building on the GPU and searching on the CPU | No | `catalog_retriever/config.yaml`: `vector_index.gpu_search` (off) |
 | `CATALOG_DATA_SOURCE` / `CATALOG_SCHEMA_SOURCE` | Catalog JSONL and schema sidecar paths; see [Catalog Architecture](CATALOG_ARCHITECTURE.md#replace-the-catalog) | No | `catalog_retriever/config.yaml`: `data_source`, `schema_source` |
@@ -614,14 +614,14 @@ set there; a unit test fails if the two differ, so change both together.
 | `MEMORY_TURN_ABANDON_SECONDS` | Age at which startup or the next turn start marks an unfinished `started` turn abandoned | No | `DEFAULT_ABANDONED_SECONDS` in `memory_retriever/src/conversations.py` |
 | `MEMORY_RECENT_TURNS` | Maximum prior context-eligible raw turns returned at the next durable turn start | No | `DEFAULT_RECENT_TURNS_LIMIT` in `memory_retriever/src/conversations.py` |
 | `WEATHER_ENABLED` | Registers the forecast tool with the shopper agent (needs `WEATHER_API_KEY`) | No | `config.yaml`: `weather.enabled` (off) |
-| `WEATHER_API_KEY` | Visual Crossing server-side credential, read indirectly from the variable named by orchestrator weather config | Only when directly constructing an enabled weather client | empty |
+| `WEATHER_API_KEY` | Visual Crossing server-side credential, read indirectly from the variable named by chain-server weather config | Only when directly constructing an enabled weather client | empty |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Where traces are exported; unset disables export. See [Observability](OBSERVABILITY.md) | No | unset |
-| `OTEL_SERVICE_NAME` | Service name traces are attributed to | No | `orchestrator` |
+| `OTEL_SERVICE_NAME` | Service name traces are attributed to | No | `chain-server` |
 | `RELAY_ENABLED` | Route model calls through NeMo Relay for richer LLM spans | No | `config.py`: `relay_enabled` (off); `.env.example` turns it on |
 | `RELAY_OTLP_ENDPOINT` | Where the in-container Relay sends its spans | No | `http://127.0.0.1:4318` |
-| `INSTALL_RELAY` | Build argument that installs the Relay dependency into the orchestrator image; required before `RELAY_ENABLED` can work | No | `false` |
-| `SHUTDOWN_GRACE_SECONDS` | Time the orchestrator and memory service drain in-flight turns before exiting | No | image default |
-| `ORCHESTRATOR_RELOAD` | Reload the orchestrator on source changes; development only | No | off |
+| `INSTALL_RELAY` | Build argument that installs the Relay dependency into the chain-server image; required before `RELAY_ENABLED` can work | No | `false` |
+| `SHUTDOWN_GRACE_SECONDS` | Time the chain server and memory service drain in-flight turns before exiting | No | image default |
+| `CHAIN_SERVER_RELOAD` | Reload the chain server on source changes; development only | No | off |
 | `HF_TOKEN` | Hugging Face token with access to the gated local checkpoints: the LLM and Llama 3.1 8B Instruct | Local only | - |
 | `HF_CACHE` | Hugging Face cache the locally deployed models download into | Local only | `~/.cache/huggingface` |
 | `LOCAL_LLM_HF_MODEL` | Checkpoint the local vLLM server loads | Local only | `nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026` |
@@ -641,7 +641,7 @@ set there; a unit test fails if the two differ, so change both together.
 
 ### Weather Tool
 
-The orchestrator ships a provider-neutral daily weather client and
+The chain server ships a provider-neutral daily weather client and
 `get_weather_forecast_tool`, with Visual Crossing as the first adapter. It is
 **off by default**: disabled, it is not registered at all, and startup, health
 checks, shopper turns, and offline tests make no provider request and need no
@@ -652,7 +652,7 @@ a place the shopper named within a 15-day horizon, and runs at most twice per
 turn. It has no FastAPI route and no UI of its own.
 
 The complete non-secret configuration is in
-`shared/configs/orchestrator/config.yaml`:
+`shared/configs/chain_server/config.yaml`:
 
 ```yaml
 weather:
@@ -668,7 +668,7 @@ weather:
 To turn it on, set `WEATHER_ENABLED=true` and supply `WEATHER_API_KEY` through
 an ignored `.env`, the process environment, or a secret manager. The config
 stores only the variable *name*, never the value, and enabling the client
-without that key fails closed. Compose passes both variables to `orchestrator`
+without that key fails closed. Compose passes both variables to `chain-server`
 alone — never to the catalog, memory, guardrail, UI, or local model services —
 and the local process runner enforces the same boundary.
 
@@ -726,7 +726,7 @@ request retry reopens the same durable turn only when it is still the latest
 conversation sequence, preserving the request ID used by cart idempotency while
 rotating its service-issued `attempt_id`. Older abandoned turns are superseded.
 A finalize must echo the current attempt token, so a late worker cannot overwrite
-a reopened attempt; the orchestrator replaces that stale result with a safe
+a reopened attempt; the chain server replaces that stale result with a safe
 superseded-attempt response. Other finalize outages preserve the grounded
 response and add `memory_finalize_error`. Operators must define transcript
 retention and backup policy. Deleting the `memory-data` volume deletes the
@@ -737,7 +737,7 @@ ordered event envelopes. Raw uploaded media, model reasoning, and the full graph
 message/tool transcript are not stored there. On finalization, ordered product
 cards are also stored as a `candidate_set_presented` event and folded into a
 compact product-reference projection. The deterministic resolver can recover a
-unique typed reference from those same-conversation events after a orchestrator
+unique typed reference from those same-conversation events after a chain-server
 restart or on another worker; zero or multiple matches require clarification.
 The projection keeps the newest complete candidate sets within a 16,384-
 character serialized cap, and the serving runtime permits at most one batched
@@ -753,12 +753,12 @@ behavior. Each graph thread is keyed by a collision-safe pair of conversation
 ID and request ID and holds only one request's working Deep Agents state. The runtime deletes it after the
 durable turn finalizes successfully. A finalize failure preserves that request's
 checkpoint for diagnosis or retry instead of discarding the incomplete attempt.
-Checkpoints still disappear when the orchestrator process restarts and are not
+Checkpoints still disappear when the chain-server process restarts and are not
 shared across replicas, but they are no longer the source of shopper memory or
 product-reference authorization.
 
 `memory` is currently the only accepted value; an empty or different value
-fails during orchestrator initialization instead of silently falling back to
+fails during chain-server initialization instead of silently falling back to
 process-local state. The durable memory-service turn record, not the graph
 checkpoint, supplies cross-turn continuity. A shared graph backend is therefore
 not required for this request-scoped design; durability and scale are those of
@@ -767,17 +767,17 @@ the memory service ([Scale Out](#scale-out)).
 ### Store Policy Content
 
 Operator-managed policy content lives in
-`shared/configs/orchestrator/store_policies.yaml`, under `SHARED_CONFIG_ROOT`
+`shared/configs/chain_server/store_policies.yaml`, under `SHARED_CONFIG_ROOT`
 at runtime. The bundled template is disabled. Replace every
 `[Operator placeholder]` title or body, then set `configured: true`; enabled
 content that retains the marker fails closed with `policy_load_failed`. Restart
-the orchestrator after changing the file because policy content is cached on
+the chain server after changing the file because policy content is cached on
 first use.
 
 ### Configuration File
 
-Orchestrator service behavior is configured in
-`shared/configs/orchestrator/config.yaml`. Model endpoints are configured
+Chain-server service behavior is configured in
+`shared/configs/chain_server/config.yaml`. Model endpoints are configured
 separately; see [Model Routing](#model-routing):
 
 ```yaml
@@ -799,7 +799,7 @@ guardrails_supported_modalities: [text, image]
 
 The active runtime gets available product filters from the catalog retriever
 after the catalog data is loaded. Do not maintain product categories in
-`shared/configs/orchestrator/config.yaml`.
+`shared/configs/chain_server/config.yaml`.
 
 The sidecar declares field types and uses; every value, range, coverage figure
 and taxonomy scope is discovered from the rows.
@@ -907,38 +907,38 @@ then rerun the two commands above.
 
 #### Model Sampling and Output Limits
 
-The orchestrator calls the app LLM in four places. Each call's temperature and
+The chain server calls the app LLM in four places. Each call's temperature and
 output token ceiling are set in one place, listed here:
 
 | Call | Temperature | Max output tokens |
 |------|-------------|-------------------|
-| Shopping agent: picks tools, writes the reply | `llm_temperature` in `shared/configs/orchestrator/config.yaml`, default `0.7`; `APP_LLM_TEMPERATURE` overrides | `llm_max_output_tokens` in the same file, default `1024`; `LLM_MAX_OUTPUT_TOKENS` overrides |
+| Shopping agent: picks tools, writes the reply | `llm_temperature` in `shared/configs/chain_server/config.yaml`, default `0.7`; `APP_LLM_TEMPERATURE` overrides | `llm_max_output_tokens` in the same file, default `1024`; `LLM_MAX_OUTPUT_TOKENS` overrides |
 | Grounding editor: rewrites the draft to match the tools' product data | Same client as the agent: `llm_temperature` | `grounding_editor_max_output_tokens` in the same file, default `1024`; `GROUNDING_EDITOR_MAX_OUTPUT_TOKENS` overrides |
-| Media perception: reads uploaded photos and videos | `0.6`, `_TEMPERATURE` in `orchestrator/src/media_perception.py` | `4096`, `_MAX_TOKENS` in the same file; change `_MAX_ANALYSIS_CHARS` (`16000`) with it, as it caps the analysis passed to the agent |
-| Vocabulary judge: matches shopper words to catalog values | `0`, in `orchestrator/src/vocabulary_judge.py` | `1200`, `_MAX_TOKENS` in the same file |
+| Media perception: reads uploaded photos and videos | `0.6`, `_TEMPERATURE` in `chain_server/src/media_perception.py` | `4096`, `_MAX_TOKENS` in the same file; change `_MAX_ANALYSIS_CHARS` (`16000`) with it, as it caps the analysis passed to the agent |
+| Vocabulary judge: matches shopper words to catalog values | `0`, in `chain_server/src/vocabulary_judge.py` | `1200`, `_MAX_TOKENS` in the same file |
 
 `APP_LLM_FREQUENCY_PENALTY` optionally adds a frequency penalty to the agent
 and grounding editor. It is off when unset.
 
 To change a default so it holds for every deployment and every way of running
-the orchestrator:
+the chain server:
 
 - **Agent and grounding editor:** edit `llm_temperature`,
   `llm_max_output_tokens` and `grounding_editor_max_output_tokens` in
-  `shared/configs/orchestrator/config.yaml`. It is the only place these
+  `shared/configs/chain_server/config.yaml`. It is the only place these
   defaults live. It is mounted into the container, so a restart of
-  `orchestrator` picks it up. `.env.example` and `docker-compose.yaml` only
+  `chain-server` picks it up. `.env.example` and `docker-compose.yaml` only
   pass the overrides through, empty by default.
 
 - **Media perception and the vocabulary judge:** these have no environment
   variable or config key. Edit the values in the files named above, then
-  rebuild the orchestrator with `docker compose up -d --build orchestrator`.
+  rebuild the chain server with `docker compose up -d --build chain-server`.
   Compose mounts only `shared/` into the container, so a code edit takes
   effect only after a rebuild.
 
 To change the agent's settings for one deployment only, set the environment
 variables in the env profile you source; they win over these defaults. Compose
-passes all four to `orchestrator`.
+passes all four to `chain-server`.
 
 A reply that reaches its token ceiling is cut off mid-sentence, with no error.
 Long answers, such as a detailed comparison of several products, can need more
@@ -959,7 +959,7 @@ for one deployment, as everywhere else here.
 
 ```bash
 # Check individual services
-curl http://localhost:8009/health  # Orchestrator
+curl http://localhost:8009/health  # Chain server
 curl http://localhost:8010/health  # Catalog retriever
 curl http://localhost:8011/health  # Memory retriever
 curl http://localhost:8012/health  # Guardrails
@@ -976,7 +976,7 @@ docker compose -f docker-compose.yaml logs -f
 docker compose -f docker-compose-model-local.yaml logs -f
 
 # View specific service logs
-docker compose -f docker-compose.yaml logs -f orchestrator
+docker compose -f docker-compose.yaml logs -f chain-server
 ```
 
 ## 🛠️ Troubleshooting
@@ -1051,7 +1051,7 @@ nvidia-smi -l 1
 # Monitor system resources
 htop
 
-# Bound per-turn work in shared/configs/orchestrator/config.yaml:
+# Bound per-turn work in shared/configs/chain_server/config.yaml:
 #   deepagents_recursion_limit         graph steps per turn
 #   max_catalog_searches_per_turn      distinct catalog search scopes per turn
 #   max_product_detail_reads_per_turn  product-detail reads per turn
@@ -1082,7 +1082,7 @@ build.nvidia.com key.
 ```bash
 # Set a build.nvidia.com key for the guard models, then recreate the services
 export RAIL_API_KEY="..."
-docker compose -f docker-compose.yaml up -d --force-recreate rails orchestrator
+docker compose -f docker-compose.yaml up -d --force-recreate rails chain-server
 
 # Or, until you have one, make guardrails off by default
 export GUARDRAILS_ENABLED=false
@@ -1109,7 +1109,7 @@ docker compose -f docker-compose.yaml logs -f
 
 ```bash
 # Restart specific service
-docker compose -f docker-compose.yaml restart orchestrator
+docker compose -f docker-compose.yaml restart chain-server
 
 # Restart all services
 docker compose -f docker-compose.yaml restart

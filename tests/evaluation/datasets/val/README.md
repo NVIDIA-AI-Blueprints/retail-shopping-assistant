@@ -34,7 +34,7 @@ Forty-five scenarios -- twenty journeys and twenty-five probes, 231 turns --
 take roughly two hours one at a time, or about forty minutes with `--parallel`.
 A single journey is four to ten minutes.
 
-Needs the stack up (orchestrator on 8009, memory on 8011) and
+Needs the stack up (chain server on 8009, memory on 8011) and
 `EXPOSE_AGENT_DIAGNOSTICS=true` for the `tools_used` assertions.
 
 Results land in `tests/evaluation/results/val/<label>/`, which is gitignored:

@@ -27,7 +27,7 @@ Traces go to an OpenTelemetry collector, and the collector decides where they
 land. The app never names a backend.
 
 ```
-orchestrator ──┬── our turn span ─────────────┐
+chain-server ──┬── our turn span ─────────────┐
                ├── openinference-langchain ───┼── otel-collector ── Phoenix
                └── NeMo Relay (optional) ─────┘        :4318          :6006
 ```
@@ -49,7 +49,7 @@ export OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318"
 ```bash
 source .env
 docker compose up -d otel-collector phoenix
-docker compose up -d orchestrator
+docker compose up -d chain-server
 
 open http://localhost:6006
 ```
@@ -63,8 +63,8 @@ NeMo Relay is separate and optional; see [Adding NeMo Relay](#adding-nemo-relay)
 | Variable | Default | Meaning |
 |---|---|---|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | Collector address. Unset means no tracing at all. |
-| `OTEL_SERVICE_NAME` | `orchestrator` | Service name on every span. |
-| `RELAY_ENABLED` | off (`relay_enabled` in `orchestrator/src/config.py`); `.env.example` turns it on for development | Also emit NeMo Relay's events. |
+| `OTEL_SERVICE_NAME` | `chain-server` | Service name on every span. |
+| `RELAY_ENABLED` | off (`relay_enabled` in `chain_server/src/config.py`); `.env.example` turns it on for development | Also emit NeMo Relay's events. |
 | `INSTALL_RELAY` | `true` in `.env.example`, `false` in compose | **Build arg.** Whether the image contains `nemo-relay`. |
 | `RELAY_OTLP_ENDPOINT` | `http://127.0.0.1:4318` in compose; otherwise `OTEL_EXPORTER_OTLP_ENDPOINT` | Where Relay sends. Plain HTTP must be loopback; see [Why Relay sends to localhost](#why-relay-sends-to-localhost). |
 
@@ -432,8 +432,8 @@ it:
 
 ```bash
 source .env
-docker compose build orchestrator
-docker compose up -d orchestrator
+docker compose build chain-server
+docker compose up -d chain-server
 ```
 
 ### How Relay attaches, and why the runtime guards that seam
@@ -508,10 +508,10 @@ export RELAY_ENABLED=true
 
 ```bash
 source .env
-docker compose build orchestrator                     # INSTALL_RELAY is read here
-docker compose up -d orchestrator relay-collector     # RELAY_ENABLED is read here
+docker compose build chain-server                     # INSTALL_RELAY is read here
+docker compose up -d chain-server relay-collector     # RELAY_ENABLED is read here
 
-docker logs orchestrator | grep -i relay
+docker logs chain-server | grep -i relay
 # → Relay tracing enabled, exporting to http://127.0.0.1:4318
 ```
 
@@ -523,10 +523,10 @@ Inside compose, `otel-collector` is another container, so Relay would refuse it
 and log `Could not configure Relay tracing: RuntimeError`.
 
 `relay-collector` is the loopback collector Relay's migration guide asks for. It
-shares `orchestrator`'s network namespace, listens on `127.0.0.1:4318` there,
+shares `chain-server`'s network namespace, listens on `127.0.0.1:4318` there,
 and forwards unchanged to `otel-collector`, which still decides where traces
 land. The app's own exporter keeps sending to `otel-collector` directly.
-Because it lives in `orchestrator`'s namespace, recreating `orchestrator`
+Because it lives in `chain-server`'s namespace, recreating `chain-server`
 orphans it: bring both up together. For production, point
 `RELAY_OTLP_ENDPOINT` at an HTTPS collector instead.
 
@@ -559,7 +559,7 @@ Traces appearing does not confirm Relay is running: the LangChain
 instrumentation produces them on its own, so Relay being inactive looks the
 same as Relay working until you count its spans.
 
-**1. It started.** `docker logs orchestrator | grep -i relay`
+**1. It started.** `docker logs chain-server | grep -i relay`
 
 | What you see | What it means |
 |---|---|
@@ -602,7 +602,7 @@ off-path; a consistent multi-second penalty is a bug.
 **4. The agent is unchanged.**
 
 ```bash
-python3 -m pytest tests/unit/orchestrator/test_deepagents_observability.py -k Relay -q
+python3 -m pytest tests/unit/chain_server/test_deepagents_observability.py -k Relay -q
 RELAY_ENABLED=true python3 -m tests.evaluation.src.replay --label relay-on --only J13
 ```
 

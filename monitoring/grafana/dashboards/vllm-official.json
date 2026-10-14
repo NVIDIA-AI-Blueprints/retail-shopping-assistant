@@ -1875,7 +1875,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Percent of ONE core, so 250 means two and a half cores. This is how a ceiling gets attributed: if throughput stops rising while every service sits low, the model is the limit and more application replicas buy nothing. If a service is pinned near 100, that service is the limit and replicating it is the fix. Watch orchestrator and milvus first.",
+      "description": "Percent of ONE core, so 250 means two and a half cores. This is how a ceiling gets attributed: if throughput stops rising while every service sits low, the model is the limit and more application replicas buy nothing. If a service is pinned near 100, that service is the limit and replicating it is the fix. Watch chain-server and milvus first.",
       "fieldConfig": {
         "defaults": {
           "color": {

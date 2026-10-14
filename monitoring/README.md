@@ -58,7 +58,7 @@ deleting the volumes loses only Prometheus history.
 | `dcgm` | `dcgm-exporter` | GPU utilisation, memory, temperature, power |
 | `containers` | `docker_stats_exporter.py` | per-container CPU and memory |
 
-The third exists because a run limited by Milvus, the orchestrator or the
+The third exists because a run limited by Milvus, the chain server or the
 retriever is otherwise indistinguishable from one limited by the GPUs, and
 those call for opposite responses.
 

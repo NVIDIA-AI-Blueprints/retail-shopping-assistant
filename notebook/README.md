@@ -37,7 +37,7 @@ for Notebook 5 and samples the serving GPUs with `nvidia-smi`, with the
 standard library only. The notebooks keep the code
 that teaches in their own cells.
 Service addresses default to `localhost`. Override one with an environment
-variable of the same name (`ORCHESTRATOR`, `CATALOG`, `MEMORY`, `PHOENIX`) to
+variable of the same name (`CHAIN_SERVER`, `CATALOG`, `MEMORY`, `PHOENIX`) to
 use a remote deployment.
 
 ## Going further

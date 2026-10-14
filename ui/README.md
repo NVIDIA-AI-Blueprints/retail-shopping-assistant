@@ -68,7 +68,7 @@ src/
 
 ### Available Scripts
 
-- `npm start` - Start the Vite dev server on port 3000, proxying `/api` to `ORCHESTRATOR_URL` (default `http://localhost:8009`)
+- `npm start` - Start the Vite dev server on port 3000, proxying `/api` to `CHAIN_SERVER_URL` (default `http://localhost:8009`)
 - `npm run build` - Build for production
 - `npm test` - Run tests (Vitest)
 - `npm run preview` - Serve the production build locally

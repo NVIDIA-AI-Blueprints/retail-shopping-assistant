@@ -6,7 +6,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-const ORCHESTRATOR = process.env.ORCHESTRATOR_URL || "http://localhost:8009";
+const CHAIN_SERVER = process.env.CHAIN_SERVER_URL || "http://localhost:8009";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -17,10 +17,10 @@ export default defineConfig({
     proxy: {
       // The UI calls the relative `/api` it uses behind nginx, so one forwarded
       // port serves both the page and the API. `VITE_API_BASE_URL` set to an
-      // absolute orchestrator URL is resolved by the browser instead, and
+      // absolute chain-server URL is resolved by the browser instead, and
       // fails whenever the browser is not on the machine running the services.
       "/api": {
-        target: ORCHESTRATOR,
+        target: CHAIN_SERVER,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
         configure: (proxy) => {

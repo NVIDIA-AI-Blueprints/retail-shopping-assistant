@@ -23,6 +23,7 @@ from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RUN_DIR = REPO_ROOT / ".local-run"
 PID_DIR = RUN_DIR / "pids"
@@ -64,19 +65,19 @@ PYTHON_SERVICES = {
         "health_url": "http://localhost:8010/health",
         "pythonpath": [REPO_ROOT / "catalog_retriever"],
     },
-    "orchestrator": {
-        "service_dir": REPO_ROOT / "orchestrator",
-        "requirements": REPO_ROOT / "orchestrator" / "requirements.txt",
+    "chain-server": {
+        "service_dir": REPO_ROOT / "chain_server",
+        "requirements": REPO_ROOT / "chain_server" / "requirements.txt",
         "module": "src.main:app",
         "port": 8009,
         "health_url": "http://localhost:8009/health",
-        "pythonpath": [REPO_ROOT / "orchestrator"],
+        "pythonpath": [REPO_ROOT / "chain_server"],
     },
 }
 
 UI_SERVICE = "ui"
 ALL_LOCAL_SERVICES = (*PYTHON_SERVICES.keys(), UI_SERVICE)
-ORCHESTRATOR_ONLY_ENV_KEYS = frozenset(
+CHAIN_SERVER_ONLY_ENV_KEYS = frozenset(
     {
         "WEATHER_ENABLED",
         "WEATHER_API_KEY",
@@ -295,11 +296,11 @@ def scope_service_env(
     service: str,
     environment: Mapping[str, str],
 ) -> dict[str, str]:
-    """Keep orchestrator-only credentials out of sibling local processes."""
+    """Keep chain-server-only credentials out of sibling local processes."""
 
     scoped = dict(environment)
-    if service != "orchestrator":
-        for key in ORCHESTRATOR_ONLY_ENV_KEYS:
+    if service != "chain-server":
+        for key in CHAIN_SERVER_ONLY_ENV_KEYS:
             scoped.pop(key, None)
     return scoped
 
@@ -550,7 +551,7 @@ def start_ui(*, skip_install: bool) -> None:
         ensure_ui_deps()
     env = scope_service_env(UI_SERVICE, os.environ)
     env["PORT"] = "3000"
-    # Relative, and proxied to the orchestrator by ui/vite.config.ts. An
+    # Relative, and proxied to the chain server by ui/vite.config.ts. An
     # absolute http://localhost:8009 is resolved by the *browser*, so it only
     # works when the browser shares a machine with the services: reaching the
     # app through a forwarded port forwards 3000 and not 8009, and every
@@ -579,9 +580,9 @@ def start(args: argparse.Namespace) -> None:
     if not wait_http("catalog-retriever", "http://localhost:8010/health", args.catalog_timeout):
         raise SystemExit(f"catalog-retriever did not become healthy.\n{last_log_lines('catalog-retriever')}")
 
-    start_python_service("orchestrator", PYTHON_SERVICES["orchestrator"], skip_install=args.skip_install)
-    if not wait_http("orchestrator", "http://localhost:8009/health", 60):
-        raise SystemExit(f"orchestrator did not become healthy.\n{last_log_lines('orchestrator')}")
+    start_python_service("chain-server", PYTHON_SERVICES["chain-server"], skip_install=args.skip_install)
+    if not wait_http("chain-server", "http://localhost:8009/health", 60):
+        raise SystemExit(f"chain-server did not become healthy.\n{last_log_lines('chain-server')}")
 
     start_ui(skip_install=args.skip_install)
     if not wait_http(UI_SERVICE, "http://localhost:3000", 90):

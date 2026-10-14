@@ -8,7 +8,7 @@
 
 - [Catalog Indexer](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/catalog_retriever) (NVIDIA Proprietary)
 - [Catalog Retriever](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/catalog_retriever) (NVIDIA Proprietary)
-- [Orchestrator](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/orchestrator) (NVIDIA Proprietary)
+- [Chain Server](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/chain_server) (NVIDIA Proprietary)
 - [Guardrails Service](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/guardrails) (NVIDIA Proprietary)
 - [Memory Retriever](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/memory_retriever) (NVIDIA Proprietary)
 - [shopping-frontend](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/ui) (NVIDIA Proprietary)

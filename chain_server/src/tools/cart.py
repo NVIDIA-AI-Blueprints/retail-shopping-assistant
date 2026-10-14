@@ -1,0 +1,835 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Tools that read and change the shopper's cart."""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel, Field, ValidationError, field_validator
+from shared.commerce_contracts import (
+    AddCartItemInput,
+    GetProductDetailsInput,
+    ProductSummary,
+    RemoveCartItemInput,
+    UpdateCartItemInput,
+)
+
+from ..agenttypes import Cart, State
+from ..cart_format import (
+    _format_cart,
+    _format_cart_add_result,
+    _format_cart_remove_result,
+    _format_cart_total,
+    _format_size_change_result,
+    _format_update_cart_result,
+)
+from ..cart_references import (
+    AddCartItemsToolItemInput,
+    _cart_add_scope_failures,
+    _cart_line_by_id,
+    _cart_product_choice_note,
+    _cart_resize_issue,
+    _cart_size_issue,
+    _identified_in_the_current_showing,
+    _most_recently_shown,
+    _normalize_cart_add_tool_items,
+    _one_size_note,
+    _shopper_words_this_conversation,
+)
+from ..commerce_tools import (
+    add_cart_item,
+    get_product_details,
+    remove_cart_item,
+    update_cart_item,
+)
+from ..conversation_products import ConversationProductsError, ProductReferenceDescriptor
+from ..product_records import _product_detail_failure_message, _same_product_display_name
+from ..runtime.control_signals import EFFECTS_KEY, committed_effect, normalize_tool_result
+from ..runtime.identity import RequestIdentity
+from ..runtime.turn_scope import TurnScope
+from .schemas import _a_list_written_as_json_text
+
+if TYPE_CHECKING:
+    from ..runtime.runtime import DeepAgentsRuntime
+
+
+# What the cart tools do, once the turn has resolved what they act on.
+#
+# Adding, removing, resizing and re-quantifying cart lines. These ran as
+# closures inside `_create_agent`, which is how a single function reached 1,575
+# lines; the turn context they closed over -- the runtime, the turn's state, who
+# is asking, and the scope collecting what the turn did -- is now passed in.
+#
+# Nothing about what they do has changed.
+
+logger = logging.getLogger(__name__)
+
+
+def _size_key(size: Any) -> str:
+    value = str(size or "").strip().lower()
+    return "" if value == "onesize" else value
+
+
+def _lines_of(cart: Cart, product_id: str) -> list[dict[str, Any]]:
+    return [
+        line
+        for line in cart.contents or []
+        if str(line.get("product_id") or "") == product_id
+    ]
+
+
+def _already_held(product: ProductSummary, size: Any, line: dict[str, Any]) -> str:
+    """An add of a line the cart already holds, answered without writing.
+
+    "Size 2" after the dress went in as a 2 confirms that line, and writing
+    it again gave the shopper two. More of a line is a quantity, which the
+    update tool sets, so that route stays open and says so.
+    """
+
+    return (
+        f"- {product.display_name}"
+        + (f", size {size}" if size else "")
+        + f": already in the cart (CART_LINE_ID {line.get('cart_line_id')}, "
+        f"qty {line.get('amount')}), so it was not added again. If the "
+        "shopper asked for more of it, set the new total with "
+        "update_cart_items_tool on that line; otherwise tell them it is "
+        "already in their cart."
+    )
+
+
+def _another_size_held(
+    product: ProductSummary, size: Any, others: list[dict[str, Any]]
+) -> str:
+    """A second size added beside one the cart held, with the way back.
+
+    "Add it in a 4 as well" and "make those a 7" both arrive here as an add.
+    Which one the shopper said is the model's to read, so the add stands and
+    the old line is named for the case where it should go.
+    """
+
+    held = ", ".join(
+        f"size {line.get('size')} (CART_LINE_ID {line.get('cart_line_id')})"
+        for line in others
+    )
+    return (
+        f"- {product.display_name}: the cart already held {held}, and now "
+        f"also holds size {size}. If the shopper asked for size {size} as "
+        "well, that is done. If they asked to change the size, remove the "
+        "old line with remove_cart_item_tool now, so they do not pay for "
+        "both."
+    )
+
+
+def add_items_to_the_cart(
+    runtime: DeepAgentsRuntime,
+    state: State,
+    identity: RequestIdentity,
+    scope: TurnScope,
+    items: list[AddCartItemsToolItemInput],
+):
+    """Add products to the cart. Use ONLY on explicit shopper intent to
+    add, buy, or put items in the cart. Requires PRODUCT_REF values from
+    current-turn search or historical-product resolution — not names.
+    Call once with every item the shopper asked to add, not once
+    per item. "All items" means the ones they asked for, not
+    everything in play this turn: "add the black one in a 2 and
+    show me a clutch to go with it" adds the dress and shows the
+    clutch. A product the shopper asked to see is not an item.
+    """
+
+    try:
+        requested_items = _normalize_cart_add_tool_items(items)
+        choices_from_a_description: list[str] = []
+    except ValueError as exc:
+        return f"Cart add failed: {exc}"
+    if not requested_items:
+        return "Cart add failed: provide at least one PRODUCT_REF to add."
+
+    #: Refs whose lookup broke rather than came back empty. A reference
+    #: that cannot be read is a fault in this service, and the answer it
+    #: earns is not the one a reference nobody was ever shown earns.
+    lookup_failures: list[str] = []
+
+    def _resolve_from_conversation_index(product_ref: str):
+        """Look one ref up in the conversation's durable product index."""
+
+        descriptors = [
+            ProductReferenceDescriptor(
+                reference_id="cart-add",
+                product_ref=product_ref,
+            )
+        ]
+        try:
+            result = runtime._conversation_products.resolve(
+                identity.conversation_id,
+                descriptors,
+            )
+        except (ConversationProductsError, ValidationError) as exc:
+            # A failed lookup is not the same fact as a product never
+            # shown, so record it as a failure; returning bare `None` would
+            # be read upstream as "no such reference".
+            logger.error(
+                "chain-server | cart add | the conversation record could "
+                "not be read for PRODUCT_REF %s: %s",
+                product_ref,
+                exc,
+            )
+            lookup_failures.append(product_ref)
+            return None
+        scope.product_evidence.add_resolutions(result.results, descriptors)
+        state.system_identified_products = list(
+            scope.product_evidence.system_identified()
+        )
+        return scope.product_evidence.get(product_ref)
+
+    resolved: list[tuple[str, ProductSummary, int]] = []
+    failed: list[str] = []
+    blocked: list[str] = []
+    already_held: list[str] = []
+    cart_before = runtime._read_cart(identity.cart_user_id)
+    for (product_ref, size), request in requested_items.items():
+        product = scope.product_evidence.get(product_ref)
+        if product is None:
+            # Evidence is rebuilt per turn, so fall back to the
+            # conversation's durable product index for refs shown in
+            # earlier turns. This is not a catalog search.
+            product = _resolve_from_conversation_index(product_ref)
+        if product is None and product_ref in lookup_failures:
+            # A service fault, not a missing product: do not send the
+            # model searching or asking the shopper, which cannot fix it.
+            failed.append(
+                f"- PRODUCT_REF '{product_ref}': this conversation's "
+                "record could not be read, which is a fault on our "
+                "side and not a missing product. Do not search for it "
+                "and do not ask the shopper to identify it again. Tell "
+                "them the cart could not be updated just now and that "
+                "they can try again."
+            )
+            continue
+        if product is None:
+            # The message must cover both cases that reach here: a name
+            # or never-shown ref (search the catalog) and a ref from an
+            # earlier turn, absent from per-turn evidence (resolve it).
+            failed.append(
+                f"- PRODUCT_REF '{product_ref}': not established in "
+                "this turn. If this product was shown earlier in the "
+                "conversation, resolve it first and add the PRODUCT_REF "
+                "that comes back -- evidence is per turn, so a "
+                "reference from an earlier turn has to be resolved "
+                "again. If it is a product name rather than a "
+                "reference, or was never shown at all, search the "
+                "catalog now and show the closest matches, then ask "
+                "which to add. Never add a product the shopper has not "
+                "been shown, and do not ask them for a catalogue name, "
+                "a link, or a price."
+            )
+            continue
+        expected_name = request.get("expected_display_name") or ""
+        if expected_name and not _same_product_display_name(
+            expected_name,
+            product.display_name,
+        ):
+            blocked.append(
+                f"- PRODUCT_REF '{product_ref}': expected "
+                f"'{expected_name}', but that ref resolves to "
+                f"'{product.display_name}'. Use the matching PRODUCT_REF "
+                "for the intended product before adding."
+            )
+            continue
+        active_detail = get_product_details(
+            GetProductDetailsInput(product_id=product.product_id),
+            runtime.config.retriever_port,
+            timeout_seconds=runtime.config.catalog_search_timeout_seconds,
+        )
+        if not active_detail.ok or active_detail.product is None:
+            failed.append(
+                f"- PRODUCT_REF '{product_ref}': "
+                + _product_detail_failure_message(
+                    active_detail.error,
+                    cart_validation=True,
+                )
+            )
+            continue
+        if not _same_product_display_name(
+            active_detail.product.display_name,
+            product.display_name,
+        ):
+            blocked.append(
+                f"- PRODUCT_REF '{product_ref}': That reference now "
+                "resolves to a different product. Search again and use "
+                "the new PRODUCT_REF before adding it."
+            )
+            continue
+        # The catalog must sell the size, and the shopper must have said
+        # it somewhere in the conversation; a size they never said is
+        # refused so one nobody picked cannot reach the cart.
+        size_issue = _cart_size_issue(
+            active_detail.product,
+            size,
+            _shopper_words_this_conversation(state),
+        )
+        if size_issue:
+            blocked.append(f"- PRODUCT_REF '{product_ref}': {size_issue}")
+            continue
+        one_size_note = _one_size_note(active_detail.product, size)
+        if one_size_note:
+            size = None
+        same_line = next(
+            (
+                line
+                for line in _lines_of(cart_before, active_detail.product.product_id)
+                if _size_key(line.get("size")) == _size_key(size)
+            ),
+            None,
+        )
+        if same_line is not None:
+            already_held.append(
+                _already_held(active_detail.product, size, same_line)
+            )
+            continue
+        if one_size_note:
+            choices_from_a_description.append(one_size_note)
+        # Disclosed, not refused: a wrong line is one click away on
+        # screen, while a refusal costs a turn whenever it misjudges.
+        choice_note = _cart_product_choice_note(
+            active_detail.product,
+            _shopper_words_this_conversation(state),
+            scope.product_evidence,
+            _most_recently_shown(state),
+            _identified_in_the_current_showing(state),
+            size,
+        )
+        if choice_note:
+            choices_from_a_description.append(
+                f"- {active_detail.product.display_name}: {choice_note}"
+            )
+        resolved.append(
+            (
+                product_ref,
+                active_detail.product,
+                int(request["quantity"]),
+                size,
+            )
+        )
+
+    scope_failures = _cart_add_scope_failures(
+        state.query,
+        [(product_ref, product) for product_ref, product, _, _ in resolved],
+        scope.product_evidence.values(),
+    )
+    blocked.extend(message for _ref, message in scope_failures)
+    out_of_scope = {ref for ref, _message in scope_failures}
+    if blocked:
+        state.cart = runtime._read_cart(identity.cart_user_id)
+        runtime._append_product_images(
+            scope.retrieved,
+            state.cart,
+            scope.product_evidence.values(),
+        )
+        # The add is all or nothing, but established items travel with
+        # the refusal so only the open question is asked. Out-of-scope
+        # items are not listed as settled.
+        ready = [
+            f"- {product.display_name}"
+            + (f", size {size}" if size else "")
+            + f", qty {quantity}"
+            for ref, product, quantity, size in resolved
+            if ref not in out_of_scope
+        ]
+        rendered = _format_cart_add_result([], failed + blocked, state.cart, ready)
+        if already_held:
+            rendered += "\n\n" + "\n".join(already_held)
+        return rendered
+
+    added: list[str] = []
+    committed: list[dict[str, Any]] = []
+    other_sizes: list[str] = []
+    for product_ref, product, quantity, size in resolved:
+        result = add_cart_item(
+            AddCartItemInput(
+                user_id=str(identity.cart_user_id),
+                product_id=product.product_id,
+                display_name=product.display_name,
+                quantity=quantity,
+                size=size,
+                unit_price=product.price,
+                image_url=product.image_url,
+                # Size is part of the key: adding a 6 and an 8 in one
+                # turn are two mutations, not a retry of one.
+                idempotency_key=(
+                    f"{identity.request_id}:add:{product.product_id}"
+                    f":{size or 'onesize'}:{quantity}"
+                ),
+            ),
+            runtime.config.memory_port,
+        )
+        if result.ok:
+            committed.append(
+                {
+                    "operation": "added to cart",
+                    "idempotency_key": (
+                        f"{identity.request_id}:add:"
+                        f"{product.product_id}:{quantity}"
+                    ),
+                    "product_id": product.display_name,
+                    "quantity": quantity,
+                }
+            )
+            # Report the size with the line: visibility on this turn is
+            # the safeguard against a size the shopper did not choose.
+            added.append(
+                f"- {quantity} x {product.display_name}"
+                + (f", size {size}" if size else "")
+                + f" (PRODUCT_REF: {product.product_id})"
+            )
+            others = [
+                line
+                for line in _lines_of(cart_before, product.product_id)
+                if _size_key(line.get("size")) != _size_key(size)
+            ]
+            if size and others:
+                other_sizes.append(_another_size_held(product, size, others))
+        else:
+            message = (
+                result.error.message if result.error else "Cart add failed."
+            )
+            failed.append(f"- PRODUCT_REF '{product_ref}': {message}")
+
+    state.cart = runtime._read_cart(identity.cart_user_id)
+    runtime._append_product_images(
+        scope.retrieved,
+        state.cart,
+        scope.product_evidence.values(),
+    )
+    rendered = _format_cart_add_result(added, failed, state.cart)
+    if choices_from_a_description:
+        rendered += "\n\n" + "\n".join(choices_from_a_description)
+    if already_held:
+        rendered += "\n\n" + "\n".join(already_held)
+    if other_sizes:
+        rendered += "\n\n" + "\n".join(other_sizes)
+    if not committed:
+        return rendered
+    return rendered, {EFFECTS_KEY: committed}
+# Not a tool. `remove_cart_item_tool` calls this directly, and a
+# decorated function is a StructuredTool, which is not callable. Its
+# sibling `_add_cart_items_impl` is undecorated for the same reason.
+def remove_a_cart_line(
+    runtime: DeepAgentsRuntime,
+    state: State,
+    identity: RequestIdentity,
+    scope: TurnScope,
+    cart_line_id: str,
+    quantity: int=1,
+):
+    """Remove a cart line. Use ONLY on explicit shopper intent to remove
+    an item. Requires CART_LINE_ID from get_cart_tool — do not guess.
+    Use update_cart_items_tool to change quantity instead of removing
+    and re-adding.
+    """
+
+    quantity = max(1, int(quantity or 1))
+    cart = runtime._read_cart(identity.cart_user_id)
+    line = _cart_line_by_id(cart_line_id, cart)
+    if line is None:
+        return f"No cart line with CART_LINE_ID '{cart_line_id}' could be found."
+    result = remove_cart_item(
+        RemoveCartItemInput(
+            user_id=str(identity.cart_user_id),
+            cart_line_id=line["cart_line_id"],
+            product_id=line.get("product_id"),
+            display_name=line["item"],
+            quantity=quantity,
+            idempotency_key=f"{identity.request_id}:remove:{line['cart_line_id']}:{quantity}",
+        ),
+        runtime.config.memory_port,
+    )
+    state.cart = runtime._read_cart(identity.cart_user_id)
+    runtime._append_product_images(
+        scope.retrieved,
+        state.cart,
+        scope.product_evidence.values(),
+    )
+    rendered = _format_cart_remove_result(
+        result,
+        fallback=f"Removed {quantity} {line['item']} from cart.",
+    )
+    if not result.ok:
+        return rendered
+    return committed_effect(
+        rendered,
+        operation="removed from cart",
+        idempotency_key=(
+            f"{identity.request_id}:remove:{line['cart_line_id']}:{quantity}"
+        ),
+        cart_line_id=line["cart_line_id"],
+        product_id=line["item"],
+        quantity=quantity,
+    )
+def change_a_line_size(
+    runtime: DeepAgentsRuntime,
+    state: State,
+    identity: RequestIdentity,
+    scope: TurnScope,
+    cart_line_id: str,
+    quantity: int,
+    size: str,
+):
+    """Move a cart line to another size, in the call that asked for it.
+
+    A size is a separate cart line rather than a property of one, and
+    the cart has no operation that changes it, so the change is an add
+    followed by a remove -- in that order, because a failure between
+    the two must leave the shopper an extra line rather than nothing.
+
+    Nothing in that sequence needs the model. It has already said
+    everything there is to say -- this line, that size, that many --
+    and the rest is bookkeeping this code does without asking, then
+    reports the cart it actually left behind.
+    """
+
+    line = _cart_line_by_id(cart_line_id, state.cart)
+    if line is None:
+        return (
+            "CART_UPDATE_REFUSED: no line with CART_LINE_ID "
+            f"'{cart_line_id}' is in this cart. Call get_cart_tool and "
+            "use a CART_LINE_ID it reports. Nothing was changed."
+        )
+
+    held = str(line.get("size") or "").strip()
+    if held and size.casefold() == held.casefold():
+        # Same size as held, so treat it as a quantity change; the add
+        # below would create a second line on the same size.
+        return update_a_cart_line(runtime, state, identity, scope, cart_line_id, quantity)
+    if quantity == 0:
+        return (
+            "CART_UPDATE_REFUSED: quantity 0 and a new size contradict "
+            "each other -- one deletes the line, the other replaces it. "
+            "Send the quantity the shopper is keeping to change the "
+            "size, or use remove_cart_item_tool to remove the line. "
+            "Nothing was changed."
+        )
+
+    product_id = str(line.get("product_id") or "")
+    detail = get_product_details(
+        GetProductDetailsInput(product_id=product_id),
+        runtime.config.retriever_port,
+        timeout_seconds=runtime.config.catalog_search_timeout_seconds,
+    )
+    if not detail.ok or detail.product is None:
+        return "CART_UPDATE_FAILED: " + _product_detail_failure_message(
+            detail.error,
+            cart_validation=True,
+        )
+    # Check the catalog sells the new size, as the add path does, so a
+    # resize cannot seat a size the add would refuse.
+    size_issue = _cart_resize_issue(detail.product, size)
+    if size_issue:
+        return f"CART_UPDATE_REFUSED: {size_issue}"
+
+    product = detail.product
+    add = add_cart_item(
+        AddCartItemInput(
+            user_id=str(identity.cart_user_id),
+            product_id=product_id,
+            display_name=product.display_name,
+            quantity=quantity,
+            size=size,
+            unit_price=product.price,
+            image_url=product.image_url,
+            idempotency_key=(
+                f"{identity.request_id}:resize:add:{product_id}"
+                f":{size}:{quantity}"
+            ),
+        ),
+        runtime.config.memory_port,
+    )
+    if not add.ok:
+        # Adding first is what makes this failure safe: the line the
+        # shopper has is untouched, so there is nothing half-done to
+        # explain and nothing lost.
+        message = add.error.message if add.error else "Cart add failed."
+        return (
+            f"CART_UPDATE_FAILED: {message} The cart still holds "
+            f"{product.display_name} in size {held or 'onesize'}, and "
+            "nothing was removed."
+        )
+
+    remove = remove_cart_item(
+        RemoveCartItemInput(
+            user_id=str(identity.cart_user_id),
+            cart_line_id=cart_line_id,
+            quantity=int(line.get("amount") or 1),
+            product_id=product_id,
+            display_name=product.display_name,
+            idempotency_key=(
+                f"{identity.request_id}:resize:remove:{cart_line_id}"
+            ),
+        ),
+        runtime.config.memory_port,
+    )
+
+    state.cart = runtime._read_cart(identity.cart_user_id)
+    runtime._append_product_images(
+        scope.retrieved,
+        state.cart,
+        scope.product_evidence.values(),
+    )
+    # Two mutations, recorded as two. A turn that dies after this still
+    # has to be able to say what the cart holds, and on the unhappy
+    # path what it holds is both sizes.
+    committed: list[dict[str, Any]] = [
+        {
+            "operation": "added to cart",
+            "idempotency_key": (
+                f"{identity.request_id}:resize:add:{product_id}"
+                f":{size}:{quantity}"
+            ),
+            "product_id": product.display_name,
+            "quantity": quantity,
+        }
+    ]
+    if remove.ok:
+        committed.append(
+            {
+                "operation": "removed from cart",
+                "idempotency_key": (
+                    f"{identity.request_id}:resize:remove:{cart_line_id}"
+                ),
+                "cart_line_id": cart_line_id,
+                "product_id": product.display_name,
+            }
+        )
+    rendered = _format_size_change_result(
+        display_name=product.display_name,
+        from_size=held,
+        to_size=size,
+        quantity=quantity,
+        cart=state.cart,
+        old_line_removed=remove.ok,
+        old_line_id=cart_line_id,
+    )
+    return rendered, {EFFECTS_KEY: committed}
+def update_a_cart_line(
+    runtime: DeepAgentsRuntime,
+    state: State,
+    identity: RequestIdentity,
+    scope: TurnScope,
+    cart_line_id: str,
+    quantity: int,
+    size: str | None=None,
+):
+    """Change the quantity or the size of an item already in the cart.
+    Use ONLY when the shopper explicitly asks for the change. Do NOT
+    use for initial adds — use add_cart_items_tool. Do NOT guess the
+    CART_LINE_ID; call get_cart_tool first if you do not have one.
+    """
+
+    if size is not None and str(size).strip():
+        return change_a_line_size(runtime, state, identity, scope,
+            cart_line_id,
+            quantity,
+            str(size).strip(),
+        )
+
+    if quantity == 0:
+        # Deleting is a different intent from setting a quantity, and
+        # it has its own tool. A size change has its own route, above,
+        # so quantity 0 is never the way to correct a size.
+        return (
+            "CART_UPDATE_REFUSED: quantity 0 would delete this line, and "
+            "this tool sets quantities. If the shopper wants the line "
+            "gone, use remove_cart_item_tool. If they are changing a "
+            "SIZE, send the new size in `size` with the quantity to "
+            "keep, and this tool makes the change."
+        )
+
+    result = update_cart_item(
+        UpdateCartItemInput(
+            user_id=str(identity.cart_user_id),
+            cart_line_id=cart_line_id,
+            quantity=quantity,
+            idempotency_key=(
+                f"{identity.request_id}:update:{cart_line_id}:{quantity}"
+            ),
+        ),
+        runtime.config.memory_port,
+    )
+    state.cart = runtime._read_cart(identity.cart_user_id)
+    runtime._append_product_images(
+        scope.retrieved,
+        state.cart,
+        scope.product_evidence.values(),
+    )
+    rendered = _format_update_cart_result(result, state.cart)
+    if not result.ok:
+        return rendered
+    return committed_effect(
+        rendered,
+        operation="cart quantity updated",
+        idempotency_key=(
+            f"{identity.request_id}:update:{cart_line_id}:{quantity}"
+        ),
+        cart_line_id=cart_line_id,
+        quantity=quantity,
+    )
+
+
+class AddCartItemsToolInput(BaseModel):
+    _accept_items_as_text = field_validator("items", mode="before")(
+        _a_list_written_as_json_text
+    )
+
+    items: list[AddCartItemsToolItemInput] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "One or more products to add. Each must use a PRODUCT_REF "
+            "established by current-turn search or historical-product resolution."
+        ),
+    )
+
+
+class _UpdateCartItemsInput(BaseModel):
+    cart_line_id: str = Field(
+        description="CART_LINE_ID from get_cart_tool. Not the product name."
+    )
+    quantity: int = Field(
+        ge=0,
+        description=(
+            "Total quantity to end up with; with `size`, in the new size. "
+            "Removing a line is remove_cart_item_tool, not quantity 0."
+        ),
+    )
+    size: str | None = Field(
+        default=None,
+        description=(
+            "The size the shopper now wants for this line. Omit for a "
+            "quantity change. A size this product is not sold in is refused, "
+            "naming the ones it is."
+        ),
+    )
+
+    @field_validator("size", mode="before")
+    @classmethod
+    def _a_number_is_a_size_too(cls, value: Any) -> Any:
+        """Take a size written as a number, so the change can be reached.
+
+        This field is how "change it to a 7" is asked for, and a model that
+        sent `size: 7` rather than `size: "7"` never got that far -- pydantic
+        refused the call for the type, three times running, with a validation
+        error that says nothing about carts. It then gave up, sent the quantity
+        alone, and told the shopper it had updated a dress it had never been
+        asked about.
+
+        Sizes are "2" and "onesize" in this catalog, so a bare number is the
+        obvious slip. Coercing it costs nothing and delivers the guidance the
+        field was declared for.
+        """
+
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return str(int(value) if float(value).is_integer() else value)
+        return value
+
+
+def build_cart_tools(
+    runtime: DeepAgentsRuntime,
+    state: State,
+    identity: RequestIdentity,
+    scope: TurnScope,
+):
+    """Cart read, change and total tools for this shopper's cart."""
+
+    from langchain_core.tools import tool
+
+    @tool(return_direct=False)
+    def get_cart_tool() -> str:
+        """Read the current cart. Use before cart mutations to get
+        CART_LINE_ID values, or when the shopper asks what is in their cart.
+        Do NOT call again if the cart was already read this turn and no
+        mutation has occurred since.
+        """
+
+        cart = runtime._read_cart(identity.cart_user_id)
+        state.cart = cart
+        runtime._append_product_images(
+            scope.retrieved,
+            cart,
+            scope.product_evidence.values(),
+        )
+        return _format_cart(cart)
+
+    @tool(
+        args_schema=AddCartItemsToolInput,
+        return_direct=False,
+        response_format="content_and_artifact",
+    )
+    def add_cart_items_tool(items: list[AddCartItemsToolItemInput]):
+        """Add products to the cart. Use ONLY on explicit shopper intent to
+        add, buy, or put items in the cart. Requires PRODUCT_REF values from
+        current-turn search or historical-product resolution — not names.
+        Call once with every item the shopper asked to add, not once
+        per item. "All items" means the ones they asked for, not
+        everything in play this turn: "add the black one in a 2 and
+        show me a clutch to go with it" adds the dress and shows the
+        clutch. A product the shopper asked to see is not an item.
+        """
+
+        return normalize_tool_result(add_items_to_the_cart(runtime, state, identity, scope, items))
+
+    @tool(return_direct=False, response_format="content_and_artifact")
+    def remove_cart_item_tool(cart_line_id: str, quantity: int = 1):
+        """Remove a cart line. Use ONLY on explicit shopper intent to remove
+        an item. Requires CART_LINE_ID from get_cart_tool — do not guess.
+        Use update_cart_items_tool to change quantity instead of removing
+        and re-adding.
+        """
+
+        return normalize_tool_result(
+            remove_a_cart_line(runtime, state, identity, scope, cart_line_id, quantity)
+        )
+
+    @tool(
+        args_schema=_UpdateCartItemsInput,
+        return_direct=False,
+        response_format="content_and_artifact",
+    )
+    def update_cart_items_tool(
+        cart_line_id: str,
+        quantity: int,
+        size: str | None = None,
+    ):
+        """Change one cart line: its quantity, its size, or both. One call
+        moves the line, so never add a size and remove a line to change
+        one. Moving replaces: the line stops holding the size it held. A
+        size the shopper wants as well as that one is a second line, so
+        that is add_cart_items_tool and not this.
+        Requires CART_LINE_ID from get_cart_tool.
+        """
+
+        return normalize_tool_result(
+            update_a_cart_line(runtime, state, identity, scope, cart_line_id, quantity, size)
+        )
+
+    @tool(return_direct=False)
+    def view_cart_total_tool() -> str:
+        """Compute the cart subtotal. Use for budget checks or when the
+        shopper asks for the total. Does not include tax or shipping. Use
+        get_cart_tool for line contents.
+        """
+
+        cart = runtime._read_cart(identity.cart_user_id)
+        state.cart = cart
+        runtime._append_product_images(
+            scope.retrieved,
+            cart,
+            scope.product_evidence.values(),
+        )
+        return _format_cart_total(cart)
+
+    return get_cart_tool, add_cart_items_tool, remove_cart_item_tool, update_cart_items_tool, view_cart_total_tool

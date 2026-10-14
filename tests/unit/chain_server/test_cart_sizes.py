@@ -1,0 +1,705 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""A size is part of what the shopper chose, so it is part of the cart line.
+
+Turn 14 of the fifteen-turn script asked "what size should I add?" and then
+added nothing. The question was invented: no column, no field, nowhere for the
+answer to go. It sounded like retail, which is what made it convincing.
+
+The fix was not to stop asking -- a dress entering a cart with no size reads as
+a toy -- but to make the question real. These hold the parts that quietly go
+wrong once it is.
+"""
+
+from __future__ import annotations
+
+import pathlib
+from types import SimpleNamespace
+
+from chain_server.src.cart_references import (
+    _cart_size_issue,
+    _normalize_cart_add_tool_items,
+    _one_size_note,
+)
+
+
+def test_two_sizes_of_one_product_are_two_lines() -> None:
+    """Merging them would halve the order without saying so.
+
+    A 6 and an 8 of one dress are two things a shopper owns, not one line of
+    quantity two, so the normalizer keys on the size as well as the reference.
+    """
+
+    normalized = _normalize_cart_add_tool_items(
+        [
+            {"product_ref": "p1", "quantity": 1, "size": "6"},
+            {"product_ref": "p1", "quantity": 1, "size": "8"},
+        ]
+    )
+
+    assert set(normalized) == {("p1", "6"), ("p1", "8")}
+    assert [entry["quantity"] for entry in normalized.values()] == [1, 1]
+
+
+def test_the_same_size_twice_still_merges() -> None:
+    """Two of the same size is a quantity, and must not become two lines."""
+
+    normalized = _normalize_cart_add_tool_items(
+        [
+            {"product_ref": "p1", "quantity": 1, "size": "8"},
+            {"product_ref": "p1", "quantity": 2, "size": "8"},
+        ]
+    )
+
+    assert set(normalized) == {("p1", "8")}
+    assert normalized[("p1", "8")]["quantity"] == 3
+
+
+def test_one_size_goods_carry_no_size() -> None:
+    """A handbag has no size to record, and blank is not a size."""
+
+    normalized = _normalize_cart_add_tool_items(
+        [
+            {"product_ref": "bag", "quantity": 1},
+            {"product_ref": "bag2", "quantity": 1, "size": "   "},
+        ]
+    )
+
+    assert set(normalized) == {("bag", None), ("bag2", None)}
+    assert all(entry["size"] is None for entry in normalized.values())
+
+
+def test_the_size_reaches_the_cart_payload() -> None:
+    """The adapter must send it, or the answer is discarded at the last step --
+    which is exactly what happened before this existed."""
+
+    from shared.commerce_contracts import AddCartItemInput
+
+    request = AddCartItemInput(
+        user_id="1",
+        product_id="p1",
+        quantity=1,
+        idempotency_key="k",
+        size="8",
+    )
+
+    assert request.size == "8"
+    assert AddCartItemInput(
+        user_id="1", product_id="p1", quantity=1, idempotency_key="k"
+    ).size is None
+
+
+def test_the_size_survives_reading_the_cart_back() -> None:
+    """Recording it is not enough if the shopper never sees it.
+
+    Live, a dress went in as a size 8 and the cart read back as "The Office
+    A-line Dress — $179.99 (qty 1)" with no size anywhere: the column held it,
+    and every layer above dropped it.
+    """
+
+    from chain_server.src.commerce_tools import _cart_line_from_memory_item
+
+    line = _cart_line_from_memory_item(
+        {
+            "cart_line_id": "abc",
+            "product_id": "p1",
+            "item": "The Office A-line Dress",
+            "amount": 1,
+            "price": 179.99,
+            "size": "8",
+        }
+    )
+
+    assert line is not None
+    assert line.size == "8"
+
+    one_size = _cart_line_from_memory_item(
+        {"cart_line_id": "b", "product_id": "p2", "item": "A bag", "amount": 1}
+    )
+    assert one_size is not None and one_size.size is None
+
+
+def test_a_zero_result_search_is_told_to_relax_and_show() -> None:
+    """"No green dress in a 2" offered a numbered menu and showed nothing.
+
+    Two live runs answered with "would you prefer 1) a nearby size, 2) another
+    colour, 3) green apparel?" -- three things it could have searched for,
+    using none of the budget it had. A shopper asked to be shown dresses and
+    got a form to fill in.
+    """
+
+    from chain_server.src.catalog_format import _SEARCH_NO_MATCH_GROUNDING_NOTE
+
+    note = _SEARCH_NO_MATCH_GROUNDING_NOTE
+
+    assert "Drop one filter, search again" in note
+    assert "tell the shopper which one you dropped" in note
+    # A 4 is not an alternative to a 2. Live, one reply answered "no green
+    # dress in a 2" by listing green dresses starting at a 4 -- garments the
+    # shopper cannot wear, offered as though they helped.
+    assert "Never drop a size" in note
+    # "Only green dresses in a 2, don't upsell" was answered 1 in 3 by
+    # showing other things anyway.
+    assert "If the shopper asked for only this, drop nothing" in note
+    assert "Do not answer with a list of things you could search for" in note
+
+
+def test_a_relaxable_zero_result_is_not_told_to_stop_looking() -> None:
+    """Two rules in one message, and the blunter one won.
+
+    A zero-result search emitted both "search again with a filter relaxed" and
+    SEARCH_SCOPE_COMPLETE's "Answer now. Do not search ... merely because
+    search budget remains." Three live runs obeyed the second and answered
+    with a menu of things they could have searched for.
+
+    Scope-complete asserts the turn can be answered from what it has. With
+    nothing returned and two filters to choose between, that is simply untrue.
+    """
+
+    from chain_server.src import catalog_search as mod
+
+    source = pathlib.Path(mod.__file__).read_text()
+
+    assert "relaxable = bool(evidence.confirmed_filters)" in source
+    assert "if evidence.scope_complete and not relaxable:" in source
+
+
+class TestCartSizeGate:
+    """The cart tool decides on the size, rather than trusting the caller.
+
+    Every catalog product states its sizes -- 136 a real range, 79 `onesize`,
+    no gaps -- so this is a question the tool can answer from data. Left to
+    prose, it held three times in four: asked to add a dress with six sizes,
+    one run in four put it in the cart with no size at all.
+    """
+
+    def _product(self, sizes):
+        return SimpleNamespace(
+            display_name="The Office A-line Dress",
+            attributes={"sizes": sizes} if sizes is not None else {},
+        )
+
+    def test_a_sized_product_cannot_enter_the_cart_without_one(self) -> None:
+        issue = _cart_size_issue(self._product(["2", "4", "6"]), None)
+
+        assert "SIZE REQUIRED" in issue
+        assert "2, 4, 6" in issue
+        assert "Nothing was added" in issue
+
+    def test_a_size_the_product_is_not_sold_in_is_refused(self) -> None:
+        issue = _cart_size_issue(self._product(["2", "4", "6"]), "14")
+
+        assert "not sold" in issue
+        assert "2, 4, 6" in issue
+
+    def test_a_size_the_product_is_sold_in_passes(self) -> None:
+        assert _cart_size_issue(self._product(["2", "4", "6"]), "4") == ""
+
+    def test_size_matching_ignores_case(self) -> None:
+        assert _cart_size_issue(self._product(["S", "M", "L"]), "m") == ""
+
+    def test_a_onesize_product_needs_no_size(self) -> None:
+        """79 accessories are `onesize`; asking which size would be nonsense."""
+
+        assert _cart_size_issue(self._product(["onesize"]), None) == ""
+
+    def test_a_catalog_that_states_no_sizes_does_not_block_the_cart(self) -> None:
+        """Refusing here would block on missing data, not on a disagreement."""
+
+        assert _cart_size_issue(self._product(None), None) == ""
+        assert _cart_size_issue(self._product([]), None) == ""
+
+    def test_sizes_arriving_as_a_string_are_still_read(self) -> None:
+        """Search evidence renders them as "sizes: 2, 4, 6"."""
+
+        assert _cart_size_issue(self._product("2, 4, 6"), "4") == ""
+        assert "SIZE REQUIRED" in _cart_size_issue(self._product("2, 4, 6"), None)
+
+    def test_a_size_the_shopper_never_mentioned_is_not_theirs_to_add(self) -> None:
+        """Sending no size is not the only way to add one nobody picked.
+
+        Asked plainly to "add the Jade Suede Heels", the model read the range
+        off the product detail and sent the smallest, which the sold-here
+        check waves through -- so the shopper got a 5 they had never mentioned,
+        announced as "the smallest size they come in", a rule they never gave.
+        """
+
+        issue = _cart_size_issue(
+            self._product(["2", "4", "6"]),
+            "2",
+            "add the Jade Suede Heels to my cart",
+        )
+
+        assert "SIZE NOT CHOSEN" in issue
+        assert "Nothing was added" in issue
+
+    def test_a_size_named_turns_ago_is_still_the_shopper_s_size(self) -> None:
+        """"dresses in a 2" settles "add the lace one" five turns later."""
+
+        assert (
+            _cart_size_issue(
+                self._product(["2", "4", "6"]),
+                "2",
+                "show me dresses in size 2\nadd the lace one",
+            )
+            == ""
+        )
+
+    def test_the_shopper_may_name_a_size_by_describing_it(self) -> None:
+        """"the smallest one" names a size without saying the number."""
+
+        assert (
+            _cart_size_issue(
+                self._product(["2", "4", "6"]), "2", "add the smallest one"
+            )
+            == ""
+        )
+        assert "SIZE NOT CHOSEN" in _cart_size_issue(
+            self._product(["2", "4", "6"]), "6", "add the smallest one"
+        )
+
+    def test_a_number_in_a_price_is_not_a_size_the_shopper_chose(self) -> None:
+        """Without word boundaries, "2" hides inside "$129.99"."""
+
+        assert "SIZE NOT CHOSEN" in _cart_size_issue(
+            self._product(["2", "4", "6"]), "2", "I like the one at $129.99"
+        )
+
+    def test_a_onesize_product_never_reaches_the_chosen_check(self) -> None:
+        """Bracelets are `onesize`; there is no size for anyone to choose."""
+
+        assert _cart_size_issue(self._product(["onesize"]), None, "add it") == ""
+        assert _cart_size_issue(self._product(["onesize"]), "6", "add it") == ""
+        assert _cart_size_issue(self._product(None), "6", "add it") == ""
+
+    def test_a_size_a_onesize_product_lacks_is_dropped_and_disclosed(self) -> None:
+        """Passing it is not the same as applying it.
+
+        Live, "add the black one in a size 8" put a one-size purse in the cart
+        and told the shopper it was a size 8 -- a size that product has never
+        had. There is only one thing to add, so this is not a refusal; the
+        size just cannot survive into the line or the sentence.
+        """
+
+        note = _one_size_note(self._product(["onesize"]), "8")
+
+        assert "added as one size" in note
+        assert "'8' was not applied" in note
+        assert "must not be described to the shopper as its size" in note
+
+    def test_a_onesize_product_given_no_size_needs_no_note(self) -> None:
+        assert _one_size_note(self._product(["onesize"]), None) == ""
+        assert _one_size_note(self._product(["onesize"]), "onesize") == ""
+
+    def test_a_sized_product_keeps_the_size_it_was_given(self) -> None:
+        """The note is for one-size products alone; 4 is a real size here."""
+
+        assert _one_size_note(self._product(["2", "4", "6"]), "4") == ""
+        assert _one_size_note(self._product(None), "8") == ""
+
+
+
+class TestProductProvenance:
+    """Which product a description means is a judgement; something must confirm it."""
+
+    def _product(self, ref="d0", name="Belle Noir Satin Gown"):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(product_id=ref, display_name=name)
+
+    def _dresses(self, n=4):
+        names = [
+            "Belle Noir Satin Gown",
+            "Black Satin Lace-Up Dress",
+            "Vivienne Lace Dress",
+            "Black Polka-Dotted Slip Dress",
+        ]
+        return [self._product(f"d{i}", names[i]) for i in range(n)]
+
+    def _evidence(self, *products, system_identified=()):
+        class _Evidence:
+            def values(self_inner):
+                return products
+
+            def identified_by_the_system(self_inner, ref):
+                return ref in system_identified
+
+        return _Evidence()
+
+    def _issue(self, **kw):
+        from chain_server.src.cart_references import _cart_product_choice_note
+
+        return _cart_product_choice_note(
+            kw.get("product") or self._product(),
+            kw.get("shopper_text", ""),
+            kw["evidence"],
+            kw.get("recently_shown", ()),
+        )
+
+    def test_a_partial_name_now_asks_rather_than_guessing(self) -> None:
+        """The cost of taking the scorer out of the cart path, stated plainly.
+
+        "The A line dress" carries 'a line' from The Office A-line Dress and
+        from no other candidate, and the scorer resolved it. It also read "the
+        black one in a size 8" as a unique fit for the Black Satin Lace-Up
+        Dress -- because `black` is in that title while the black heels beside
+        it are black in their attributes -- and put a guessed dress in a real
+        cart, three runs in four.
+
+        A cart write is the wrong place to weigh words. A partial name now
+        reaches the shopper as a question, which is worse than resolving it and
+        better than resolving it wrongly. The model still reads the sentence;
+        it just cannot commit a purchase on that reading alone.
+        """
+
+        for words in (
+            "add the lace up one in a 2",
+            "the satin dress please",
+            "add the black one",
+        ):
+            assert self._issue(
+                product=self._product("d1", "Black Satin Lace-Up Dress"),
+                shopper_text=words,
+                evidence=self._evidence(*self._dresses(4)),
+            ).startswith("CHOSEN FROM A DESCRIPTION"), words
+
+    def test_the_whole_catalog_name_is_still_a_choice(self) -> None:
+        """What survives: the name is in the sentence, or it is not.
+
+        Containment of the full catalog name is identity, not interpretation,
+        so "add the Southwest Bracelet" is still the shopper choosing. A
+        misspelling is a reading and no longer settles a cart write.
+        """
+
+        assert self._issue(
+            product=self._product("d1", "Black Satin Lace-Up Dress"),
+            shopper_text="add the Black Satin Lace-Up Dress in a 2",
+            evidence=self._evidence(*self._dresses(4)),
+        ) == ""
+        assert self._issue(
+            product=self._product("d1", "Black Satin Lace-Up Dress"),
+            shopper_text="add the Black Satin Laceup Dress",
+            evidence=self._evidence(*self._dresses(4)),
+        ).startswith("CHOSEN FROM A DESCRIPTION")
+
+    def test_the_last_products_shown_are_candidates_too(self) -> None:
+        """The check must not vanish because the model already narrowed.
+
+        Four black dresses were on screen. The model resolved one of them, so
+        this turn's evidence held a single product, nothing was ambiguous
+        against it, and the add went through silently -- the whole failure,
+        surviving the gate built to stop it.
+        """
+
+        issue = self._issue(
+            product=self._product("d1", "Black Satin Lace-Up Dress"),
+            shopper_text="add the black one in a size 8",
+            evidence=self._evidence(self._product("d1", "Black Satin Lace-Up Dress")),
+            recently_shown=[
+                {"ref": "d1", "name": "Black Satin Lace-Up Dress"},
+                {"ref": "d3", "name": "Black Polka-Dotted Slip Dress"},
+            ],
+        )
+
+        assert "CHOSEN FROM A DESCRIPTION" in issue
+
+    def test_short_words_of_a_name_do_not_name_it(self) -> None:
+        """'the' and 'a' are part of the name and of every other sentence.
+
+        Counting them, "add the black one in a 2" fitted The Office A-line
+        Dress on 'the' and 'a' alone -- a navy dress, from fourteen turns
+        earlier, for a request about a black one.
+        """
+
+        assert "CHOSEN FROM A DESCRIPTION" in self._issue(
+            product=self._product("d4", "The Office A-line Dress"),
+            shopper_text="add the black one in a 2",
+            evidence=self._evidence(
+                self._product("d4", "The Office A-line Dress"),
+                *self._dresses(4),
+            ),
+        )
+
+    def test_two_near_equal_candidates_are_asked_about(self) -> None:
+        """The margin, not the score, is what protects the shopper.
+
+        "the black one" fits two black dresses about equally. A threshold would
+        still have a best of the two and would add it -- which is exactly what
+        happened, fourteen turns from where the shopper was looking.
+        """
+
+        assert "CHOSEN FROM A DESCRIPTION" in self._issue(
+            product=self._product("d1", "Black Satin Lace-Up Dress"),
+            shopper_text="add the black one in a 2",
+            evidence=self._evidence(*self._dresses(4)),
+        )
+
+    def test_a_description_does_not_settle_a_cart_write(self) -> None:
+        """"The black polka dotted one" describes; it does not name.
+
+        The scorer took it, and took "the black one" with it. Descriptions are
+        the model's to read and the shopper's to confirm.
+        """
+
+        assert self._issue(
+            product=self._product("d3", "Black Polka-Dotted Slip Dress"),
+            shopper_text="add the black polka dotted one",
+            evidence=self._evidence(*self._dresses(4)),
+        ).startswith("CHOSEN FROM A DESCRIPTION")
+
+    def test_a_run_shared_by_two_candidates_is_refused(self) -> None:
+        """"the satin one" is a run of two names, so it names neither."""
+
+        assert "CHOSEN FROM A DESCRIPTION" in self._issue(
+            product=self._product("d0", "Belle Noir Satin Gown"),
+            shopper_text="add the satin one in a 2",
+            evidence=self._evidence(*self._dresses(4)),
+        )
+
+    def test_a_description_that_fits_several_is_refused(self) -> None:
+        """The silent pick, recorded from the demo script.
+
+        Four black dresses had been shown. "add the black one in a 2" resolved
+        to a navy dress from fourteen turns earlier, and every check passed:
+        the ref was established, the name matched the ref, the size was sold
+        and the shopper really had said "in a 2".
+        """
+
+        issue = self._issue(
+            shopper_text="add the black one in a 2",
+            evidence=self._evidence(*self._dresses()),
+        )
+
+        assert "CHOSEN FROM A DESCRIPTION" in issue
+        assert "Say which one you took them to mean" in issue
+
+    def test_the_shopper_naming_it_is_enough(self) -> None:
+        assert self._issue(
+            shopper_text="add the Belle Noir Satin Gown in a 2",
+            evidence=self._evidence(*self._dresses()),
+        ) == ""
+
+    def test_a_name_they_never_said_is_not_a_naming(self) -> None:
+        """Otherwise the quotation is the model's word for its own choice."""
+
+        assert "CHOSEN FROM A DESCRIPTION" in self._issue(
+            shopper_text="add the black one",
+            evidence=self._evidence(*self._dresses()),
+        )
+
+    def test_the_record_picking_it_is_enough(self) -> None:
+        """"that first one" is turn 2 of the 13-turn script.
+
+        The words name nothing, but the shopper gave a position and the record
+        resolved it. The system picked the product, not the model.
+        """
+
+        assert self._issue(
+            shopper_text="do you have that first one in a size 6",
+            evidence=self._evidence(*self._dresses(), system_identified={"d0"}),
+        ) == ""
+
+    def test_one_candidate_needs_no_words(self) -> None:
+        """"add it" after a single product is unambiguous whatever they said."""
+
+        assert self._issue(
+            shopper_text="add it",
+            evidence=self._evidence(self._product()),
+        ) == ""
+
+
+class TestAtomicRefusalSaysWhatWasReady:
+    """The add is all or nothing; the refusal must still carry what was settled."""
+
+    def _result(self, ready=None):
+        from types import SimpleNamespace
+
+        from chain_server.src.cart_format import _format_cart_add_result
+
+        cart = SimpleNamespace(contents=[], lines=[], total=None)
+        failed = [
+            "- PRODUCT_REF 'x': SIZE NOT ESTABLISHED for 'A Sweater': the "
+            "shopper did not ask for a size 6. It is sold in 2, 4, 6, 8."
+        ]
+        return _format_cart_add_result([], failed, cart, ready)
+
+    def test_an_established_item_is_reported_though_nothing_was_written(self) -> None:
+        """A shopper answered for both items and was asked for both again.
+
+        "Sweater: M and Boots: 6" -- the boots size was correct and sold. The
+        sweater's was not, so nothing was added, which is the intended
+        atomicity. But the boots vanished from the result, so the model had no
+        way to know they were settled and asked for that size a second time.
+        """
+
+        result = self._result(ready=["- Yantra Leather Ankle Boots, size 6, qty 1"])
+
+        assert "Yantra Leather Ankle Boots" in result
+        assert "Do not ask for these again" in result
+        # And it must not claim they went in.
+        assert "Added:" not in result
+
+    def test_an_item_refused_as_out_of_scope_is_not_listed_as_settled(self) -> None:
+        """An item can pass every per-item gate and still be refused after them.
+
+        The scope check runs once, over everything resolved, and can block an
+        item that already passed size, quantity and product provenance. Listing
+        it as settled would tell the shopper not to ask again about the very
+        thing that failed -- a contradiction inside one message.
+        """
+
+        from types import SimpleNamespace
+
+        from chain_server.src.cart_references import _cart_add_scope_failures
+
+        dress = SimpleNamespace(
+            product_id="ref_dress", display_name="Office A-line Dress"
+        )
+        bag = SimpleNamespace(
+            product_id="ref_bag", display_name="Navy Leather Everyday Bag"
+        )
+        failures = _cart_add_scope_failures(
+            "add the Navy Leather Everyday Bag",
+            [("ref_dress", dress), ("ref_bag", bag)],
+            [dress, bag],
+        )
+
+        # The ref travels with the message, so the caller never has to read it
+        # back out of the prose.
+        assert [ref for ref, _message in failures] == ["ref_dress"]
+        assert all(isinstance(message, str) for _ref, message in failures)
+
+    def test_nothing_established_says_nothing_extra(self) -> None:
+        """One blocked item on its own must not grow a section about nobody."""
+
+        result = self._result(ready=[])
+
+        assert "Established, not added" not in result
+
+
+class TestTheSizeNarrowsWhatWasOnScreen:
+    """J01 t19. The assistant proposed the Black Satin Lace-Up Dress in size 2
+    by name, twice, at t17 and t18. The shopper said "add the black one in a 2
+    and show me a clutch to go with it".
+
+    The turn then fetched six clutches to answer the second half, and those six
+    were counted as things "the black one" might have meant -- ten products in
+    play, nine of which arrived after the sentence being judged. The add was
+    refused and the assistant said it had added the dress anyway.
+
+    Of what was actually on screen when the shopper spoke, only one thing is
+    sold in a 2.
+    """
+
+    def _product(self, ref, name):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(product_id=ref, display_name=name)
+
+    def _on_screen(self):
+        return [
+            {"ref": "d1", "name": "Black Satin Lace-Up Dress",
+             "sizes": ["2", "4", "6", "8", "10", "12"]},
+            {"ref": "h1", "name": "Polished Pearl Pumps",
+             "sizes": ["5", "6", "7", "8", "9"]},
+            {"ref": "n1", "name": "Multi-strand Accent Necklace",
+             "sizes": ["onesize"]},
+        ]
+
+    def _only_one(self, product, size, shown):
+        from chain_server.src.cart_references import _the_only_one_on_screen_in_that_size
+
+        return _the_only_one_on_screen_in_that_size(product, size, shown)
+
+    def test_the_size_leaves_one_thing_it_could_have_been(self):
+        assert self._only_one(
+            self._product("d1", "Black Satin Lace-Up Dress"), "2", self._on_screen()
+        )
+
+    def test_a_size_several_things_come_in_settles_nothing(self):
+        """"In an 8" fits the dress and the pumps. Still ambiguous, still asked."""
+
+        assert not self._only_one(
+            self._product("d1", "Black Satin Lace-Up Dress"), "8", self._on_screen()
+        )
+
+    def test_it_does_not_speak_for_a_product_the_size_excludes(self):
+        assert not self._only_one(
+            self._product("h1", "Polished Pearl Pumps"), "2", self._on_screen()
+        )
+
+    def test_one_size_products_are_not_swept_in_by_a_number(self):
+        """A necklace is onesize, which is not "comes in a 2"."""
+
+        assert not self._only_one(
+            self._product("n1", "Multi-strand Accent Necklace"), "2", self._on_screen()
+        )
+
+    def test_no_size_narrows_nothing(self):
+        assert not self._only_one(
+            self._product("d1", "Black Satin Lace-Up Dress"), "", self._on_screen()
+        )
+
+    def test_a_showing_without_recorded_sizes_narrows_nothing(self):
+        """Silence is not a fact. Guessing from a showing that never recorded
+        its sizes is how a wrong dress reaches a cart."""
+
+        assert not self._only_one(
+            self._product("d1", "Black Satin Lace-Up Dress"),
+            "2",
+            [{"ref": "d1", "name": "Black Satin Lace-Up Dress"}],
+        )
+
+    def test_a_bare_ref_names_the_same_product(self):
+        assert self._only_one(
+            self._product("generated:d1", "Black Satin Lace-Up Dress"),
+            "2",
+            self._on_screen(),
+        )
+
+    def test_onesize_is_not_a_narrowing_size(self):
+        """"Onesize" is what everything in that category comes in, so it
+        distinguishes nothing. Dropping the guard let it establish a product."""
+
+        shown = [{"ref": "n1", "name": "Multi-strand Accent Necklace",
+                  "sizes": ["onesize"]}]
+        assert not self._only_one(
+            self._product("n1", "Multi-strand Accent Necklace"), "onesize", shown
+        )
+
+    def test_the_gate_itself_takes_the_narrowing(self):
+        """Through the gate, not the helper: the escape is only worth anything
+        if it is wired in. Removing the call passed every other test."""
+
+        from types import SimpleNamespace
+
+        from chain_server.src.cart_references import _cart_product_choice_note
+
+        class _Evidence:
+            def values(self_inner):
+                return [
+                    SimpleNamespace(product_id="d1", display_name="Black Satin Lace-Up Dress"),
+                    SimpleNamespace(product_id="h1", display_name="Polished Pearl Pumps"),
+                ]
+
+            def identified_by_the_system(self_inner, ref):
+                return False
+
+        assert _cart_product_choice_note(
+            self._product("d1", "Black Satin Lace-Up Dress"),
+            "add the black one in a 2",
+            _Evidence(),
+            self._on_screen(),
+            (),
+            "2",
+        ) == ""
+        # And without the size, the same sentence is still ambiguous.
+        assert _cart_product_choice_note(
+            self._product("d1", "Black Satin Lace-Up Dress"),
+            "add the black one",
+            _Evidence(),
+            self._on_screen(),
+            (),
+            "",
+        ).startswith("CHOSEN FROM A DESCRIPTION")

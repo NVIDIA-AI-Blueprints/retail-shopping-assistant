@@ -21,7 +21,7 @@ Available commands:
 
 - `configure`: create ignored `.local-run/model-endpoints.env` values that point app services to a remote host serving the models from `docker-compose-model-local.yaml`.
 - `install-dev`: create `.local-run/dev-venv` and install Python dev/test packages there.
-- `start`: start local Milvus infra containers, then local memory, guardrails, catalog, orchestrator, and UI processes.
+- `start`: start local Milvus infra containers, then local memory, guardrails, catalog, chain-server, and UI processes.
 - `stop`: stop only tracked local app/UI processes and local Milvus infra containers. Never stop the remote models.
 - `status`: show tracked process, port, health, and Milvus infra status.
 - `logs`: print recent logs from `.local-run/logs`.
@@ -111,7 +111,7 @@ The runner starts these local app processes:
 - memory retriever: `http://localhost:8011`
 - guardrails: `http://localhost:8012`
 - catalog retriever: `http://localhost:8010`
-- orchestrator: `http://localhost:8009`
+- chain server: `http://localhost:8009`
 - UI: `http://localhost:3000`
 
 Only Milvus infra remains containerized:
@@ -132,11 +132,11 @@ If another local Milvus is already healthy at `localhost:19530` with health on `
 - Use `.local-run/dev-venv/bin/python -m pytest ...` for local unit tests after `install-dev`.
 - UI dependencies are installed into `ui/node_modules` when missing.
 - The runner creates `ui/public/images -> shared/images` so the Vite dev server can serve catalog images from `/images/...`, matching the UI Dockerfile behavior.
-- The runner sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, and `VITE_API_BASE_URL=/api`; the Vite dev server proxies `/api` to the orchestrator.
+- The runner sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, and `VITE_API_BASE_URL=/api`; the Vite dev server proxies `/api` to the chain server.
 - `configure --model-host` writes `.local-run/model-endpoints.env` with the per-role base URLs and model names.
 - When `NVIDIA_API_KEY` is present, the runner uses it as the default for `LLM_API_KEY`, `EMBED_API_KEY`, and `RAIL_API_KEY`; generated local endpoint envs use `local` as a no-auth placeholder when no key is set.
 - `WEATHER_ENABLED` and `WEATHER_API_KEY` remain available only to the local
-  orchestrator process; the runner removes them from memory, guardrails,
+  chain-server process; the runner removes them from memory, guardrails,
   catalog, and UI environments and never writes them to
   `.local-run/model-endpoints.env`.
 - Use `status` before deciding whether to start or stop.

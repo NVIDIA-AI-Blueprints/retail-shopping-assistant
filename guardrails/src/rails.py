@@ -565,7 +565,7 @@ class GuardrailEngine:
         )
         outer_timeout = _positive_float_env("GUARDRAILS_TIMEOUT_SECONDS", 15.0)
         # Leave one second for serialization and the network return before the
-        # orchestrator's outer HTTP deadline cancels this request.
+        # chain server's outer HTTP deadline cancels this request.
         self._policy_timeout_seconds = max(0.1, outer_timeout - 1.0)
         self.input_execution_mode = getattr(
             self._text,

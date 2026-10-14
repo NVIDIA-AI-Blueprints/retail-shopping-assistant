@@ -60,7 +60,7 @@ export GUARDRAILS_ENABLED=false    # only to make off the default; or send `guar
 docker compose up -d rails
 ```
 
-The service listens on port 8012 and the orchestrator reaches it at
+The service listens on port 8012 and the chain server reaches it at
 `GUARDRAILS_URL`. A request may carry its own `guardrails` value, as the UI
 toggle does, and by default it overrides the deployment default either way, so
 you can show the same turn with and without guardrails. Set
@@ -83,7 +83,7 @@ Then:
 
 - The guardrail service starts without building its rails, so no guard model
   endpoint or key is needed, and every check returns `error` with
-  `diagnostic_code: guardrails_unavailable`. The orchestrator sends none.
+  `diagnostic_code: guardrails_unavailable`. The chain server sends none.
 - With the locally hosted models, `.env.local-models` points no role at the
   three guardrail models and leaves them out of `LOCAL_MODEL_SERVICES`, so they
   are not started.
@@ -105,7 +105,7 @@ server at startup, as the two contradict each other.
 | `GUARDRAILS_AVAILABLE` | `false`: no guardrails in this deployment ([above](#deploying-without-guardrails)) | true |
 | `RAIL_API_KEY` | API key for content safety and topic control | Required |
 | `MULTIMODAL_SAFETY_API_KEY` | API key for video safety; falls back to `VLM_API_KEY`, then `NVIDIA_API_KEY` | Required for video |
-| `GUARDRAILS_URL` | Where the orchestrator reaches the service | `http://rails:8012` |
+| `GUARDRAILS_URL` | Where the chain server reaches the service | `http://rails:8012` |
 | `GUARDRAILS_ENABLED` | Deployment default for requests that omit `guardrails` | on (off when `GUARDRAILS_AVAILABLE=false`) |
 | `GUARDRAILS_FAILURE_MODE` | What an `error` costs | `closed` |
 | `GUARDRAILS_TIMEOUT_SECONDS` | Deadline for one decision | `15.0` |
@@ -115,14 +115,14 @@ server at startup, as the two contradict each other.
 | `MULTIMODAL_SAFETY_VIDEO_FPS` | Frames per second sampled from a video | `2.0` |
 
 Guardrails spans two services, so each default lives with whichever service
-reads it: the orchestrator ones in `shared/configs/orchestrator/config.yaml`,
+reads it: the chain-server ones in `shared/configs/chain_server/config.yaml`,
 the service's own in `guardrails/src/rails.py`. `.env.example` and
 `docker-compose.yaml` only pass these through, empty by default, so no setting
 has two sources that can drift apart.
 
 `GUARDRAILS_TIMEOUT_SECONDS` is the one both services read. The service gives
 itself one second less than the number you set, so the judges are abandoned and
-a `policy_timeout` returned *before* the orchestrator's own deadline cancels
+a `policy_timeout` returned *before* the chain server's own deadline cancels
 the request — otherwise a slow judge would surface as a dropped connection
 rather than a decision your failure mode can act on.
 
@@ -137,7 +137,7 @@ attachments stay sequential.
 
 ## What the shopper sees
 
-Two sentences, both in `shared/configs/orchestrator/config.yaml`, neither with
+Two sentences, both in `shared/configs/chain_server/config.yaml`, neither with
 an environment variable — a shopper-facing sentence belongs in reviewed
 configuration rather than a deployment variable.
 
@@ -199,7 +199,7 @@ how you attribute cost.
 
 The service is [`guardrails/src/main.py`](../guardrails/src/main.py) for the
 API and [`rails.py`](../guardrails/src/rails.py) for the judges and their
-prompts. The orchestrator side — when to call, what a failure costs, and what
+prompts. The chain-server side — when to call, what a failure costs, and what
 the shopper is told — is
-[`orchestrator/src/guardrails.py`](../orchestrator/src/guardrails.py).
+[`chain_server/src/guardrails.py`](../chain_server/src/guardrails.py).
 Deployment settings are catalogued in [Deployment](DEPLOYMENT.md).

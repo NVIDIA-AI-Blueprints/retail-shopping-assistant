@@ -1,0 +1,700 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Unit tests for ``chain_server.src.config``.
+
+The config module drives every downstream agent's construction. These tests
+exercise service YAML loading, model endpoint resolution, and the pydantic
+validation contract directly, without touching the real container layout.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict
+
+import pytest
+import yaml
+from chain_server.src.config import (
+    ChainServerConfig,
+    load_config,
+    load_config_data,
+)
+from pydantic import ValidationError
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _clear_model_and_service_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in (
+        "CATALOG_RETRIEVER_URL",
+        "MEMORY_RETRIEVER_URL",
+        "GUARDRAILS_URL",
+        "CATALOG_SEARCH_TIMEOUT_SECONDS",
+        "DEEPAGENTS_RECURSION_LIMIT",
+        "DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS",
+        "MAX_CATALOG_SEARCHES_PER_TURN",
+        "MAX_PRODUCT_DETAIL_READS_PER_TURN",
+        "GROUNDING_REWRITE_ENABLED",
+        "GROUNDING_REWRITE_MAX_EVIDENCE_CHARS",
+        "EXPOSE_AGENT_DIAGNOSTICS",
+        "GUARDRAILS_AVAILABLE",
+        "GUARDRAILS_ENABLED",
+        "GUARDRAILS_FAILURE_MODE",
+        "GUARDRAILS_TIMEOUT_SECONDS",
+        "GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED",
+        "GUARDRAILS_SUPPORTED_MODALITIES",
+        "WEATHER_ENABLED",
+        "WEATHER_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture
+def write_yaml(tmp_path: Path):
+    """Helper to drop a YAML config into a temporary directory."""
+
+    def _write(name: str, data: Dict[str, Any]) -> Path:
+        path = tmp_path / name
+        path.write_text(yaml.safe_dump(data))
+        return path
+
+    return _write
+
+
+class TestLoadConfigData:
+    def test_returns_service_config(self, write_yaml, valid_config_dict: dict) -> None:
+        base_path = write_yaml("config.yaml", valid_config_dict)
+
+        result = load_config_data(str(base_path))
+
+        assert result == valid_config_dict
+
+    def test_raises_file_not_found_for_missing_base_config(self, tmp_path: Path) -> None:
+        missing = tmp_path / "does_not_exist.yaml"
+        with pytest.raises(FileNotFoundError):
+            load_config_data(str(missing))
+
+
+class TestChainServerConfigValidation:
+    def test_valid_dict_constructs_successfully(self, valid_config_dict: dict) -> None:
+        config = ChainServerConfig(**valid_config_dict)
+
+        assert config.llm_port == valid_config_dict["llm_port"]
+        assert config.multimodal is True
+        assert config.vlm_enabled is False
+        assert config.guardrails_enabled is True
+        assert config.guardrails_failure_mode == "closed"
+        assert config.grounding_rewrite_enabled is True
+        assert config.expose_agent_diagnostics is False
+        assert config.weather.enabled is False
+        assert config.weather.api_key_env == "WEATHER_API_KEY"
+        assert config.deepagents_execution_timeout_seconds == 45.0
+        assert config.max_product_detail_reads_per_turn == 2
+        assert config.grounding_rewrite_max_evidence_chars == 12000
+        assert config.media_input.max_images_per_turn == 1
+        assert config.media_input.max_videos_per_turn == 1
+
+    @pytest.mark.parametrize(
+        "missing_field",
+        [
+            "llm_port",
+            "llm_name",
+            "retriever_port",
+            "memory_port",
+            "guardrails_url",
+            "memory_length",
+            "top_k_retrieve",
+            "multimodal",
+            "unsafe_message",
+        ],
+    )
+    def test_missing_required_field_fails(
+        self, valid_config_dict: dict, missing_field: str
+    ) -> None:
+        bad = dict(valid_config_dict)
+        del bad[missing_field]
+        with pytest.raises(ValidationError):
+            ChainServerConfig(**bad)
+
+    @pytest.mark.parametrize(
+        "url_field",
+        ["llm_port", "retriever_port", "memory_port", "guardrails_url"],
+    )
+    def test_url_validator_rejects_non_http_schemes(
+        self, valid_config_dict: dict, url_field: str
+    ) -> None:
+        bad = {**valid_config_dict, url_field: "not-a-url"}
+        with pytest.raises(ValidationError):
+            ChainServerConfig(**bad)
+
+    @pytest.mark.parametrize(
+        "url_field,value",
+        [
+            ("llm_port", "http://localhost:8000"),
+            ("retriever_port", "https://example.com"),
+        ],
+    )
+    def test_url_validator_accepts_http_and_https(
+        self, valid_config_dict: dict, url_field: str, value: str
+    ) -> None:
+        cfg = ChainServerConfig(**{**valid_config_dict, url_field: value})
+        assert getattr(cfg, url_field) == value
+
+    @pytest.mark.parametrize("value", [0, -1, -100])
+    def test_memory_length_must_be_positive(
+        self, valid_config_dict: dict, value: int
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(**{**valid_config_dict, "memory_length": value})
+
+    @pytest.mark.parametrize("value", [-0.1, float("inf"), float("nan")])
+    def test_llm_temperature_must_be_finite_and_non_negative(
+        self, valid_config_dict: dict, value: float
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(**{**valid_config_dict, "llm_temperature": value})
+
+    @pytest.mark.parametrize("value", [0, -4])
+    def test_top_k_retrieve_must_be_positive(
+        self, valid_config_dict: dict, value: int
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(**{**valid_config_dict, "top_k_retrieve": value})
+
+    @pytest.mark.parametrize("value", [0, -4])
+    def test_deepagents_recursion_limit_must_be_positive(
+        self, valid_config_dict: dict, value: int
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(
+                **{**valid_config_dict, "deepagents_recursion_limit": value}
+            )
+
+    @pytest.mark.parametrize(
+        "value",
+        [0, -0.1, float("inf"), float("-inf"), float("nan")],
+    )
+    def test_deepagents_execution_timeout_must_be_positive(
+        self, valid_config_dict: dict, value: float
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(
+                **{
+                    **valid_config_dict,
+                    "deepagents_execution_timeout_seconds": value,
+                }
+            )
+
+    @pytest.mark.parametrize("value", [1, 45.0, 120.5])
+    def test_deepagents_execution_timeout_accepts_positive_values(
+        self, valid_config_dict: dict, value: float
+    ) -> None:
+        config = ChainServerConfig(
+            **{
+                **valid_config_dict,
+                "deepagents_execution_timeout_seconds": value,
+            }
+        )
+
+        assert config.deepagents_execution_timeout_seconds == value
+
+    def test_deepagents_execution_timeout_defaults_to_45_seconds(
+        self, valid_config_dict: dict
+    ) -> None:
+        config_data = dict(valid_config_dict)
+        del config_data["deepagents_execution_timeout_seconds"]
+
+        config = ChainServerConfig(**config_data)
+
+        assert config.deepagents_execution_timeout_seconds == 45.0
+
+    @pytest.mark.parametrize("value", [0, -4])
+    def test_max_catalog_searches_per_turn_must_be_positive(
+        self, valid_config_dict: dict, value: int
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(
+                **{**valid_config_dict, "max_catalog_searches_per_turn": value}
+            )
+
+    @pytest.mark.parametrize("value", [0, -4])
+    def test_max_product_detail_reads_per_turn_must_be_positive(
+        self, valid_config_dict: dict, value: int
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(
+                **{**valid_config_dict, "max_product_detail_reads_per_turn": value}
+            )
+
+    @pytest.mark.parametrize("value", [None, 30, 120.5])
+    def test_catalog_search_timeout_accepts_none_or_positive_values(
+        self, valid_config_dict: dict, value: float | None
+    ) -> None:
+        cfg = ChainServerConfig(
+            **{**valid_config_dict, "catalog_search_timeout_seconds": value}
+        )
+        assert cfg.catalog_search_timeout_seconds == value
+
+    @pytest.mark.parametrize("value", [0, -1])
+    def test_catalog_search_timeout_rejects_non_positive_values(
+        self, valid_config_dict: dict, value: float
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(
+                **{**valid_config_dict, "catalog_search_timeout_seconds": value}
+            )
+
+    @pytest.mark.parametrize("value", [0, -1])
+    def test_grounding_rewrite_evidence_window_must_be_positive(
+        self, valid_config_dict: dict, value: int
+    ) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(
+                **{**valid_config_dict, "grounding_rewrite_max_evidence_chars": value}
+            )
+
+    def test_extra_fields_are_forbidden(self, valid_config_dict: dict) -> None:
+        with pytest.raises(ValidationError):
+            ChainServerConfig(**valid_config_dict, unexpected_field="oops")
+
+
+@pytest.mark.usefixtures("model_endpoint_env")
+class TestLoadConfig:
+    def test_returns_typed_chain_server_config(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert isinstance(config, ChainServerConfig)
+        assert config.memory_length == valid_config_dict["memory_length"]
+        assert config.deepagents_recursion_limit == valid_config_dict["deepagents_recursion_limit"]
+        assert config.deepagents_execution_timeout_seconds == valid_config_dict[
+            "deepagents_execution_timeout_seconds"
+        ]
+        assert config.max_catalog_searches_per_turn == valid_config_dict["max_catalog_searches_per_turn"]
+        assert config.max_product_detail_reads_per_turn == valid_config_dict["max_product_detail_reads_per_turn"]
+        assert config.guardrails_enabled is True
+        assert config.llm_name == "nvidia/nvidia/nemotron-3.5-super-vl-preview"
+        assert config.vlm_enabled is True
+        assert (config.vlm_port, config.vlm_name) == (config.llm_port, config.llm_name)
+
+    def test_guardrails_url_env_override(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GUARDRAILS_URL", "https://guardrails.example.test")
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.guardrails_url == "https://guardrails.example.test"
+
+    @pytest.mark.parametrize(
+        "raw_value,expected",
+        [
+            ("true", True),
+            ("yes", True),
+            ("on", True),
+            ("1", True),
+            ("false", False),
+            ("no", False),
+            ("off", False),
+            ("0", False),
+        ],
+    )
+    def test_guardrails_enabled_env_override_accepts_explicit_bools(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+        raw_value: str,
+        expected: bool,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GUARDRAILS_ENABLED", raw_value)
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.guardrails_enabled is expected
+
+    def test_guardrails_cannot_default_on_when_unavailable(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GUARDRAILS_AVAILABLE", "false")
+        path = write_yaml("config.yaml", {**valid_config_dict, "guardrails_enabled": False})
+
+        assert load_config(str(path)).guardrails_available is False
+
+        monkeypatch.setenv("GUARDRAILS_ENABLED", "true")
+        with pytest.raises(ValueError, match="GUARDRAILS_AVAILABLE is false"):
+            load_config(str(path))
+
+    def test_guardrails_is_on_unless_something_turns_it_off(
+        self, valid_config_dict: dict
+    ) -> None:
+        silent = dict(valid_config_dict)
+        silent.pop("guardrails_enabled")
+
+        assert ChainServerConfig(**silent).guardrails_enabled is True
+        assert ChainServerConfig(**silent, guardrails_available=False).guardrails_enabled is False
+
+    def test_shipped_config_turns_guardrails_on_unless_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        shipped = str(REPO_ROOT / "shared/configs/chain_server/config.yaml")
+
+        assert load_config(shipped).guardrails_enabled is True
+        assert load_config(shipped).guardrails_client_can_disable is True
+
+        monkeypatch.setenv("GUARDRAILS_AVAILABLE", "false")
+        assert load_config(shipped).guardrails_enabled is False
+
+    @pytest.mark.parametrize("raw_value", ["open", "closed"])
+    def test_guardrails_failure_mode_env_override(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+        raw_value: str,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GUARDRAILS_FAILURE_MODE", raw_value)
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.guardrails_failure_mode == raw_value
+
+    def test_guardrails_failure_mode_defaults_closed(
+        self, valid_config_dict: dict
+    ) -> None:
+        silent = dict(valid_config_dict)
+        silent.pop("guardrails_failure_mode", None)
+
+        assert ChainServerConfig(**silent).guardrails_failure_mode == "closed"
+
+    def test_guardrails_failure_mode_rejects_unknown_value(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GUARDRAILS_FAILURE_MODE", "sometimes")
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        with pytest.raises(
+            ValueError,
+            match="Input should be 'open' or 'closed'",
+        ):
+            load_config(str(path))
+
+    @pytest.mark.parametrize(
+        "raw_value,expected",
+        [
+            ("true", True),
+            ("false", False),
+        ],
+    )
+    def test_speculative_main_model_env_override_accepts_explicit_bools(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+        raw_value: str,
+        expected: bool,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv(
+            "GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED",
+            raw_value,
+        )
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.guardrails_speculative_main_model_enabled is expected
+
+    def test_speculative_main_model_is_default_off(
+        self,
+        valid_config_dict: dict,
+    ) -> None:
+        assert (
+            ChainServerConfig(
+                **valid_config_dict
+            ).guardrails_speculative_main_model_enabled
+            is False
+        )
+
+    def test_guardrails_enabled_env_override_rejects_invalid_bool(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GUARDRAILS_ENABLED", "ture")
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        with pytest.raises(ValueError, match="GUARDRAILS_ENABLED must be one of"):
+            load_config(str(path))
+
+    @pytest.mark.parametrize(
+        "raw_value,expected",
+        [
+            ("true", True),
+            ("false", False),
+        ],
+    )
+    def test_grounding_rewrite_enabled_env_override_accepts_explicit_bools(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+        raw_value: str,
+        expected: bool,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GROUNDING_REWRITE_ENABLED", raw_value)
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.grounding_rewrite_enabled is expected
+
+    @pytest.mark.parametrize(
+        "raw_value,expected",
+        [
+            ("true", True),
+            ("false", False),
+        ],
+    )
+    def test_expose_agent_diagnostics_env_override_accepts_explicit_bools(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+        raw_value: str,
+        expected: bool,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("EXPOSE_AGENT_DIAGNOSTICS", raw_value)
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.expose_agent_diagnostics is expected
+
+    def test_grounding_rewrite_max_evidence_env_override(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GROUNDING_REWRITE_MAX_EVIDENCE_CHARS", "6400")
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.grounding_rewrite_max_evidence_chars == 6400
+
+    @pytest.mark.parametrize(
+        "raw_value,expected",
+        [
+            ("true", True),
+            ("false", False),
+        ],
+    )
+    def test_weather_enabled_env_override_accepts_explicit_bools(
+        self,
+        write_yaml,
+        valid_config_dict: dict,
+        monkeypatch: pytest.MonkeyPatch,
+        raw_value: str,
+        expected: bool,
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("WEATHER_ENABLED", raw_value)
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.weather.enabled is expected
+
+    def test_weather_enabled_env_override_rejects_invalid_bool(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("WEATHER_ENABLED", "enabled")
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        with pytest.raises(ValueError, match="WEATHER_ENABLED must be one of"):
+            load_config(str(path))
+
+    def test_weather_secret_remains_an_indirect_environment_reference(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        secret = "weather-secret-must-not-enter-config"
+        monkeypatch.setenv("WEATHER_API_KEY", secret)
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.weather.enabled is False
+        assert config.weather.api_key_env == "WEATHER_API_KEY"
+        assert secret not in repr(config)
+
+    def test_deepagents_execution_timeout_env_override(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS", "31.5")
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.deepagents_execution_timeout_seconds == 31.5
+
+    def test_llm_temperature_env_override(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("APP_LLM_TEMPERATURE", "0.2")
+        path = write_yaml("config.yaml", {**valid_config_dict, "llm_temperature": 0.9})
+
+        config = load_config(str(path))
+
+        assert config.llm_temperature == 0.2
+
+    def test_empty_env_leaves_the_shipped_defaults(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Compose passes these through empty when unset; config.yaml must win.
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        for name in (
+            "APP_LLM_TEMPERATURE",
+            "LLM_MAX_OUTPUT_TOKENS",
+            "GROUNDING_EDITOR_MAX_OUTPUT_TOKENS",
+            "CATALOG_RETRIEVER_URL",
+            "MEMORY_RETRIEVER_URL",
+            "DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS",
+            "EXPOSE_AGENT_DIAGNOSTICS",
+            "RELAY_ENABLED",
+            "WEATHER_ENABLED",
+        ):
+            monkeypatch.setenv(name, "")
+        path = REPO_ROOT / "shared/configs/chain_server/config.yaml"
+        shipped = yaml.safe_load(path.read_text())
+
+        config = load_config(str(path))
+
+        assert config.llm_temperature == 0.7
+        assert config.llm_max_output_tokens == 1024
+        assert config.grounding_editor_max_output_tokens == 1024
+        assert config.retriever_port == shipped["retriever_port"]
+        assert config.memory_port == shipped["memory_port"]
+        assert (
+            config.deepagents_execution_timeout_seconds
+            == shipped["deepagents_execution_timeout_seconds"]
+        )
+        assert config.expose_agent_diagnostics is False
+        assert config.relay_enabled is False
+        assert config.weather.enabled is False
+
+    def test_max_product_detail_reads_env_override(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("MAX_PRODUCT_DETAIL_READS_PER_TURN", "2")
+        path = write_yaml("config.yaml", valid_config_dict)
+
+        config = load_config(str(path))
+
+        assert config.max_product_detail_reads_per_turn == 2
+
+    def test_invalid_yaml_surface_as_value_error(
+        self, write_yaml, valid_config_dict: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_model_and_service_env(monkeypatch)
+        monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        bad = dict(valid_config_dict)
+        bad["memory_port"] = "not-a-url"
+        path = write_yaml("config.yaml", bad)
+
+        with pytest.raises(ValueError):
+            load_config(str(path))
+
+
+class TestRepoPromptContracts:
+    def test_weather_config_is_dormant_and_indirect(self) -> None:
+        config = load_config_data(
+            str(REPO_ROOT / "shared/configs/chain_server/config.yaml")
+        )
+
+        assert config["weather"] == {
+            "enabled": False,
+            "provider": "visual_crossing",
+            "base_url": (
+                "https://weather.visualcrossing.com/"
+                "VisualCrossingWebServices/rest/services/timeline"
+            ),
+            "api_key_env": "WEATHER_API_KEY",
+            "timeout_seconds": 3.0,
+            "max_forecast_horizon_days": 15,
+            "max_range_days": 15,
+        }
+
+    def test_shipped_config_has_no_legacy_graph_keys(self) -> None:
+        """The pre-Deep-Agents routing pipeline is gone; its config must be too."""
+
+        config = load_config_data(
+            str(REPO_ROOT / "shared/configs/chain_server/config.yaml")
+        )
+
+        for legacy_key in ("routing_prompt", "chatter_prompt", "agent_choices", "categories"):
+            assert legacy_key not in config

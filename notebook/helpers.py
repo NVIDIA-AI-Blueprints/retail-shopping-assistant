@@ -22,7 +22,7 @@ from time import monotonic, sleep
 
 REPO = Path(__file__).resolve().parents[1]
 
-ORCHESTRATOR = os.environ.get("ORCHESTRATOR", "http://localhost:8009")
+CHAIN_SERVER = os.environ.get("CHAIN_SERVER", "http://localhost:8009")
 CATALOG = os.environ.get("CATALOG", "http://localhost:8010")
 MEMORY = os.environ.get("MEMORY", "http://localhost:8011")
 GUARDRAILS = os.environ.get("GUARDRAILS", "http://localhost:8012")
@@ -71,7 +71,7 @@ def wait_until_ready(timeout_s: float = 900, every_s: float = 10) -> bool:
     """
 
     checks = {
-        "orchestrator": f"{ORCHESTRATOR}/ready",
+        "chain-server": f"{CHAIN_SERVER}/ready",
         "catalog-retriever": f"{CATALOG}/ready",
         "memory-retriever": f"{MEMORY}/ready",
     }
@@ -91,7 +91,7 @@ def wait_until_ready(timeout_s: float = 900, every_s: float = 10) -> bool:
 def cart(cart_id: str = NOTEBOOK_CART_ID) -> dict:
     """The cart as the storefront reads it, through the agent service."""
 
-    return get(f"{ORCHESTRATOR}/cart?{urllib.parse.urlencode({'cart_id': cart_id})}")
+    return get(f"{CHAIN_SERVER}/cart?{urllib.parse.urlencode({'cart_id': cart_id})}")
 
 
 def clear_shopper(cart_id: str = NOTEBOOK_CART_ID) -> None:
@@ -100,7 +100,7 @@ def clear_shopper(cart_id: str = NOTEBOOK_CART_ID) -> None:
     query = urllib.parse.urlencode({"cart_id": cart_id})
     for line in cart(cart_id)["lines"]:
         post(
-            f"{ORCHESTRATOR}/cart/lines/{urllib.parse.quote(line['cart_line_id'], safe='')}?{query}",
+            f"{CHAIN_SERVER}/cart/lines/{urllib.parse.quote(line['cart_line_id'], safe='')}?{query}",
             {"quantity": 0, "idempotency_key": uuid.uuid4().hex},
             method="PATCH",
         )
@@ -123,7 +123,7 @@ def say(
     """
 
     request = urllib.request.Request(
-        f"{ORCHESTRATOR}/query/stream",
+        f"{CHAIN_SERVER}/query/stream",
         data=json.dumps(
             {
                 "query": text,
@@ -216,7 +216,7 @@ def load_spans(max_pages: int = 10, page_size: int = 1000) -> list[dict]:
 def wait_for_turns(session_id: str, count: int, timeout_s: float = 60) -> list[dict]:
     """Spans, once Phoenix holds `count` turns of the session.
 
-    The orchestrator exports spans in batches, so the last turn lands a few
+    The chain-server exports spans in batches, so the last turn lands a few
     seconds after its reply.
     """
 

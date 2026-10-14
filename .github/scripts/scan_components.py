@@ -109,7 +109,7 @@ LICENSE_OVERRIDES = {}
 
 # ── Internal service display names (docker-compose service key → display name) ─
 INTERNAL_SERVICE_NAMES = {
-    'orchestrator': 'Orchestrator',
+    'chain-server': 'Chain Server',
     'catalog-indexer': 'Catalog Indexer',
     'catalog-retriever': 'Catalog Retriever',
     'memory-retriever': 'Memory Retriever',

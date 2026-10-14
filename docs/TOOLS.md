@@ -7,7 +7,7 @@ Two separate things decide whether a call runs. A tool exists at all only if it
 is in the runtime's `create_deep_agent(..., tools=[...])` registration. It is
 callable on a given turn only if one of that turn's activated skills grants it,
 and that grant is rechecked against the immutable policy in
-`orchestrator/src/tools/policy.py` before any handler runs. Skill frontmatter
+`chain_server/src/tools/policy.py` before any handler runs. Skill frontmatter
 and that policy must agree exactly, or startup fails.
 
 [Assistant Architecture](ASSISTANT_ARCHITECTURE.md) covers how a turn runs and

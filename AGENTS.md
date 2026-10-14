@@ -5,7 +5,7 @@ This file is a working guide for coding agents and contributors in this reposito
 ## 1) Project Summary
 
 Retail Shopping Assistant is a multi-service application with:
-- `orchestrator`: FastAPI + Deep Agents SDK orchestration over deterministic catalog and cart tools.
+- `chain_server`: FastAPI + Deep Agents SDK orchestration over deterministic catalog and cart tools.
 - `catalog_retriever`: FastAPI service for text embedding retrieval against Milvus.
 - `memory_retriever`: FastAPI + single-replica SQLite service for ordered durable conversation turns, exact finalized-turn replay, stable cart-line IDs, and atomically idempotent add/remove/quantity mutations.
 - `guardrails`: FastAPI wrapper around NeMo Guardrails input/output safety checks.
@@ -17,8 +17,8 @@ Top-level orchestration is via `docker-compose.yaml`; optional locally deployed 
 ## 2) Architecture and Request Flow
 
 1. UI posts to `/api/query/stream` (nginx proxy on port `3000`).
-2. Nginx routes `/api/*` to `orchestrator:8009`.
-3. Orchestrator request flow:
+2. Nginx routes `/api/*` to `chain-server:8009`.
+3. Chain server request flow:
    - `DeepAgentsRuntime` first starts a durable turn in the memory service, which returns bounded model-context-eligible raw turns, the prior turn's selected skill names, and the authoritative cart. Blocked turns remain durable and exactly replayable but are excluded from both the service projection and chain prompt formatter. Graph working state uses a request-scoped pair of `conversation_id` and `request_id`. A selected profile ID is bound immutably to that conversation and renders one compact current-turn context block containing only type, behavior, and saved ZIP. Profile precedence and non-authority rules are also present only for selected-profile turns; Guest receives neither the block nor profile-specific prompt rules. The block is soft guidance: current explicit instructions and recent explicit preferences take precedence, and it cannot establish budget, product constraints or facts, cart intent, skill selection, or tool grants. Unknown caller fields remain backward-compatibly ignored, and caller-supplied persona objects are never injected.
    - Optional input guardrails normally run before model/tool work. A default-off, text-only speculative mode may overlap the first app-model step with those rails, but every tool waits for the input allow decision; blocked turns discard/cancel the model work and can still incur its provider cost. Media remains sequential and is analyzed through the configured perception client.
    - Deep Agents graph execution has a configurable deadline (`deepagents_execution_timeout_seconds` in `config.py`/`config.yaml`). A timeout captures bounded partial graph messages, clears unsent products, finalizes the durable turn as failed, and deletes the request checkpoint only after that finalization succeeds.
@@ -28,49 +28,49 @@ Top-level orchestration is via `docker-compose.yaml`; optional locally deployed 
    - Cart mutations require explicit product/cart-line refs. Grounding reads actual tool-role messages, separates current-request evidence from prior-turn evidence, and never treats an assistant draft as evidence. Successful searches preserve the taxonomy-independent semantic query as internal ranking evidence, the pre-retrieval `shopper_guidance` as product-agnostic response framing, and each confirmed filter set with the products from that search. A completed search gets one final tools-disabled model step under the active skill, followed by the grounding editor. If the requested outcome depends on an unconfirmed material, fit, comfort, durability, care, weather, or other functional property, the response must disclose that gap and frame results as the closest catalog or styling direction rather than as proven suitable. If that draft or editor is unavailable, deterministic fallback uses search guidance, static skill `response_guidance`, returned names, prices, categories, and search-scoped confirmed filters, followed by the same generic unverified-property disclosure. Scoped zero-result evidence cannot establish absence outside its exact taxonomy and filters. The graph and grounding editor share one execution deadline; a grounding timeout finalizes as failed with `grounding_timeout`, uses the deterministic catalog renderer for search-only evidence, and otherwise returns a fixed retry/cart-check response rather than the unverified draft. Editor errors and empty or whitespace-only editor output use the same fail-closed response rule with `grounding_error`.
    - Optional output guardrails run, then the memory service finalizes the durable turn as completed, blocked, or failed before products, images, content, and metrics are emitted over SSE. An exact retry of a finalized request replays its stored response without model/tool work. Internal diagnostics include bounded current-turn product evidence from successful catalog search and detail results plus bounded `catalog_scope_outcomes` for zero-result scopes; each search scope remains attached to its own products. A rejected tool call reports the gate that refused it; a multi-scope call refused for only some roles remains a completed call and reports those roles under `scope_rejections`. Public query responses contain an empty diagnostics object by default. `EXPOSE_AGENT_DIAGNOSTICS=true` exposes the detailed trace only for a trusted operator or evaluation deployment. Final-text extraction skips tool, tool-calling, and internal activation messages; if no shopper-facing answer exists, the runtime returns a safe fallback with `incomplete_agent_response`. On graph failure, bounded current-turn messages are captured before checkpoint cleanup.
    - Weather is optional and off by default (`WEATHER_ENABLED=false`). Enabled, `get_weather_forecast_tool` is registered with Deep Agents and granted only by the `destination-weather` skill; its forecast rules reach only a model request granted the tool. It accepts a city, town or postal code the shopper named in the conversation plus one exact date or a complete inclusive range within 15 days, at most twice per turn, and a reply that uses it carries the provider attribution. It has no FastAPI route or UI of its own. Disabled, it is not registered, and startup, health checks, and shopper turns make no weather request.
-4. For product discovery, orchestrator calls catalog retriever:
+4. For product discovery, chain server calls catalog retriever:
    - `/query/text` for search.
    - `/products/{product_id}` for deterministic details after a search ref is known.
-   - `/capabilities` once per successful orchestrator process lifecycle for the catalog-owned query contract.
+   - `/capabilities` once per successful chain-server process lifecycle for the catalog-owned query contract.
 
 ## 3) Source Map (Where to Change What)
 
 - Serving agent orchestration, turn lifecycle, and agent assembly:
-  `orchestrator/src/runtime/runtime.py`
+  `chain_server/src/runtime/runtime.py`
 - Split out of it: the grounding-editor rewrite (`runtime/grounding.py`),
   durable turn start and finalize (`runtime/conversation_turns.py`), system
   prompt and user message assembly (`runtime/prompt_assembly.py`), trace spans
   and NeMo Relay (`runtime/tracing.py`), and the product showing streamed to
   the browser (`runtime/streaming.py`)
-- System-prompt and grounding-editor prompt text: `orchestrator/src/runtime/prompts.py`
+- System-prompt and grounding-editor prompt text: `chain_server/src/runtime/prompts.py`
 - Agent tools, one module per area (`catalog.py`, `cart.py`, `store.py`,
-  `weather.py`, `skills.py`): `orchestrator/src/tools/`
-- Capability-derived model-visible tool schemas: `orchestrator/src/tools/schemas.py`
-- Model-visible tool result text: `orchestrator/src/catalog_format.py`,
-  `orchestrator/src/cart_format.py`
-- Reusable model-visible catalog search rules: `CATALOG_SEARCH_RULES` in `orchestrator/src/tools/catalog.py`
-- Shopper-skill registry, frontmatter validation, and immutable tool policy: `orchestrator/src/tools/policy.py`
-- Per-turn skill activation, model-visible tool binding, and dispatch grant gate: `orchestrator/src/tools/skill_gate.py`
-- Durable conversation-turn client and wire contracts: `orchestrator/src/conversation_memory.py`
-- API contract and SSE endpoint: `orchestrator/src/main.py`
-- Catalog capability cache/prompt projection: `orchestrator/src/catalog_capabilities.py`
-- Catalog intent validation/execution: `orchestrator/src/catalog_request.py`
-- Commerce service adapters: `orchestrator/src/commerce_tools.py`
-- Operator-managed store policy content: `shared/configs/orchestrator/store_policies.yaml`
-- Shopper behavior skills and references: `orchestrator/skills/shopper/`
-- Image/video perception: `orchestrator/src/media_perception.py`
+  `weather.py`, `skills.py`): `chain_server/src/tools/`
+- Capability-derived model-visible tool schemas: `chain_server/src/tools/schemas.py`
+- Model-visible tool result text: `chain_server/src/catalog_format.py`,
+  `chain_server/src/cart_format.py`
+- Reusable model-visible catalog search rules: `CATALOG_SEARCH_RULES` in `chain_server/src/tools/catalog.py`
+- Shopper-skill registry, frontmatter validation, and immutable tool policy: `chain_server/src/tools/policy.py`
+- Per-turn skill activation, model-visible tool binding, and dispatch grant gate: `chain_server/src/tools/skill_gate.py`
+- Durable conversation-turn client and wire contracts: `chain_server/src/conversation_memory.py`
+- API contract and SSE endpoint: `chain_server/src/main.py`
+- Catalog capability cache/prompt projection: `chain_server/src/catalog_capabilities.py`
+- Catalog intent validation/execution: `chain_server/src/catalog_request.py`
+- Commerce service adapters: `chain_server/src/commerce_tools.py`
+- Operator-managed store policy content: `shared/configs/chain_server/store_policies.yaml`
+- Shopper behavior skills and references: `chain_server/skills/shopper/`
+- Image/video perception: `chain_server/src/media_perception.py`
 - Weather request/result contract and Visual Crossing adapter:
-  `orchestrator/src/weather.py`
+  `chain_server/src/weather.py`
 - The agent's forecast tool: `get_weather_forecast_tool` in
-  `orchestrator/src/tools/weather.py`, granted by
-  `orchestrator/skills/shopper/destination-weather/SKILL.md`
-- Shared request/state models: `orchestrator/src/agenttypes.py`
+  `chain_server/src/tools/weather.py`, granted by
+  `chain_server/skills/shopper/destination-weather/SKILL.md`
+- Shared request/state models: `chain_server/src/agenttypes.py`
 - The composer receives separated authority lanes. Never merge lanes with different authority into one block: dialogue carries intent, the product index carries identity, the cart is authoritative, tool evidence establishes current facts.
 - Deterministic code may establish that a catalog filter is unadvertised; it must not decide the conversational move. Never substitute a fixed refusal for the model's composed answer.
 - The grounding editor must run whenever any hydrated authority lane exists — tool evidence, historical product identity, or cart. Dialogue is intent only and never grounds a product claim.
 - Committed commerce effects ride on the tool artifact and must be consulted before any read-only failure fallback. If the graph snapshot cannot be read, warn about the cart: absence of evidence is not evidence of absence.
-- Tool-loop control outcomes are typed: tools return `(text, artifact)` via `orchestrator/src/runtime/control_signals.py`, and the middleware reads the artifact. Never recover control state by parsing tool text.
-- Tool-loop control prefixes are defined once in `orchestrator/src/tools/loop_control.py`. Never re-declare one as a literal elsewhere; producers render from the constant and matchers key off it.
+- Tool-loop control outcomes are typed: tools return `(text, artifact)` via `chain_server/src/runtime/control_signals.py`, and the middleware reads the artifact. Never recover control state by parsing tool text.
+- Tool-loop control prefixes are defined once in `chain_server/src/tools/loop_control.py`. Never re-declare one as a literal elsewhere; producers render from the constant and matchers key off it.
 - A catalog-search gate that turns a scope back records which gate it was, as a
   `SearchRejection` on the tool artifact, one entry per searched scope in scope
   order. Many gates share one model-visible prefix, so the text can never name
@@ -78,10 +78,10 @@ Top-level orchestration is via `docker-compose.yaml`; optional locally deployed 
   Do not add a code to a path that hands the model an instruction to continue
   the conversation: a call whose every scope carries a code is treated as a
   refused call and receives the fixed refusal response.
-- Message-shape helpers: `orchestrator/src/runtime/message_shape.py`. Pure readers over LangChain messages; no runtime state.
-- Request-local turn state: `orchestrator/src/runtime/turn_scope.py`. Search budgets, catalog-repair bookkeeping, product evidence, and retrieved images live on one `TurnScope` per turn, not as closure variables. New per-turn mutable state belongs there.
+- Message-shape helpers: `chain_server/src/runtime/message_shape.py`. Pure readers over LangChain messages; no runtime state.
+- Request-local turn state: `chain_server/src/runtime/turn_scope.py`. Search budgets, catalog-repair bookkeeping, product evidence, and retrieved images live on one `TurnScope` per turn, not as closure variables. New per-turn mutable state belongs there.
 - Prior turns are carried typed on `State.dialogue`. `State.context` is rendered prompt text only and must never be parsed back into state or authority. Dialogue establishes shopper intent, never product, policy, inventory, or cart facts.
-- The pre-Deep-Agents pipeline (`graph.py`, `planner.py`, `retriever.py`, `cart.py`, `chatter.py`, `summarizer.py`, `functions.py`) has been deleted. `runtime/runtime.py` is the only orchestrator serving path.
+- The pre-Deep-Agents pipeline (`graph.py`, `planner.py`, `retriever.py`, `cart.py`, `chatter.py`, `summarizer.py`, `functions.py`) has been deleted. `runtime/runtime.py` is the only chain-server serving path.
 
 - Catalog API entrypoints and request validation: `catalog_retriever/src/main.py`
 - JSONL loading/search-document construction: `catalog_retriever/src/catalog.py`
@@ -105,7 +105,7 @@ Top-level orchestration is via `docker-compose.yaml`; optional locally deployed 
 - UI message/cart-toast parsing helpers: `ui/src/utils/index.ts`
 
 - Shared config roots:
-  - `shared/configs/orchestrator/`
+  - `shared/configs/chain_server/`
   - `shared/configs/catalog_retriever/`
   - `shared/configs/rails/`
 
@@ -153,7 +153,7 @@ The profile sets `LLM_*`, `VLM_*`, `TEXT_EMBED_*`, `RAILS_*` and
 three guardrail models are not started and the UI hides the Guardrails toggle
 (`docs/GUARDRAILS.md`). Reasoning output is suppressed via
 `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` on the
-orchestrator side so streamed tokens flow eagerly.
+chain-server side so streamed tokens flow eagerly.
 
 ### Local app-code mode (recommended for iterative development)
 
@@ -169,9 +169,9 @@ The local runner:
 - Starts app services as local processes and uses Docker only for Milvus infra (`etcd`, `seaweedfs`, `milvus`).
 - Uses `shared/configs/models.yaml` with the URLs and model names from the shell environment; source `.env.example` first, or run `configure`.
 - `configure --model-host http://HOST` writes ignored `.local-run/model-endpoints.env` with remote model URLs.
-- Retains `WEATHER_ENABLED` and `WEATHER_API_KEY` only for the orchestrator
+- Retains `WEATHER_ENABLED` and `WEATHER_API_KEY` only for the chain-server
   process and removes them from memory, guardrail, catalog, and UI processes.
-- Sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, and `VITE_API_BASE_URL=/api` (the Vite dev server proxies `/api` to the orchestrator).
+- Sets `SHARED_ROOT`, `SHARED_CONFIG_ROOT`, and `VITE_API_BASE_URL=/api` (the Vite dev server proxies `/api` to the chain server).
 - Creates runtime files under ignored `.local-run/` and links ignored `ui/public/images -> shared/images`.
 
 If a remote model host is needed, ask for the base host URL and run `configure`; do not hard-code private hosts in committed files.
@@ -180,7 +180,7 @@ If a remote model host is needed, ask for the base host URL and run `configure`;
 
 ```bash
 curl -sS http://localhost:3000            # UI via nginx
-curl -sS http://localhost:8009/health     # orchestrator
+curl -sS http://localhost:8009/health     # chain server
 curl -sS http://localhost:8010/health     # catalog retriever
 curl -sS http://localhost:8011/health     # memory retriever
 ```
@@ -214,14 +214,14 @@ Integration outputs are generated under `tests/integration/conversations/<TEST_P
 ## 6) Configuration Rules
 
 - Services load configs from `SHARED_CONFIG_ROOT` when set, otherwise `/app/shared/configs`.
-- Service behavior lives in `shared/configs/orchestrator/config.yaml`,
+- Service behavior lives in `shared/configs/chain_server/config.yaml`,
   `shared/configs/catalog_retriever/config.yaml`, and
   `shared/configs/rails/config.yml`.
 - Model URLs and model names are set only in `.env.example` (or a profile copied from it). `models.yaml` names each role's variables and its `source`: `endpoint`, `local_model`, or `disabled`. A `base_url` or `model` written on a role in `models.yaml` is rejected.
 - Catalog image helpers read assets from `SHARED_ROOT` when set, otherwise `/app/shared`.
 - Catalog data and role-sidecar paths can be overridden with
   `CATALOG_DATA_SOURCE` and `CATALOG_SCHEMA_SOURCE`.
-- UI API base URL defaults to `/api` for nginx, but the Vite dev server proxies `/api` to `ORCHESTRATOR_URL` (default `http://localhost:8009`).
+- UI API base URL defaults to `/api` for nginx, but the Vite dev server proxies `/api` to `CHAIN_SERVER_URL` (default `http://localhost:8009`).
 - Use `python scripts/model_config.py show --validate` to inspect resolved endpoints without printing secrets.
 
 Key env vars:
@@ -245,7 +245,7 @@ Key env vars:
 - `CATALOG_DATA_SOURCE`, `CATALOG_SCHEMA_SOURCE`
 - `SHARED_CONFIG_ROOT` (local runner / non-container config root)
 - `SHARED_ROOT` (local runner / non-container shared asset root)
-- `VITE_API_BASE_URL` (UI API base, default `/api`), `ORCHESTRATOR_URL` (Vite dev proxy target)
+- `VITE_API_BASE_URL` (UI API base, default `/api`), `CHAIN_SERVER_URL` (Vite dev proxy target)
 - `WEATHER_ENABLED` (registers the forecast tool with the shopper agent;
   default `false`)
 - `WEATHER_API_KEY` (Visual Crossing server-side key; required when weather is
@@ -258,7 +258,7 @@ Key env vars:
   - External app entrypoint is usually `http://localhost:3000` through nginx.
   - Standard Compose binds memory port `8011` to host loopback only. Containers
     use `http://memory-retriever:8011` on the private Compose network.
-- UI API base URL defaults to `/api` (nginx path); the local runner also sets `/api`, and Vite proxies it to the orchestrator.
+- UI API base URL defaults to `/api` (nginx path); the local runner also sets `/api`, and Vite proxies it to the chain server.
 - The memory service stores ordered shopper/assistant turns and cart state in a
   single-replica SQLite database. Compose uses
   `sqlite:////data/context.db` on the `memory-data` named volume; deleting that
@@ -280,7 +280,7 @@ Key env vars:
 - Deep Agents graph state uses request-scoped, in-process MemorySaver threads
   keyed by conversation and request identity. A successful durable finalize
   deletes the thread; a finalize failure preserves it for recovery. Remaining
-  threads disappear on orchestrator restart and are not shared across workers
+  threads disappear on chain-server restart and are not shared across workers
   or replicas.
   `CHECKPOINT_STORE=memory` is the only supported value; a compliant production
   shared graph backend remains an open decision.
@@ -333,14 +333,14 @@ Key env vars:
   sends one semantic text query per catalog call. The catalog makes no
   chat/completion call or LLM interpretation. Field roles come from the catalog
   sidecar; values, ranges, and taxonomy scopes come from the JSONL and are
-  exposed through `/capabilities`, not orchestrator config.
+  exposed through `/capabilities`, not chain-server config.
 - Catalog startup fingerprints the JSONL, sidecar, embedding models, image
   mode, and semantic template. Matching complete indexes are reused; changes
   rebuild all enabled catalog collections.
-- The orchestrator caches the first successful catalog capability response for
+- The chain server caches the first successful catalog capability response for
   its process lifetime. It uses the full contract for deterministic validation
   and a compact projection for the LLM prompt. After a catalog change, wait for
-  catalog health and then restart the orchestrator.
+  catalog health and then restart the chain server.
 - Search results use source `record_id` values. A search result carries the
   catalog-declared detail fields present on that product, so an attribute it
   lists is confirmed for that product and needs no further read; an attribute it
@@ -353,7 +353,7 @@ Key env vars:
   exact resolution can restore a prior product after restart or on another
   worker. Missing, ambiguous, or stale-catalog references require clarification
   or a fresh search.
-- Local LLM service is named `local-llm`; orchestrator reaches it through `LLM_BASE_URL` (set by `.env.local-models.example`), or through `local_models.services` in `shared/configs/models.yaml` when the app LLM role uses `source: local_model`.
+- Local LLM service is named `local-llm`; chain-server reaches it through `LLM_BASE_URL` (set by `.env.local-models.example`), or through `local_models.services` in `shared/configs/models.yaml` when the app LLM role uses `source: local_model`.
 - Tool calling against the locally deployed LLM requires `--enable-auto-tool-choice --tool-call-parser qwen3_coder`, set in the service's `command`. Without them, requests with `tool_choice="auto"` 400.
 - The Deep Agents model first selects shopper skills through the internal
   activation control tool. Only after the runtime injects the complete selected

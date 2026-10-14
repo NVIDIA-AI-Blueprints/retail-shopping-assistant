@@ -10,7 +10,7 @@ empty list, and an invented value never becomes a filter.
 
 from __future__ import annotations
 
-from orchestrator.src.vocabulary_judge import (
+from orchestrator.src.category_resolver import (
     ScopeQuestion,
     VocabularyVerdict,
     _read,
@@ -160,7 +160,7 @@ def test_nothing_here_reads_the_word_itself() -> None:
     unchanged, and this asserts there is no lexical path left to fall into.
     """
 
-    import orchestrator.src.vocabulary_judge as judge_module
+    import orchestrator.src.category_resolver as judge_module
 
     assert not hasattr(judge_module, "by_name_only")
     assert not hasattr(judge_module, "exact_identity_only")
@@ -187,7 +187,7 @@ def test_the_prompt_does_not_recommend_the_empty_answer() -> None:
     nearest thing, which is what this whole call exists to prevent.
     """
 
-    from orchestrator.src.vocabulary_judge import _prompt
+    from orchestrator.src.category_resolver import _prompt
 
     prompt = _prompt([ScopeQuestion("bag")], [], _SUBCATEGORIES, _COLOURS)
 
@@ -206,7 +206,7 @@ def test_a_description_may_be_answered_null_but_a_garment_never() -> None:
     the words the rule was measured on.
     """
 
-    from orchestrator.src.vocabulary_judge import _prompt
+    from orchestrator.src.category_resolver import _prompt
 
     prompt = _prompt([ScopeQuestion("light layer")], [], _SUBCATEGORIES, _COLOURS)
 
@@ -223,7 +223,7 @@ def test_a_role_in_a_look_is_not_a_garment_name() -> None:
     ten times in one turn, because nothing it could see explained the refusal.
     """
 
-    from orchestrator.src.vocabulary_judge import _prompt
+    from orchestrator.src.category_resolver import _prompt
 
     prompt = _prompt([ScopeQuestion("layer")], [], _SUBCATEGORIES, _COLOURS)
 

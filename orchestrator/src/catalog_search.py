@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -60,8 +59,10 @@ from .catalog_request import (
     build_catalog_search_plan,
     execute_catalog_search,
 )
-from .catalog_vocabulary import (
+from .category_resolver import (
+    ScopeQuestion,
     _advertised_scope_match,
+    _advertised_subcategories,
     _advertised_taxonomy_scope_issue,
     _agent_selected_scope_is_advertised,
     _catalog_execution_taxonomy_status,
@@ -71,6 +72,8 @@ from .catalog_vocabulary import (
     _product_scope_key,
     _products_with_subcategory_coverage,
     _same_product_scope,
+    _scoped_to,
+    _selected_advertised_subcategories,
 )
 from .lexical_provenance import (
     _resolved_agent_selected_product_type,
@@ -90,13 +93,11 @@ from .runtime.model_usage import (
 from .runtime.turn_scope import CatalogRepairState, TurnScope
 from .search_input import (
     _UNSUPPORTED_SEARCH_MODE_MESSAGE,
-    _advertised_subcategories_for_selection,
     _catalog_search_scope,
     _generic_shopper_guidance,
     _multi_subcategory_candidate_limit,
     _normalized_scope_value,
     _safe_shopper_guidance,
-    _selected_advertised_subcategories,
     _taxonomy_hard_constraints,
     _tool_search_mode,
     _unsupported_requirement_message,
@@ -112,7 +113,6 @@ from .tools.loop_control import (
 from .tools.schemas import (
     SearchCatalogToolArguments,
 )
-from .vocabulary_judge import ScopeQuestion
 
 #: What a search step hands back: nothing, meaning the search continues, or the
 #: text the model reads -- paired with the evidence artifact behind it when the
@@ -719,9 +719,9 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 taxonomy_status == "agent_selected_type"
                 and not shopper_stated_scope
             ):
-                advertised_choices = _advertised_subcategories_for_selection(
-                    taxonomy,
+                advertised_choices = _advertised_subcategories(
                     capabilities,
+                    taxonomy_payload.get("category"),
                 )
                 repair_guidance = (
                     " For a role the shopper did not name, keep your role "  # nosec B608 - LLM prompt text, not SQL
@@ -1915,34 +1915,6 @@ def _resolved_against_the_catalogue(
     return _role_this_shop_does_not_carry(ctx, attempt)
 
 
-def _scoped_to(
-    taxonomy: BaseModel | dict[str, Any],
-    subcategories: Sequence[str],
-    capabilities: CatalogCapabilities,
-) -> dict[str, Any]:
-    """This role's scope, as the judge named it.
-
-    The categories are derived from the subcategories rather than kept from
-    what the model sent, because the judge can move a role across a category
-    boundary -- "shoes" sent as apparel resolves into footwear -- and a scope
-    carrying the old category alongside the new subcategories filters to their
-    intersection, which is empty.
-    """
-
-    payload = (
-        taxonomy.model_dump()
-        if isinstance(taxonomy, BaseModel)
-        else dict(taxonomy or {})
-    )
-    payload["subcategory"] = list(dict.fromkeys(subcategories))
-    payload["category"] = [
-        name
-        for name, category in capabilities.taxonomy.categories.items()
-        if any(value in category.subcategories for value in payload["subcategory"])
-    ]
-    return payload
-
-
 def _role_this_shop_does_not_carry(
     ctx: SearchContext,
     attempt: _Attempt,
@@ -1970,16 +1942,6 @@ def _role_this_shop_does_not_carry(
         "is no correction to make. Tell the shopper plainly, answer with what "
         "the other roles found, and do not offer another garment in its place "
         "or present one as the closest version of it."
-    )
-
-
-def _advertised_subcategories(capabilities: CatalogCapabilities) -> frozenset[str]:
-    """Every subcategory this catalog advertises, across all categories."""
-
-    return frozenset(
-        name
-        for category in capabilities.taxonomy.categories.values()
-        for name in category.subcategories
     )
 
 
@@ -2266,7 +2228,7 @@ def _judge_this_call(ctx: SearchContext, attempts: list[_Attempt]) -> None:
     if not questions and not colour_words:
         return
 
-    subcategory_names = sorted(_advertised_subcategories(ctx.capabilities))
+    subcategory_names = _advertised_subcategories(ctx.capabilities)
     verdict = judge.judge(
         questions,
         colour_words,

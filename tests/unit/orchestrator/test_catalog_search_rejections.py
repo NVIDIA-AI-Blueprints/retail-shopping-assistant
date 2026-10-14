@@ -39,7 +39,7 @@ from orchestrator.src.tools.schemas import (
     _search_catalog_scopes_input_model,
     _search_catalog_tool_input_model,
 )
-from orchestrator.src.vocabulary_judge import VocabularyVerdict
+from orchestrator.src.category_resolver import VocabularyVerdict
 from shared.commerce_contracts import (
     CatalogCapabilities,
     CatalogFilterCapability,

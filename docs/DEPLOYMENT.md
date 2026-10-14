@@ -925,7 +925,7 @@ output token ceiling are set in one place, listed here:
 | Shopping agent: picks tools, writes the reply | `llm_temperature` in `shared/configs/orchestrator/config.yaml`, default `0.7`; `APP_LLM_TEMPERATURE` overrides | `llm_max_output_tokens` in the same file, default `1024`; `LLM_MAX_OUTPUT_TOKENS` overrides |
 | Grounding editor: rewrites the draft to match the tools' product data | Same client as the agent: `llm_temperature` | `grounding_editor_max_output_tokens` in the same file, default `1024`; `GROUNDING_EDITOR_MAX_OUTPUT_TOKENS` overrides |
 | Media perception: reads uploaded photos and videos | `0.6`, `_TEMPERATURE` in `orchestrator/src/media_perception.py` | `4096`, `_MAX_TOKENS` in the same file; change `_MAX_ANALYSIS_CHARS` (`16000`) with it, as it caps the analysis passed to the agent |
-| Vocabulary judge: matches shopper words to catalog values | `0`, in `orchestrator/src/vocabulary_judge.py` | `1200`, `_MAX_TOKENS` in the same file |
+| Vocabulary judge: matches shopper words to catalog values | `0`, in `orchestrator/src/category_resolver.py` | `1200`, `_MAX_TOKENS` in the same file |
 
 `APP_LLM_FREQUENCY_PENALTY` optionally adds a frequency penalty to the agent
 and grounding editor. It is off when unset.

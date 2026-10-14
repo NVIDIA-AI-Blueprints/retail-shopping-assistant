@@ -7,7 +7,7 @@ on:
 
 jobs:
   Analysis:
-    runs-on: ubuntu-latest
+    runs-on: arc-runners-org-nvidia-ai-bp-4-gpu
 
     steps:
       - name: Checkout code

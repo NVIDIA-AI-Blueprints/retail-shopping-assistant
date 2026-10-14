@@ -273,6 +273,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
   const [mediaCapabilities, setMediaCapabilities] = useState<MediaCapabilities>(defaultMediaCapabilities);
   const [messages, setMessages] = useState<MessageData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [progressLabel, setProgressLabel] = useState<string | null>(null);
   const messageRefs = useRef<React.RefObject<HTMLDivElement>[]>([]);
   const [lastAssistantIndex, setLastAssistantIndex] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -592,6 +593,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
       }
 
       // Add loading message
+      setProgressLabel(null);
       addMessage("assistant", "loader", "");
       setNewMessage("");
 
@@ -698,6 +700,14 @@ const Chatbox: React.FC<ChatboxProps> = ({
                 .filter((product): product is ProductSummary => product !== null);
               const mergedProducts = mergeProductResults(products);
               enrichExistingImageRows(mergedProducts);
+              continue;
+            }
+
+            if (type === "progress") {
+              const label = (payload as { label?: unknown } | null)?.label;
+              if (typeof label === "string" && label) {
+                setProgressLabel(label);
+              }
               continue;
             }
 
@@ -983,6 +993,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
               selectedProductName={selectedProduct?.productName}
               onProductSelect={onProductSelect}
               guardrailReport={msg.guardrailReport}
+              progressLabel={msg.content === "loader" ? progressLabel : null}
               ref={messageRefs.current[messages.length - 1 - index]}
             />
           ))}

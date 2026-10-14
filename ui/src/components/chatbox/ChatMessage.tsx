@@ -37,7 +37,7 @@ import nvinfo from "../../assets/nvinfo.jpg";
 const markdown = new Marked({ async: false, breaks: true });
 
 const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
-  ({ role, content, productName, selectedProductName, onProductSelect, guardrailReport }, ref) => {
+  ({ role, content, productName, selectedProductName, onProductSelect, guardrailReport, progressLabel }, ref) => {
     
     // CSS class mapping for markdown elements
     const classMap: Record<string, string> = {
@@ -76,8 +76,16 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
         return (
           <div ref={ref} style={{ display: "inline-flex", alignItems: "flex-start", gap: 8, marginTop: 10 }}>
             <img src={nvinfo} alt="Assistant" style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover" }} />
-            <div className={`messages__item messages__item--${role}`}>
+            <div
+              className={`messages__item messages__item--${role}`}
+              style={{ display: "inline-flex", alignItems: "center", gap: 10 }}
+            >
               <Loader />
+              {progressLabel && (
+                <span className="messages__progress" aria-live="polite">
+                  {progressLabel}…
+                </span>
+              )}
             </div>
           </div>
         );

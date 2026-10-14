@@ -5,16 +5,111 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from threading import Lock
 from typing import Any
+
+from langchain.agents.middleware.types import AgentMiddleware
 
 from ..agenttypes import State
 from ..media_perception import summarize_media_analysis
 
 logger = logging.getLogger(__name__)
+
+#: What the shopper sees while a tool runs. Tool names are internal and must
+#: never reach the browser; a tool missing here shows nothing new.
+_TOOL_PROGRESS_LABELS = {
+    "search_catalog_tool": "Searching the catalog",
+    "get_product_details_tool": "Checking product details",
+    "resolve_conversation_products_tool": "Looking back at earlier products",
+    "describe_catalog_tool": "Checking what the store carries",
+    "get_cart_tool": "Checking your cart",
+    "view_cart_total_tool": "Checking your cart",
+    "add_cart_items_tool": "Updating your cart",
+    "remove_cart_item_tool": "Updating your cart",
+    "update_cart_items_tool": "Updating your cart",
+    "get_store_policy_tool": "Checking store policies",
+    "check_product_availability_tool": "Checking availability",
+    "check_active_promotions_tool": "Checking current promotions",
+    "get_weather_forecast_tool": "Checking the weather forecast",
+}
+WRITING_REPLY_LABEL = "Writing your reply"
+CHECKING_MESSAGE_LABEL = "Checking your message"
+CHECKING_REPLY_LABEL = "Checking the reply"
+
+
+def media_progress_label(media: Sequence[Mapping[str, Any]]) -> str:
+    """What perception is looking at, as the shopper would say it."""
+
+    kinds = {str(item.get("type", "")) for item in media}
+    if kinds == {"video"}:
+        return "Looking at your video"
+    if kinds == {"image"}:
+        return "Looking at your photo" if len(media) == 1 else "Looking at your photos"
+    return "Looking at what you shared"
+
+
+def _emit_progress_label(on_progress: Any, label: str) -> None:
+    """Tell the browser what the turn is doing now. Never fails the turn."""
+
+    if on_progress is None:
+        return
+    try:
+        on_progress(
+            json.dumps(
+                {
+                    "type": "progress",
+                    "payload": {"stage": "activity", "label": label},
+                    "timestamp": time.time(),
+                }
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - progress never breaks a turn.
+        logger.warning("Could not emit progress: %s", type(exc).__name__)
+
+
+class ToolProgressMiddleware(AgentMiddleware):
+    """Announce each allowed tool call to the browser before it runs.
+
+    Observes only: the request and the tool's result pass through unchanged.
+    Tools can run on worker threads, so every message is handed to the event
+    loop that owns ``on_progress``.
+    """
+
+    def __init__(self, on_progress: Callable[[str], Any]) -> None:
+        super().__init__()
+        self._on_progress = on_progress
+        self._loop = asyncio.get_running_loop()
+        self._lock = Lock()
+        self._last_label: str | None = None
+
+    def _announce(self, request: Any) -> None:
+        tool_call = getattr(request, "tool_call", None) or {}
+        label = _TOOL_PROGRESS_LABELS.get(str(tool_call.get("name", "")))
+        if label is None:
+            return
+        with self._lock:
+            if label == self._last_label:
+                return
+            self._last_label = label
+        # A closed loop means the turn is already over.
+        with contextlib.suppress(RuntimeError):
+            self._loop.call_soon_threadsafe(_emit_progress_label, self._on_progress, label)
+
+    def wrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        self._announce(request)
+        return handler(request)
+
+    async def awrap_tool_call(
+        self, request: Any, handler: Callable[[Any], Awaitable[Any]]
+    ) -> Any:
+        self._announce(request)
+        return await handler(request)
 
 
 def _emit_media_progress(on_progress: Any, state: State) -> None:

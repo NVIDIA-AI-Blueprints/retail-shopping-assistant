@@ -70,6 +70,7 @@ export interface ChatMessageProps {
   selectedProductName?: string;
   onProductSelect?: (product: ProductSummary) => void;
   guardrailReport?: GuardrailReport;
+  progressLabel?: string | null;
 }
 
 export interface ApiRequest {

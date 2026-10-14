@@ -2,16 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 services:
-  # Chain Server
-  chain-server:
+  # Orchestrator
+  orchestrator:
     build:
-      context: ./chain_server
+      context: ./orchestrator
       args:
         # false by default: Relay reads prompts, completions and cart
         # contents, so the shipped image does not carry a library that can
         # export them. Installing it is a deliberate act.
         INSTALL_RELAY: ${INSTALL_RELAY:-false}
-    container_name: chain-server
+    container_name: orchestrator
     ports:
       - "8009:8009"
     environment:
@@ -20,7 +20,7 @@ services:
       - LLM_MODEL=${LLM_MODEL:-}
       # The agent's sampling; docs/DEPLOYMENT.md, Model Sampling and Output
       # Limits. Pass-through, no default here: empty means unset, so
-      # shared/configs/chain_server/config.yaml wins.
+      # shared/configs/orchestrator/config.yaml wins.
       - APP_LLM_TEMPERATURE=${APP_LLM_TEMPERATURE:-}
       - APP_LLM_FREQUENCY_PENALTY=${APP_LLM_FREQUENCY_PENALTY:-}
       - LLM_MAX_OUTPUT_TOKENS=${LLM_MAX_OUTPUT_TOKENS:-}
@@ -28,8 +28,8 @@ services:
       - VLM_API_KEY=${VLM_API_KEY:-${NVIDIA_API_KEY:-}}
       - VLM_BASE_URL=${VLM_BASE_URL:-}
       - VLM_MODEL=${VLM_MODEL:-}
-      # Pass-through, no defaults here: shared/configs/chain_server/config.yaml
-      # holds them (relay_enabled's is in chain_server/src/config.py), and the
+      # Pass-through, no defaults here: shared/configs/orchestrator/config.yaml
+      # holds them (relay_enabled's is in orchestrator/src/config.py), and the
       # service URLs there already name the Compose hosts. Empty means unset,
       # so config wins.
       - CATALOG_RETRIEVER_URL=${CATALOG_RETRIEVER_URL:-}
@@ -49,8 +49,8 @@ services:
       # An empty value fails at startup on purpose, so this one keeps its
       # default; memory is the only store.
       - CHECKPOINT_STORE=${CHECKPOINT_STORE-memory}
-      # Pass-through: chain_server/Dockerfile holds these defaults.
-      - CHAIN_SERVER_RELOAD=${CHAIN_SERVER_RELOAD:-}
+      # Pass-through: orchestrator/Dockerfile holds these defaults.
+      - ORCHESTRATOR_RELOAD=${ORCHESTRATOR_RELOAD:-}
       - SHUTDOWN_GRACE_SECONDS=${SHUTDOWN_GRACE_SECONDS:-}
       # Unset by default: no endpoint means no exporter and no instrumentation.
       # Set it to http://otel-collector:4318 to trace.
@@ -216,7 +216,7 @@ services:
     volumes:
       - ./shared:/app/shared
     depends_on:
-      - chain-server
+      - orchestrator
     networks:
       - shopping-network
 
@@ -318,18 +318,18 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf
     depends_on:
       - frontend
-      - chain-server
+      - orchestrator
     networks:
       - shopping-network
 
   # OpenTelemetry Collector - the seam between the app and any trace backend.
-  # The chain server exports OTLP here and knows nothing else; changing where
+  # The orchestrator exports OTLP here and knows nothing else; changing where
   # traces land is a change to otel-collector-config.yaml, not to any service.
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.140.0
     container_name: otel-collector
     command: ["--config=/etc/otel-collector-config.yaml"]
-    # Published on loopback so a chain server run as a local process -- which is
+    # Published on loopback so an orchestrator run as a local process -- which is
     # how the local runner starts it -- can reach the collector. Inside compose
     # the service name resolves without this.
     ports:
@@ -342,19 +342,19 @@ services:
       - shopping-network
 
   # NeMo Relay's loopback hop. Relay sends plain HTTP only to localhost or a
-  # loopback address, and otel-collector is neither from inside chain-server.
-  # This shares chain-server's network namespace, listens on 127.0.0.1 there,
-  # and forwards to otel-collector. Recreating chain-server orphans it, so
-  # restart both together: `docker compose up -d chain-server relay-collector`.
+  # loopback address, and otel-collector is neither from inside orchestrator.
+  # This shares orchestrator's network namespace, listens on 127.0.0.1 there,
+  # and forwards to otel-collector. Recreating orchestrator orphans it, so
+  # restart both together: `docker compose up -d orchestrator relay-collector`.
   relay-collector:
     image: otel/opentelemetry-collector-contrib:0.140.0
     container_name: relay-collector
     command: ["--config=/etc/relay-collector-config.yaml"]
-    network_mode: "service:chain-server"
+    network_mode: "service:orchestrator"
     volumes:
       - ./relay-collector-config.yaml:/etc/relay-collector-config.yaml
     depends_on:
-      - chain-server
+      - orchestrator
       - otel-collector
 
   # Arize Phoenix - trace viewer.

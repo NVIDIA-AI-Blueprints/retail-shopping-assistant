@@ -32,7 +32,7 @@ def load_runner_module():
         ("memory-retriever", False),
         ("guardrails", False),
         ("catalog-retriever", False),
-        ("chain-server", True),
+        ("orchestrator", True),
     ],
 )
 def test_python_service_weather_environment_is_scoped(
@@ -114,7 +114,7 @@ def test_ui_process_does_not_receive_weather_environment(
     assert isinstance(process_env, dict)
     assert process_env["UNRELATED_SETTING"] == "preserved"
     # Relative, so one forwarded port serves the app and its API. An
-    # absolute chain-server URL is resolved by the browser and breaks the
+    # absolute orchestrator URL is resolved by the browser and breaks the
     # moment the browser is not on the machine running the services.
     assert process_env["VITE_API_BASE_URL"] == "/api"
     assert "WEATHER_ENABLED" not in process_env

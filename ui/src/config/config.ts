@@ -44,7 +44,7 @@ export interface AppConfig {
 
 // Get configuration based on environment
 const getConfig = (): AppConfig => {
-  // Default to nginx proxy routing, but allow local development to target chain-server directly.
+  // Default to nginx proxy routing, but allow local development to target orchestrator directly.
   const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
 
   return {

@@ -50,13 +50,13 @@ This crosses three owners, which is why it is worth naming who does what:
 
 | Step | Owner | What happens |
 | --- | --- | --- |
-| Discover | Chain server | Fetches `/capabilities` on first use and caches it for the process lifetime |
+| Discover | Orchestrator | Fetches `/capabilities` on first use and caches it for the process lifetime |
 | Interpret | Shopper LLM | Turns shopper language into a structured request, using only advertised fields and values |
-| Enforce | Chain server | Validates that request against the cached contract, then maps it or refuses |
+| Enforce | Orchestrator | Validates that request against the cached contract, then maps it or refuses |
 | Retrieve | Catalog service | Runs the embedding search with the validated hard filters and returns product refs |
 
 Capabilities are advertised, but never trusted as executable instructions. The
-chain server validates the model's intent against them, and the catalog service
+orchestrator validates the model's intent against them, and the catalog service
 validates the arriving request again. Both checks earn their place: the chain's
 copy is cached and can be stale, while the catalog is the one actually holding
 the snapshot.
@@ -139,7 +139,7 @@ This is what lets the system state "dresses have observed neckline values" or
 "boots have shaft height" without a single `if category == ...` branch. A new
 category picks up its own node from the same grouping pass.
 
-Port `8009` returns the chain server's cached copy. The chain renders a compact
+Port `8009` returns the orchestrator's cached copy. The chain renders a compact
 projection of it into the prompt rather than the whole object, dropping counts
 and coverage while keeping the real taxonomy field names, every observed value,
 and whether a filter is also semantically searchable:
@@ -158,7 +158,7 @@ Taxonomy-specific field availability (category > subcategory):
 Every name, value, and range there is generated. None of it is application
 configuration.
 
-The first successful fetch is cached for the chain-server process lifetime; a
+The first successful fetch is cached for the orchestrator process lifetime; a
 failed first fetch is not cached, so a later request retries. There is no
 per-turn refresh, which is safe because the catalog revalidates every request
 against its live snapshot and fails closed on anything stale.
@@ -345,11 +345,11 @@ deliberately serving nothing.
    curl -s http://localhost:8010/capabilities
    ```
 
-5. Restart the chain server so it drops its process-lifetime cached contract,
+5. Restart the orchestrator so it drops its process-lifetime cached contract,
    and confirm the chain-side copy before serving traffic.
 
    ```bash
-   docker compose restart chain-server
+   docker compose restart orchestrator
    curl -s http://localhost:8009/capabilities
    ```
 
@@ -374,8 +374,8 @@ Ingest, semantic documents, and the fingerprint are in
 request models in [`main.py`](../catalog_retriever/src/main.py), indexing in
 [`index_catalog.py`](../catalog_retriever/src/index_catalog.py), and retrieval,
 filtering, and ranking in
-[`retriever.py`](../catalog_retriever/src/retriever.py). On the chain-server
+[`retriever.py`](../catalog_retriever/src/retriever.py). On the orchestrator
 side, caching and prompt rendering are in
-[`catalog_capabilities.py`](../chain_server/src/catalog_capabilities.py),
-validation in [`catalog_request.py`](../chain_server/src/catalog_request.py),
-and tool wiring in [`tools/catalog.py`](../chain_server/src/tools/catalog.py).
+[`catalog_capabilities.py`](../orchestrator/src/catalog_capabilities.py),
+validation in [`catalog_request.py`](../orchestrator/src/catalog_request.py),
+and tool wiring in [`tools/catalog.py`](../orchestrator/src/tools/catalog.py).

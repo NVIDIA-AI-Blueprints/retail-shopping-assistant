@@ -72,7 +72,7 @@ Five services, each owning one concern:
 
 | Service | Owns |
 |---------|------|
-| **Chain Server** | The Deep Agents turn: skill activation, tool dispatch, grounded response assembly |
+| **Orchestrator** | The Deep Agents turn: skill activation, tool dispatch, grounded response assembly |
 | **Catalog Retriever** | Embedding search, hard filtering, and deterministic ranking. No generative model |
 | **Memory Retriever** | Durable turns, cart state, and presented-product history |
 | **Guardrails** | Content safety and topic control, when enabled |

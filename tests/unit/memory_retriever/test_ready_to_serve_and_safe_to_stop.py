@@ -134,7 +134,7 @@ def test_liveness_stays_on_the_event_loop_on_purpose() -> None:
 
 @pytest.mark.parametrize(
     "service",
-    ["memory_retriever", "catalog_retriever", "chain_server"],
+    ["memory_retriever", "catalog_retriever", "orchestrator"],
 )
 def test_a_stop_drains_instead_of_cutting_off(service: str) -> None:
     dockerfile = (REPO_ROOT / service / "Dockerfile").read_text()
@@ -152,22 +152,22 @@ def test_the_reload_watcher_is_off_unless_asked_for() -> None:
     watcher and in-flight turns are cut off however long the graceful window is.
     """
 
-    dockerfile = (REPO_ROOT / "chain_server" / "Dockerfile").read_text()
+    dockerfile = (REPO_ROOT / "orchestrator" / "Dockerfile").read_text()
 
-    assert "CHAIN_SERVER_RELOAD" in dockerfile
+    assert "ORCHESTRATOR_RELOAD" in dockerfile
     assert "--port 8009 --reload" not in dockerfile
 
 
-def test_the_chain_server_window_outlasts_a_whole_turn() -> None:
+def test_the_orchestrator_window_outlasts_a_whole_turn() -> None:
     """A turn may run to deepagents_execution_timeout_seconds.
 
     A shorter window means a rollout kills shoppers mid-answer, which is the
     failure this is for.
     """
 
-    dockerfile = (REPO_ROOT / "chain_server" / "Dockerfile").read_text()
+    dockerfile = (REPO_ROOT / "orchestrator" / "Dockerfile").read_text()
     config = yaml.safe_load(
-        (REPO_ROOT / "shared/configs/chain_server/config.yaml").read_text()
+        (REPO_ROOT / "shared/configs/orchestrator/config.yaml").read_text()
     )
 
     assert "SHUTDOWN_GRACE_SECONDS:-160" in dockerfile

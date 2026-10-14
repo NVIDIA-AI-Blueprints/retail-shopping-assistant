@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 
-# Ensure the repo root is importable so tests can `import chain_server.src...`.
+# Ensure the repo root is importable so tests can `import orchestrator.src...`.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -68,11 +68,11 @@ def model_endpoint_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
 
 @pytest.fixture
 def base_config() -> SimpleNamespace:
-    """Return a valid chain-server-shaped config object.
+    """Return a valid orchestrator-shaped config object.
 
-    Agent classes in ``chain_server`` accept any object with matching
+    Agent classes in ``orchestrator`` accept any object with matching
     attributes; using ``SimpleNamespace`` keeps the fixture decoupled from
-    the concrete ``ChainServerConfig`` pydantic model so we can test agents
+    the concrete ``OrchestratorConfig`` pydantic model so we can test agents
     in isolation.
     """
     return SimpleNamespace(
@@ -164,7 +164,7 @@ class FakeResponse:
     Providing a tiny shim here (rather than in each test file) keeps the
     service tests readable and avoids subtle coupling to the ``requests``
     implementation. Supports the subset of the interface exercised by the
-    chain-server agents: ``status_code``, ``text``, ``json``,
+    orchestrator agents: ``status_code``, ``text``, ``json``,
     ``raise_for_status``.
     """
 

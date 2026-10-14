@@ -150,14 +150,14 @@ def _rubric_scorer(rubrics: dict[str, str]):
 
 def _agent_setting(name: str) -> str:
     return subprocess.run(
-        ["docker", "exec", "chain-server", "printenv", name], capture_output=True, text=True
+        ["docker", "exec", "orchestrator", "printenv", name], capture_output=True, text=True
     ).stdout.strip()
 
 
 def judge_from_env() -> ModelClient:
     """`JUDGE_MODEL_*` when `JUDGE_MODEL_BASE_URL` is set, else the agent's own model.
 
-    The agent's endpoint, model, and key are read from the running chain-server,
+    The agent's endpoint, model, and key are read from the running orchestrator,
     so they are never mixed with a judge endpoint the agent's key is not for.
     """
     base_url = os.environ.get("JUDGE_MODEL_BASE_URL")

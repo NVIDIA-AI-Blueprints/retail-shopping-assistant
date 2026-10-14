@@ -13,7 +13,7 @@ from tests.conftest import REPO_ROOT
 
 def test_nginx_body_limit_covers_base64_expanded_video_upload() -> None:
     chain_config = yaml.safe_load(
-        (REPO_ROOT / "shared/configs/chain_server/config.yaml").read_text()
+        (REPO_ROOT / "shared/configs/orchestrator/config.yaml").read_text()
     )
     nginx_config = (REPO_ROOT / "nginx.conf").read_text()
 

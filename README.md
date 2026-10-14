@@ -122,7 +122,7 @@ five without guardrails (`GUARDRAILS_AVAILABLE=false`). See
 [Locally Hosted Models](docs/DEPLOYMENT.md#-locally-hosted-models) for the GPU
 sizing, setup, and model metrics. No GPUs of your own?
 [NVIDIA Brev](https://developer.nvidia.com/brev) offers pay-as-you-go GPU
-instances; [docs/BREV.md](docs/BREV.md) has a walkthrough.
+instances; [On NVIDIA Brev](docs/DEPLOYMENT.md#on-nvidia-brev) covers the setup.
 
 ## Notebooks
 

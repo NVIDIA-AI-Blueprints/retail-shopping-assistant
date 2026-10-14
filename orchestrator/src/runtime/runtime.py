@@ -86,7 +86,17 @@ from .replies import (
     _partial_product_results_response,
     _products_found_receipt,
 )
-from .streaming import _emit_media_progress, _streamed_in_group_order, the_showing
+from .streaming import (
+    CHECKING_MESSAGE_LABEL,
+    CHECKING_REPLY_LABEL,
+    WRITING_REPLY_LABEL,
+    ToolProgressMiddleware,
+    _emit_media_progress,
+    _emit_progress_label,
+    _streamed_in_group_order,
+    media_progress_label,
+    the_showing,
+)
 from .tracing import (
     _record_turn_diagnostics,
     _relay_instrumented,
@@ -475,6 +485,7 @@ class DeepAgentsRuntime(GroundingMixin, ConversationTurnMixin, PromptAssemblyMix
 
         if state.guardrails:
             safety_start = time.monotonic()
+            _emit_progress_label(on_progress, CHECKING_MESSAGE_LABEL)
             guardrail_conversation = _guardrail_conversation(state)
             speculative_enabled = (
                 self.config.guardrails_speculative_main_model_enabled
@@ -505,6 +516,7 @@ class DeepAgentsRuntime(GroundingMixin, ConversationTurnMixin, PromptAssemblyMix
                         identity,
                         turn_capabilities,
                         input_guardrail_tool_gate=speculative_gate,
+                        on_progress=on_progress,
                     )
                     input_message = self._build_user_message(state, identity)
                     agent_timeout = max(
@@ -599,6 +611,8 @@ class DeepAgentsRuntime(GroundingMixin, ConversationTurnMixin, PromptAssemblyMix
                 speculative_gate.allow()
 
         media_start = time.monotonic()
+        if state.media:
+            _emit_progress_label(on_progress, media_progress_label(state.media))
         try:
             state.media_analysis = await self._media_perception.analyze(state)
         except BaseException:
@@ -633,6 +647,7 @@ class DeepAgentsRuntime(GroundingMixin, ConversationTurnMixin, PromptAssemblyMix
                     state,
                     identity,
                     turn_capabilities,
+                    on_progress=on_progress,
                 )
             input_message = self._build_user_message(state, identity)
             # The grounding editor is not optional, so its budget is reserved
@@ -695,6 +710,8 @@ class DeepAgentsRuntime(GroundingMixin, ConversationTurnMixin, PromptAssemblyMix
                 grounding_reserve,
                 execution_deadline - time.monotonic(),
             )
+            if self.config.grounding_rewrite_enabled:
+                _emit_progress_label(on_progress, WRITING_REPLY_LABEL)
             state.response = await self._rewrite_response_for_grounding(
                 state,
                 result,
@@ -783,6 +800,7 @@ class DeepAgentsRuntime(GroundingMixin, ConversationTurnMixin, PromptAssemblyMix
 
         if state.guardrails:
             safety_start = time.monotonic()
+            _emit_progress_label(on_progress, CHECKING_REPLY_LABEL)
             output_decision = await self._guardrails.check_output(text=state.response)
             state.timings["safety_output"] = time.monotonic() - safety_start
             _record_safety_model_usage(
@@ -825,6 +843,7 @@ class DeepAgentsRuntime(GroundingMixin, ConversationTurnMixin, PromptAssemblyMix
         turn_capabilities: CatalogCapabilities | None = None,
         *,
         input_guardrail_tool_gate: InputGuardrailToolGate | None = None,
+        on_progress: Any = None,
     ):
         from deepagents import (
             GeneralPurposeSubagentProfile,
@@ -943,7 +962,11 @@ class DeepAgentsRuntime(GroundingMixin, ConversationTurnMixin, PromptAssemblyMix
             "model": self._create_chat_model(),
             "tools": agent_tools,
             "system_prompt": self._system_prompt(media=bool(state.media)),
-            "middleware": [tool_loop_control, skill_gate],
+            "middleware": [
+                tool_loop_control,
+                skill_gate,
+                *([ToolProgressMiddleware(on_progress)] if on_progress else []),
+            ],
             "backend": skills_backend,
             "checkpointer": self._checkpointer,
         }

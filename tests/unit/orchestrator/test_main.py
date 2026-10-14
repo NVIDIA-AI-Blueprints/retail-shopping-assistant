@@ -1275,7 +1275,7 @@ class TestDeepAgentsRuntimeScopes:
         monkeypatch.setattr(
             runtime,
             "_create_agent",
-            lambda state, identity, turn_capabilities=None: SlowAgent(),
+            lambda state, identity, turn_capabilities=None, **_: SlowAgent(),
         )
         monkeypatch.setattr(
             runtime._media_perception,
@@ -3578,6 +3578,7 @@ class TestDeepAgentsRuntimeRefs:
             state,
             identity,
             turn_capabilities=None,
+            **_,
         ):
             captured["state_query"] = state.query
             return FakeAgent()
@@ -3712,7 +3713,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_agent",
-            lambda state, identity, turn_capabilities=None: (
+            lambda state, identity, turn_capabilities=None, **_: (
                 FailingAgent()
             ),
         )
@@ -3873,7 +3874,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_agent",
-            lambda state, identity, turn_capabilities=None: (
+            lambda state, identity, turn_capabilities=None, **_: (
                 FakeAgent()
             ),
         )
@@ -4141,7 +4142,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_agent",
-            lambda state, identity, turn_capabilities=None: FakeAgent(),
+            lambda state, identity, turn_capabilities=None, **_: FakeAgent(),
         )
         monkeypatch.setattr(
             runtime,
@@ -4854,7 +4855,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_agent",
-            lambda state, identity, turn_capabilities=None: FakeAgent(),
+            lambda state, identity, turn_capabilities=None, **_: FakeAgent(),
         )
         monkeypatch.setattr(
             runtime_mod,
@@ -5024,7 +5025,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_agent",
-            lambda state, identity, turn_capabilities=None: (
+            lambda state, identity, turn_capabilities=None, **_: (
                 FakeAgent()
             ),
         )
@@ -5525,7 +5526,7 @@ class TestDeepAgentsRuntimeRefs:
         monkeypatch.setattr(
             runtime,
             "_create_agent",
-            lambda state, identity, turn_capabilities=None: (
+            lambda state, identity, turn_capabilities=None, **_: (
                 FakeAgent()
             ),
         )

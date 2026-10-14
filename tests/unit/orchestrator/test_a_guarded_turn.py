@@ -41,7 +41,7 @@ def _capabilities() -> CatalogCapabilities:
 def always(agent):
     """Build the same agent whatever the turn asks for."""
 
-    return lambda _state, _identity, _turn_capabilities=None: agent
+    return lambda _state, _identity, _turn_capabilities=None, **_: agent
 
 
 @pytest.fixture
@@ -128,6 +128,7 @@ async def test_speculative_main_model_overlaps_input_guardrail_but_tools_wait(
         _turn_capabilities=None,
         *,
         input_guardrail_tool_gate=None,
+        on_progress=None,
     ):
         assert input_guardrail_tool_gate is not None
         return FakeAgent(input_guardrail_tool_gate)
@@ -193,6 +194,7 @@ async def test_speculative_input_block_cancels_model_and_executes_no_tool(
         _turn_capabilities=None,
         *,
         input_guardrail_tool_gate=None,
+        on_progress=None,
     ):
         return FakeAgent(input_guardrail_tool_gate)
 
@@ -500,7 +502,9 @@ async def test_media_card_is_withheld_only_from_a_guarded_turn(
             message["payload"] for message in emitted
         ]
     else:
-        assert "progress" not in kinds
+        assert {"stage": "media_perception", "status": "completed"} not in [
+            message["payload"] for message in emitted
+        ]
         card = next(
             message for message in emitted if message["type"] == "media_analysis"
         )

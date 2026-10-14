@@ -14,20 +14,19 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
-from pydantic import ValidationError
 import yaml
-
+from pydantic import ValidationError
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from chain_server.src.weather import (  # noqa: E402
+from orchestrator.src.weather import (  # noqa: E402
     WeatherConfig,
     WeatherFailure,
     WeatherRequest,
@@ -37,7 +36,7 @@ from chain_server.src.weather import (  # noqa: E402
 
 
 def _weather_config() -> WeatherConfig:
-    config_path = REPO_ROOT / "shared/configs/chain_server/config.yaml"
+    config_path = REPO_ROOT / "shared/configs/orchestrator/config.yaml"
     raw = yaml.safe_load(config_path.read_text())
     weather_data = dict(raw["weather"])
     enabled_override = os.environ.get("WEATHER_ENABLED")

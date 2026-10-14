@@ -19,9 +19,9 @@ def test_memory_service_host_port_is_loopback_only() -> None:
     ]
 
 
-def _chain_server_config() -> dict:
+def _orchestrator_config() -> dict:
     return yaml.safe_load(
-        (REPO_ROOT / "shared/configs/chain_server/config.yaml").read_text()
+        (REPO_ROOT / "shared/configs/orchestrator/config.yaml").read_text()
     )
 
 
@@ -31,9 +31,9 @@ def test_agent_diagnostics_are_disabled_by_default() -> None:
 
     assert (
         "EXPOSE_AGENT_DIAGNOSTICS=${EXPOSE_AGENT_DIAGNOSTICS:-}"
-        in compose["services"]["chain-server"]["environment"]
+        in compose["services"]["orchestrator"]["environment"]
     )
-    assert _chain_server_config()["expose_agent_diagnostics"] is False
+    assert _orchestrator_config()["expose_agent_diagnostics"] is False
 
 
 def test_guardrail_settings_have_one_source() -> None:
@@ -53,22 +53,22 @@ def test_guardrail_settings_have_one_source() -> None:
         assert f"{name}=${{{name}:-}}" in environment
 
 
-def test_weather_secret_is_disabled_and_scoped_to_chain_server() -> None:
+def test_weather_secret_is_disabled_and_scoped_to_orchestrator() -> None:
     compose = yaml.safe_load((REPO_ROOT / "docker-compose.yaml").read_text())
     services = compose["services"]
 
     assert (
         "WEATHER_ENABLED=${WEATHER_ENABLED:-}"
-        in services["chain-server"]["environment"]
+        in services["orchestrator"]["environment"]
     )
-    assert _chain_server_config()["weather"]["enabled"] is False
+    assert _orchestrator_config()["weather"]["enabled"] is False
     assert (
         "WEATHER_API_KEY=${WEATHER_API_KEY:-}"
-        in services["chain-server"]["environment"]
+        in services["orchestrator"]["environment"]
     )
 
     for service_name, service in services.items():
-        if service_name == "chain-server":
+        if service_name == "orchestrator":
             continue
         environment = service.get("environment", [])
         assert not any(

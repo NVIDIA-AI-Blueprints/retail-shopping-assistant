@@ -15,7 +15,7 @@
 
 ## 🎯 Overview
 
-The Retail Shopping Assistant API provides a comprehensive interface for an AI-powered retail shopping advisor. The API is built on a microservices architecture and currently uses the Deep Agents SDK as the chain-server assistant harness.
+The Retail Shopping Assistant API provides a comprehensive interface for an AI-powered retail shopping advisor. The API is built on a microservices architecture and currently uses the Deep Agents SDK as the orchestrator assistant harness.
 
 ### Key Features
 
@@ -29,7 +29,7 @@ The Retail Shopping Assistant API provides a comprehensive interface for an AI-p
 
 ```
 http://localhost:3000/api   # normal UI/nginx entrypoint
-http://localhost:8009       # direct chain-server development endpoint
+http://localhost:8009       # direct orchestrator development endpoint
 ```
 
 The catalog retriever is an internal service at `http://localhost:8010`. See
@@ -60,7 +60,7 @@ values, numeric ranges, taxonomy nodes, and field coverage are discovered from
 the configured JSONL. See
 [Catalog Architecture](CATALOG_ARCHITECTURE.md#the-sidecar).
 
-The chain server caches the first successfully fetched full contract for its
+The orchestrator caches the first successfully fetched full contract for its
 process lifetime and uses that object for deterministic request validation.
 The LLM receives only a compact projection of the fields, values, taxonomy
 keys/scopes, and semantic/filter roles it needs; the full response below is not
@@ -115,7 +115,7 @@ interface CatalogCapabilities {
 
 `fields` and nested `taxonomy` are authoritative. `filters` remains for
 compatibility and is generated from the same field roles. Do not add static
-catalog values to chain-server config, UI code, prompts, or the sidecar.
+catalog values to orchestrator config, UI code, prompts, or the sidecar.
 Catalog ingestion requires each ordered taxonomy field to be a scalar `enum`
 with `filter` use so the agent's generic taxonomy envelope can always be
 enforced; the field names and observed values remain catalog-owned.
@@ -225,7 +225,7 @@ configured media counts, MIME types, byte limits, and video duration limit. That
 same endpoint also exposes non-secret model names and catalog filter metadata
 for future UI controls.
 
-When `guardrails` is enabled, the chain server sends the original shopper text
+When `guardrails` is enabled, the orchestrator sends the original shopper text
 and every normalized attachment to the isolated guardrails service after the
 durable turn starts. By default, this completes before media perception, Deep
 Agents, models, or tools. An operator may enable
@@ -328,7 +328,7 @@ When a turn is stopped by a guardrail, `agent_diagnostics.final_termination_reas
 is one of `input_guardrail_blocked`, `input_guardrail_error`,
 `output_guardrail_blocked`, or `output_guardrail_error`. The shopper-facing text
 comes from `unsafe_message` or `guardrails_unavailable_message` in
-`shared/configs/chain_server/config.yaml`.
+`shared/configs/orchestrator/config.yaml`.
 
 `AgentDiagnostics` is operator-facing turn metadata. Internal collection is
 always available to the runtime, but public query responses return `{}` by
@@ -533,7 +533,7 @@ interface StreamingChunk {
 
 ### Weather boundary (no HTTP route)
 
-There is no weather endpoint on the application, chain server, or memory
+There is no weather endpoint on the application, orchestrator, or memory
 service, and no weather field in the query request or response schemas. When
 weather is enabled (`WEATHER_ENABLED=true`), the agent itself may call its
 forecast tool during `/query/stream` or `/query/timing` for a place and dates
@@ -551,7 +551,7 @@ Agents turn finishes. The metrics frame contains `agent_diagnostics: {}` by
 default; trusted operator/evaluation deployments may explicitly enable the
 detailed trace.
 
-Before guardrails or agent work, the chain server starts a durable conversation
+Before guardrails or agent work, the orchestrator starts a durable conversation
 turn and receives bounded model-context-eligible recent turns plus the
 authoritative cart. Blocked turns remain durable and exactly replayable but do
 not enter a later model prompt.
@@ -677,16 +677,16 @@ values, and never display it as shopper-facing content.
 Returns runtime media settings that clients should enforce before upload and
 catalog-owned search capability metadata that clients can use to render filter
 controls. Catalog filter values come from the catalog retriever after
-the configured catalog data is loaded; they are not maintained in chain-server
+the configured catalog data is loaded; they are not maintained in orchestrator
 category config.
 
-The `catalog` member is the chain server's process-lifetime cached contract,
+The `catalog` member is the orchestrator's process-lifetime cached contract,
 not a per-request read of the catalog service. After replacing a catalog,
-verify the live contract on port `8010`, then restart the chain server before
+verify the live contract on port `8010`, then restart the orchestrator before
 using this aggregate endpoint on port `8009`.
 
 The concrete enum values shown below are illustrative response data. Do not
-copy those values into chain-server, UI, or prompt configuration as static
+copy those values into orchestrator, UI, or prompt configuration as static
 catalog truth.
 
 The byte limits are raw client file sizes. Browser clients send attachments as
@@ -789,7 +789,7 @@ Catalog retriever exposes a separate capability endpoint on the catalog service
 port, usually `http://localhost:8010/capabilities`. This endpoint describes
 which fields are searchable, filterable, or available as details, including
 their observed taxonomy scopes. It is the live contract for the catalog
-snapshot loaded by that catalog-service process; the chain-server aggregate on
+snapshot loaded by that catalog-service process; the orchestrator aggregate on
 port `8009` is its cached copy.
 
 **Response:** `CatalogCapabilities`
@@ -930,12 +930,12 @@ products from its originating search. Completed turns get one tools-disabled
 synthesis from collected evidence; search-only drafts pass through grounding,
 with deterministic rendering as fail-closed fallback.
 
-The chain server also bounds product-detail reads with
+The orchestrator also bounds product-detail reads with
 `max_product_detail_reads_per_turn`. Detail reads are intended for direct
 product fact questions and shortlisted comparisons, not for enriching every
 initial outfit recommendation.
 
-When a cart item matches current-request product evidence, the chain server can
+When a cart item matches current-request product evidence, the orchestrator can
 return that product image in a cart or comparison turn. A later turn can obtain
 that evidence from one unique durable same-conversation resolution without
 forcing another catalog search; missing, ambiguous, or stale active-catalog refs
@@ -965,7 +965,7 @@ covers the complete active snapshot before hard filtering and final trimming to
 catalog is cut to the catalog's size.
 
 Unknown filter fields, values, taxonomy values, or operators return HTTP 422
-with the catalog's validation message. The chain server treats that response as
+with the catalog's validation message. The orchestrator treats that response as
 non-retryable and does not silently rerun a weakened query. Numeric bounds must
 be finite numbers, not booleans; if any supplied bound is invalid, the complete
 filter request is rejected instead of partially applied. `min`/`gte` are lower-
@@ -1108,7 +1108,7 @@ preference lanes remain reserved and unused. Its serialized value is capped at
 16,384 characters by retaining the newest complete candidate sets. On an exact retry of a finalized
 turn, `replayed` is `true` and the response includes stored `assistant_text`,
 `termination_reason`, and `output` (`product_results`, `retrieved`,
-`agent_diagnostics`, and `selected_skill_names`). The chain server returns that stored output without agent
+`agent_diagnostics`, and `selected_skill_names`). The orchestrator returns that stored output without agent
 execution. Reusing a request ID with different input, retrying a still-started
 turn, or starting another turn while the conversation has an active turn
 returns HTTP 409. These failures insert no new turn and prevent model and
@@ -1166,11 +1166,11 @@ using it are rejected with HTTP 422.
 The caller must echo the `attempt_id` returned by start. An identical finalize
 retry for the current attempt returns the same receipt with `replayed: true`.
 After an abandoned turn is reopened, a late finalize from its old attempt is
-rejected with HTTP 409 `turn_attempt_superseded`; the chain server returns a safe
+rejected with HTTP 409 `turn_attempt_superseded`; the orchestrator returns a safe
 superseded-attempt response instead of exposing the stale answer or products. A
 generic finalize transport or service failure still preserves the already
 grounded response, its request-scoped graph checkpoint, and records
-`memory_finalize_error`. After successful durable finalization, the chain server
+`memory_finalize_error`. After successful durable finalization, the orchestrator
 deletes the request-scoped checkpoint identified by that collision-safe
 conversation/request pair. Different final data, a
 request-ID mismatch, duplicate event keys, or an invalid status transition also
@@ -1231,7 +1231,7 @@ descriptors per request.
 ```
 
 Each result is `resolved`, `ambiguous`, or `not_found`. Only a unique match is
-added to the chain server's request-local product evidence. Ambiguous and
+added to the orchestrator's request-local product evidence. Ambiguous and
 missing results return bounded candidates for a concise clarification and never
 authorize a guessed product. The shopper runtime permits at most one batched
 resolver-tool call per turn; a second call is stopped. The current slice does
@@ -1244,7 +1244,7 @@ starting a turn or writing anything: the bounded recent-turn window, the latest
 declared and assumed audiences, and the projection. Only
 `product_reference_index` in the projection is consumed by the runtime; the
 other projection lanes are returned as stored. The cart is deliberately absent
-because it outlives the conversation; read it from the chain server's
+because it outlives the conversation; read it from the orchestrator's
 `GET /cart?cart_id=...`. An
 unknown conversation returns `404` with `conversation_not_found`.
 

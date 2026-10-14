@@ -62,7 +62,7 @@ services:
       - shopping-network
 
   # Per-container CPU and memory. Without it, a run limited by Milvus, the
-  # chain server or the retriever is indistinguishable from one limited by the
+  # orchestrator or the retriever is indistinguishable from one limited by the
   # GPUs -- and those call for opposite responses.
   #
   # cAdvisor is the usual choice and does not work on this host; see the header

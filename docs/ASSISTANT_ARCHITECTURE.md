@@ -138,11 +138,11 @@ behavior, and is likewise test-checked against the code.
 
 ## Where it lives
 
-The turn is implemented in the chain server's
-[runtime](../chain_server/src/runtime/runtime.py), with the
-[tool policy](../chain_server/src/tools/policy.py),
-[activation boundary](../chain_server/src/tools/skill_gate.py), and
-[tool-loop controller](../chain_server/src/tools/loop_control.py) enforcing the
+The turn is implemented in the orchestrator's
+[runtime](../orchestrator/src/runtime/runtime.py), with the
+[tool policy](../orchestrator/src/tools/policy.py),
+[activation boundary](../orchestrator/src/tools/skill_gate.py), and
+[tool-loop controller](../orchestrator/src/tools/loop_control.py) enforcing the
 grants. Durability is the memory service's
 [conversation API](../memory_retriever/src/conversations.py),
 [product-reference resolver](../memory_retriever/src/product_references.py), and

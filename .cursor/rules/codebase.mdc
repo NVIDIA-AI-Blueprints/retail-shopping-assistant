@@ -48,7 +48,7 @@ The NVIDIA Retail Shopping Assistant is an AI-powered microservices application 
 └─────────────┘    └──────────────┘    └─────────────────┘
                            │
                    ┌──────────────┐
-                   │ Chain Server │ ← Main Orchestrator
+                   │ Orchestrator │ ← Runs each turn
                    │(Deep Agents) │
                    └──────────────┘
                            │
@@ -70,7 +70,7 @@ The NVIDIA Retail Shopping Assistant is an AI-powered microservices application 
 
 All services communicate via HTTP REST APIs:
 - **Port 3000**: Frontend (via Nginx)
-- **Port 8009**: Chain Server (main orchestrator)
+- **Port 8009**: Orchestrator
 - **Port 8010**: Catalog Retriever
 - **Port 8011**: Memory Retriever  
 - **Port 8012**: Guardrails
@@ -80,9 +80,9 @@ All services communicate via HTTP REST APIs:
 
 ## Core Components
 
-### 1. Chain Server (`/chain_server/`)
+### 1. Orchestrator (`/orchestrator/`)
 
-**Purpose**: Main orchestrator using `DeepAgentsRuntime` and the registered
+**Purpose**: Runs each turn with `DeepAgentsRuntime` and the registered
 shopping tools a turn's activated skills grant. The older planner/retriever/cart/chatter graph
 has been removed; `runtime/runtime.py` is the only serving path.
 
@@ -176,7 +176,7 @@ stays in the schema but nothing reads or writes it.
    ↓
 2. Frontend (useChat.ts)
    ↓ HTTP POST /query/stream
-3. Chain Server (main.py)
+3. Orchestrator (main.py)
    ↓
 4. DeepAgentsRuntime
    ↓
@@ -207,7 +207,7 @@ request again.
    ↓
 2. Model emits semantic text and structured required constraints
    ↓
-3. Chain server validates constraints, then calls Catalog Retriever /query/text
+3. Orchestrator validates constraints, then calls Catalog Retriever /query/text
    ↓
 4. Milvus similarity search plus deterministic hard filtering
    ↓
@@ -232,7 +232,7 @@ request again.
 
 ## API Endpoints
 
-### Chain Server (Port 8009)
+### Orchestrator (Port 8009)
 - `POST /query/stream`: Streaming query processing
 - `POST /query/timing`: Query with timing information
 - `GET /capabilities`: UI/model roles plus cached catalog contract
@@ -269,7 +269,7 @@ request again.
 
 Each service has YAML configurations in `/shared/configs/`:
 
-**Chain Server** (`shared/configs/chain_server/config.yaml`, excerpt; the file
+**Orchestrator** (`shared/configs/orchestrator/config.yaml`, excerpt; the file
 is the source of truth):
 ```yaml
 retriever_port: "http://catalog-retriever:8010"
@@ -378,11 +378,11 @@ Products are stored as JSON Lines with a field-role sidecar:
 Each JSONL row carries the product values. The sidecar maps product identity,
 taxonomy, semantic, filter, and detail roles. `GET /capabilities` advertises the
 observed categories, values, numeric ranges, coverage, and taxonomy scopes to
-the chain server; do not hard-code those values in prompts or application code.
-The chain server caches the first successful full contract for its process
+the orchestrator; do not hard-code those values in prompts or application code.
+The orchestrator caches the first successful full contract for its process
 lifetime, uses it for deterministic validation, and sends only a compact
 projection to the LLM. After a catalog change, wait for catalog health and then
-restart the chain server.
+restart the orchestrator.
 
 ## Deployment
 
@@ -391,7 +391,7 @@ restart the chain server.
 The system uses multi-container Docker deployment:
 
 **Core Services**:
-- `chain-server`: Main orchestrator
+- `orchestrator`: Runs each shopper turn
 - `catalog-retriever`: Product search
 - `catalog-indexer`: One-shot catalog indexing before the retriever starts
 - `memory-retriever`: Conversation turns and cart
@@ -439,19 +439,19 @@ python scripts/model_config.py deploy --build
 ### Critical Files for Understanding
 
 **Architecture & Orchestration**:
-- `chain_server/src/runtime/runtime.py`: Deep Agents serving loop
-- `chain_server/src/main.py`: Main API application
+- `orchestrator/src/runtime/runtime.py`: Deep Agents serving loop
+- `orchestrator/src/main.py`: Main API application
 - `docker-compose.yaml`: Service orchestration
 
 **Tool Implementations**:
-- `chain_server/src/tools/catalog.py`: Product search tools
-- `chain_server/src/tools/cart.py`: Cart read and mutation tools
-- `chain_server/src/tools/skills.py`: Skill activation
-- `chain_server/src/tools/skill_gate.py`: Grant enforcement at dispatch
+- `orchestrator/src/tools/catalog.py`: Product search tools
+- `orchestrator/src/tools/cart.py`: Cart read and mutation tools
+- `orchestrator/src/tools/skills.py`: Skill activation
+- `orchestrator/src/tools/skill_gate.py`: Grant enforcement at dispatch
 
 **Data Models**:
-- `chain_server/src/agenttypes.py`: Core data structures
-- `chain_server/src/runtime/prompts.py`: Prompt assembly
+- `orchestrator/src/agenttypes.py`: Core data structures
+- `orchestrator/src/runtime/prompts.py`: Prompt assembly
 
 **Service Implementations**:
 - `catalog_retriever/src/main.py`: Vector search API
@@ -464,7 +464,7 @@ python scripts/model_config.py deploy --build
 - `ui/src/components/chatbox/chatbox.tsx`: Chat interface
 
 **Configuration**:
-- `shared/configs/chain_server/config.yaml`: Main config
+- `shared/configs/orchestrator/config.yaml`: Main config
 - `shared/configs/catalog_retriever/config.yaml`: Search config
 - `shared/data/enriched_products.jsonl`: Product catalog values
 - `shared/data/enriched_products.schema.yaml`: Product field roles
@@ -473,7 +473,7 @@ python scripts/model_config.py deploy --build
 
 ```
 retail-shopping-assistant/
-├── chain_server/           # Main orchestrator
+├── orchestrator/           # Runs each shopper turn
 ├── catalog_retriever/      # Product search service
 ├── memory_retriever/       # User data service
 ├── guardrails/            # Content safety service

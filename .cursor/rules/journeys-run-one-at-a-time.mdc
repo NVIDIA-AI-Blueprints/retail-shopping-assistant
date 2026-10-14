@@ -32,7 +32,7 @@ Before treating failures as regressions, check:
   finishes in minutes did not run.
 - **The reply text** in `raw/*.json`. The generic error above means the turn
   never reached the agent.
-- `docker logs chain-server --timestamps | rg "RateLimitError"`, scoped to the
+- `docker logs orchestrator --timestamps | rg "RateLimitError"`, scoped to the
   run's window. Note `--since` is relative to now, so an overnight run needs a
   timestamp filter rather than `--since 6h`.
 

@@ -32,7 +32,7 @@ The runner:
 - Uses `.local-run/dev-venv/bin/python` when it exists, then `.venv-tests/bin/python`, then the current Python.
 - Runs unit tests from `tests/` so `tests/pytest.ini` is applied.
 - Runs integration scripts from `tests/integration/` so their relative `conversations/<TEST_PATH>` paths resolve correctly.
-- Targets the chain-server timing endpoint at `http://localhost:8009/query/timing` by default.
+- Targets the orchestrator timing endpoint at `http://localhost:8009/query/timing` by default.
 - Sets `TEST_PATH` for integration runs.
 - Can send `guardrails=false` on live integration requests with `--disable-guardrails`.
 - Bounds each live request with `--request-timeout <seconds>`.
@@ -52,8 +52,8 @@ Targeted unit examples:
 
 ```bash
 cd tests
-../.local-run/dev-venv/bin/python -m pytest -q unit/chain_server
-../.local-run/dev-venv/bin/python -m pytest -q unit/chain_server/test_cart.py
+../.local-run/dev-venv/bin/python -m pytest -q unit/orchestrator
+../.local-run/dev-venv/bin/python -m pytest -q unit/orchestrator/test_cart.py
 ../.local-run/dev-venv/bin/python -m pytest -q -k test_add_to_cart
 ```
 
@@ -61,7 +61,7 @@ cd tests
 
 The integration suite lives under `tests/integration` and drives live HTTP endpoints. Before running it:
 
-- Ensure the chain server is running and reachable at `http://localhost:8009`.
+- Ensure the orchestrator is running and reachable at `http://localhost:8009`.
 - Choose an existing scenario directory under `tests/integration/conversations/`, usually `shopping` or `rails`.
 - For LLM-as-judge scoring, set explicit judge configuration in the repo-root
   `.env` or launching shell: `JUDGE_BASE_URL`, `JUDGE_MODEL`,

@@ -17,13 +17,13 @@ This page is the registry: what exists, what each grants, and how to change one.
 
 | Skill | Source | Status | Role | Tools granted | Chosen for |
 | --- | --- | --- | --- | --- | --- |
-| `product-discovery` | `chain_server/skills/shopper/product-discovery/SKILL.md` | Registered | `primary` / `product_procedure` | Catalog description, search, details, availability, promotions, conversation-product resolution | Search, browsing, and filter-driven discovery with no styling intent |
-| `outfit-styling` | `chain_server/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, conversation-product resolution | Building, completing, comparing, or refining a look |
-| `catalog-questions` | `chain_server/skills/shopper/catalog-questions/SKILL.md` | Registered | `primary` / `product_procedure` | Catalog description, search, details | Questions about the shop: cheapest, dearest, what departments exist |
-| `cart-management` | `chain_server/skills/shopper/cart-management/SKILL.md` | Registered | `standalone` | Cart read, total, add, remove, update, conversation-product resolution, search | Explicit cart reads and mutations, alone or beside a product procedure |
-| `budget-shopping` | `chain_server/skills/shopper/budget-shopping/SKILL.md` | Registered | `modifier` | None | A stated price ceiling or bundle budget |
-| `store-policy-answers` | `chain_server/skills/shopper/store-policy-answers/SKILL.md` | Registered | `standalone` | Policy lookup | Returns, shipping, sizing, payment, price matching, gift cards |
-| `destination-weather` | `chain_server/skills/shopper/destination-weather/SKILL.md` | Registered | `standalone` | Daily forecast | Conditions at a named place and time, when no product is asked for |
+| `product-discovery` | `orchestrator/skills/shopper/product-discovery/SKILL.md` | Registered | `primary` / `product_procedure` | Catalog description, search, details, availability, promotions, conversation-product resolution | Search, browsing, and filter-driven discovery with no styling intent |
+| `outfit-styling` | `orchestrator/skills/shopper/outfit-styling/SKILL.md` | Registered | `primary` / `product_procedure` | Search, details, availability, promotions, conversation-product resolution | Building, completing, comparing, or refining a look |
+| `catalog-questions` | `orchestrator/skills/shopper/catalog-questions/SKILL.md` | Registered | `primary` / `product_procedure` | Catalog description, search, details | Questions about the shop: cheapest, dearest, what departments exist |
+| `cart-management` | `orchestrator/skills/shopper/cart-management/SKILL.md` | Registered | `standalone` | Cart read, total, add, remove, update, conversation-product resolution, search | Explicit cart reads and mutations, alone or beside a product procedure |
+| `budget-shopping` | `orchestrator/skills/shopper/budget-shopping/SKILL.md` | Registered | `modifier` | None | A stated price ceiling or bundle budget |
+| `store-policy-answers` | `orchestrator/skills/shopper/store-policy-answers/SKILL.md` | Registered | `standalone` | Policy lookup | Returns, shipping, sizing, payment, price matching, gift cards |
+| `destination-weather` | `orchestrator/skills/shopper/destination-weather/SKILL.md` | Registered | `standalone` | Daily forecast | Conditions at a named place and time, when no product is asked for |
 
 ## How one is chosen
 
@@ -53,7 +53,7 @@ The boundary fails closed, in each of the ways it could otherwise be slipped:
 - An activation from an earlier turn does not unlock the current one.
 - A call outside the granted union is rejected before its handler with
   `SHOPPER_SKILL_TOOL_NOT_GRANTED`.
-- Frontmatter grants and `chain_server/src/tools/policy.py` must agree exactly
+- Frontmatter grants and `orchestrator/src/tools/policy.py` must agree exactly
   or startup fails, so the two cannot drift apart unnoticed.
 - One invalid composition gets a typed correction; a second returns a fixed
   clarification without another model call.
@@ -170,11 +170,11 @@ procedure and so could not see the tool.
 1. Keep the frontmatter `name` stable unless you mean to change runtime
    behaviour.
 2. Change `role`, `exclusive_group`, or `tools_granted` in the same commit as
-   `chain_server/src/tools/policy.py`. Startup validation rejects drift in
+   `orchestrator/src/tools/policy.py`. Startup validation rejects drift in
    either direction, so a half-change fails the deployment rather than the
    review.
 3. Prefer catalog-agnostic behaviour rules over hard-coded product names.
-4. Restart or redeploy the chain server. The activation registry is
+4. Restart or redeploy the orchestrator. The activation registry is
    regenerated from the current files rather than checkpointed, so a running
    process will not pick the change up on its own.
 5. Run the skill and activation contract tests, then the smallest affected

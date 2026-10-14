@@ -6,7 +6,7 @@ on:
       - ".github/workflows/docker-image-builds.yml"
       - "docker-compose.yaml"
       - "catalog_retriever/**"
-      - "chain_server/**"
+      - "orchestrator/**"
       - "guardrails/**"
       - "memory_retriever/**"
       - "ui/**"
@@ -51,7 +51,7 @@ jobs:
           sed 's/^/  /' "${changed_files}"
 
           services=(
-            "chain-server"
+            "orchestrator"
             "catalog-retriever"
             "memory-retriever"
             "rails"
@@ -59,7 +59,7 @@ jobs:
           )
 
           declare -A contexts=(
-            ["chain-server"]="chain_server"
+            ["orchestrator"]="orchestrator"
             ["catalog-retriever"]="catalog_retriever"
             ["memory-retriever"]="memory_retriever"
             ["rails"]="guardrails"
@@ -67,7 +67,7 @@ jobs:
           )
 
           declare -A image_names=(
-            ["chain-server"]="retail-shopping-assistant/chain-server"
+            ["orchestrator"]="retail-shopping-assistant/orchestrator"
             ["catalog-retriever"]="retail-shopping-assistant/catalog-retriever"
             ["memory-retriever"]="retail-shopping-assistant/memory-retriever"
             ["rails"]="retail-shopping-assistant/guardrails"

@@ -80,7 +80,7 @@ def main() -> int:
             if name:
                 seen.setdefault(name, set()).add(row["context"]["trace_id"])
         if not seen:
-            print("No sessions. Is OTEL_EXPORTER_OTLP_ENDPOINT set on chain-server?")
+            print("No sessions. Is OTEL_EXPORTER_OTLP_ENDPOINT set on orchestrator?")
             return 1
         for name, traces in sorted(seen.items(), key=lambda kv: -len(kv[1])):
             print(f"{len(traces):4} turns  {name}")

@@ -226,7 +226,7 @@ def check_against_replay(manifest: list[dict], results: Path) -> list[dict]:
     """Per conversation, whether the trace holds every model call the replay
     counted, turn by turn, and the same prompt tokens.
 
-    The replay runner records its own count from the chain-server's reply, so a
+    The replay runner records its own count from the orchestrator's reply, so a
     span Phoenix dropped or a call the capture missed shows up here.
     """
 
@@ -261,7 +261,7 @@ def capture(label: str, since: str, results: Path, timeout_s: float = 300, every
     """The trace of a replay run, once Phoenix holds every call it made, and
     how many calls the endpoint refused.
 
-    The chain-server exports spans in batches, so the last turns land a few
+    The orchestrator exports spans in batches, so the last turns land a few
     seconds after the replay finishes.
     """
 

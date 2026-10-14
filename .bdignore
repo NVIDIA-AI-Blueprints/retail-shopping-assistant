@@ -1,4 +1,4 @@
-/chain_server/venv/
+/orchestrator/venv/
 /catalog_retriever/venv/
 /guardrails/venv/
 /memory_retriever/venv/

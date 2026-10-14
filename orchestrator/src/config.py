@@ -1,0 +1,489 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Centralized configuration management for the orchestrator."""
+
+import logging
+import math
+import os
+from pathlib import Path
+from typing import Any, Literal
+
+import yaml
+from pydantic import BaseModel, Field, validator
+from shared.model_config import resolve_model_config, validate_model_config
+
+from .weather import WeatherConfig
+
+logger = logging.getLogger(__name__)
+
+
+def load_config_data(base_config_path: str) -> dict[str, Any]:
+    """Load a service config YAML file."""
+
+    if not os.path.exists(base_config_path):
+        logger.error(f"Base config file not found at {base_config_path}")
+        raise FileNotFoundError(f"Base config file not found at {base_config_path}")
+
+    with open(base_config_path) as f:
+        config = yaml.safe_load(f)
+
+    return config
+
+
+class MediaInputConfig(BaseModel):
+    """Configuration for user-attached media accepted by the orchestrator."""
+
+    enabled: bool = True
+    allow_mixed_media: bool = True
+    max_images_per_turn: int = 1
+    max_videos_per_turn: int = 1
+    image_mime_types: list[str] = Field(default_factory=lambda: ["image/jpeg", "image/png"])
+    video_mime_types: list[str] = Field(default_factory=lambda: ["video/mp4"])
+    max_image_bytes: int = 10 * 1024 * 1024
+    max_video_bytes: int = 50 * 1024 * 1024
+    max_video_duration_seconds: int = 120
+
+    @validator("max_images_per_turn", "max_videos_per_turn")
+    def validate_media_counts(cls, v):
+        if v < 0:
+            raise ValueError("media limits cannot be negative")
+        return v
+
+    @validator("max_image_bytes", "max_video_bytes", "max_video_duration_seconds")
+    def validate_positive_media_limits(cls, v):
+        if v <= 0:
+            raise ValueError("media size and duration limits must be positive")
+        return v
+
+    @validator("image_mime_types", "video_mime_types")
+    def validate_mime_types(cls, v):
+        if not v:
+            raise ValueError("media MIME type lists cannot be empty")
+        return v
+
+    class Config:
+        extra = "forbid"
+        validate_assignment = True
+
+
+class OrchestratorConfig(BaseModel):
+    """Configuration class for the orchestrator application.
+
+    Fields tagged (prompt) feed the static system prompt or tool schema
+    built in `runtime.runtime._system_prompt` / `tool_policy`, so a
+    deployment change to them changes prompt bytes on every turn and can
+    invalidate prompt caching. Untagged fields are runtime-only knobs
+    (timeouts, budgets, call caps) that never reach the prompt text.
+    """
+
+    # LLM Configuration
+    llm_port: str = Field(..., description="LLM service endpoint URL")
+    llm_name: str = Field(..., description="LLM model name")
+    llm_api_key_env: str | None = Field(default="LLM_API_KEY", description="LLM API key environment variable")
+    llm_api_key_required: bool = Field(default=True, description="Whether the LLM key must be present")
+    vlm_port: str | None = Field(default=None, description="Optional VLM service endpoint URL")
+    vlm_name: str | None = Field(default=None, description="Optional VLM model name")
+    vlm_api_key_env: str | None = Field(default=None, description="VLM API key environment variable")
+    vlm_api_key_required: bool = Field(default=False, description="Whether the VLM key must be present")
+    vlm_enabled: bool = Field(default=False, description="Whether VLM media perception is enabled")
+
+    # Service Endpoints
+    retriever_port: str = Field(..., description="Catalog retriever service endpoint")
+    memory_port: str = Field(..., description="Memory retriever service endpoint")
+    guardrails_url: str = Field(..., description="Guardrail service endpoint URL")
+
+    # Performance Configuration
+    memory_length: int = Field(..., description="Maximum memory length for context")
+    top_k_retrieve: int = Field(..., description="Number of top results to retrieve")
+    deepagents_recursion_limit: int = Field(
+        default=24,
+        description="Maximum Deep Agents graph steps allowed for one assistant turn",
+    )
+    grounding_editor_reserve_seconds: float = Field(
+        default=15.0,
+        description=(
+            "Seconds reserved for the grounding editor out of the turn budget. "
+            "The agent loop is capped at the remainder so it cannot consume the "
+            "whole turn and leave the editor nothing."
+        ),
+    )
+    deepagents_execution_timeout_seconds: float = Field(
+        default=45.0,
+        description="Maximum Deep Agents execution time allowed for one assistant turn",
+    )
+    wearer_audience_field: str = Field(
+        default="target_audience",
+        description="Catalog filter naming who a product is for (prompt)",
+    )
+    colour_field: str = Field(
+        default="primary_color",
+        description=(
+            "Catalog filter holding colour. Its unadvertised values are mapped "
+            "onto advertised ones rather than dropped. Naming no field, or one "
+            "this catalog does not advertise, leaves them to be ranked on"
+        ),
+    )
+    max_catalog_searches_per_turn: int = Field(
+        default=10,
+        description="Maximum distinct catalog taxonomy scopes allowed per turn",
+    )
+    max_search_scopes_per_call: int = Field(
+        default=10,
+        description="Product roles one catalog search call may carry",
+    )
+    search_products_per_call: int = Field(
+        default=36,
+        description="Total products one search call returns, shared across scopes",
+    )
+    max_product_detail_reads_per_turn: int = Field(
+        default=10,
+        description="Maximum product-detail tool calls allowed for one assistant turn",
+    )
+    grounding_rewrite_enabled: bool = Field(
+        default=True,
+        description=(
+            "Whether to run a final grounded response editor over Deep Agents "
+            "drafts that have tool evidence."
+        ),
+    )
+    grounding_rewrite_max_evidence_chars: int = Field(
+        default=12000,
+        description="Maximum tool evidence characters passed to the grounding editor",
+    )
+    llm_temperature: float = Field(
+        default=0.0,
+        description=(
+            "Sampling temperature for the shopping agent and the grounding "
+            "editor, which share one model client."
+        ),
+    )
+    llm_max_output_tokens: int = Field(
+        default=4096,
+        description=(
+            "Maximum tokens the primary agent model may generate per call. "
+            "Unbounded generation let a single call's output run to the "
+            "model's own ceiling instead of the length a reply needs. 1024 "
+            "was tried first and silently truncated a real reply mid-word "
+            "-- 'give me a detailed comparison of every dress' legitimately "
+            "needs more than a few hundred tokens -- so this bounds runaway "
+            "generation without cutting off verbose-but-legitimate answers."
+        ),
+    )
+    grounding_editor_max_output_tokens: int = Field(
+        default=3072,
+        description=(
+            "Maximum tokens the grounding editor rewrite may generate per "
+            "call. It rewrites an existing draft, but the draft can itself "
+            "be long (see llm_max_output_tokens), so this tracks that "
+            "ceiling rather than assuming rewrites are always short."
+        ),
+    )
+    expose_agent_diagnostics: bool = Field(
+        default=False,
+        description=(
+            "Whether shopper query responses expose detailed agent diagnostics. "
+            "Enable only on a trusted operator or evaluation surface."
+        ),
+    )
+    relay_enabled: bool = Field(
+        default=False,
+        description=(
+            "Whether to instrument the agent with NeMo Relay. Off by default: "
+            "absent configuration must never change behaviour, and this sees "
+            "prompts, completions and cart contents."
+        ),
+    )
+    catalog_search_timeout_seconds: float | None = Field(
+        default=None,
+        description=(
+            "Optional HTTP timeout for catalog search requests. None preserves "
+            "the previous no-timeout behavior for slower remote embedding calls."
+        ),
+    )
+    weather: WeatherConfig = Field(default_factory=WeatherConfig)
+    multimodal: bool = Field(..., description="Whether multimodal features are enabled")
+    media_input: MediaInputConfig = Field(default_factory=MediaInputConfig)
+
+    # Safety Configuration
+    guardrails_available: bool = Field(
+        default=True,
+        description=(
+            "Whether this deployment has guardrails at all. When false no "
+            "guardrail model is needed, no check runs, and requests cannot "
+            "turn them on."
+        ),
+    )
+    guardrails_enabled: bool = Field(
+        default=True,
+        description=(
+            "Default guardrails setting for requests that omit it. A request "
+            "may turn guardrails on, and off unless "
+            "guardrails_client_can_disable is false. Always false when "
+            "guardrails_available is false."
+        ),
+    )
+    guardrails_client_can_disable: bool = Field(
+        default=True,
+        description=(
+            "Whether a request may turn guardrails off when guardrails_enabled "
+            "is true, as the UI toggle does to show before and after. Set "
+            "false to lock them on. A request can always turn them on."
+        ),
+    )
+    guardrails_failure_mode: Literal["open", "closed"] = Field(
+        default="closed",
+        description="Whether provider errors bypass or stop the guarded turn.",
+    )
+    guardrails_timeout_seconds: float = Field(
+        default=15.0,
+        description="Maximum duration of each guardrail service request.",
+    )
+    guardrails_speculative_main_model_enabled: bool = Field(
+        default=False,
+        description=(
+            "For guarded text-only turns, start the first app-model step while "
+            "input guardrails run. Every tool remains blocked until approval. "
+            "This can reduce latency but blocked turns may still incur app-model "
+            "cost. Media turns remain sequential."
+        ),
+    )
+    guardrails_supported_modalities: list[Literal["text", "image", "video"]] = Field(
+        default_factory=lambda: ["text", "image"],
+        description="Modalities covered by required configured safety judges.",
+    )
+    unsafe_message: str = Field(..., description="Message to display for unsafe content")
+    guardrails_unavailable_message: str = Field(
+        default=(
+            "I cannot safely validate this request right now. Please retry. "
+            "If it involved a cart change, check your cart first."
+        ),
+        description="Closed-mode response when a required safety check fails.",
+    )
+
+    @validator('llm_port', 'retriever_port', 'memory_port', 'guardrails_url')
+    def validate_urls(cls, v):
+        """Validate that URLs are properly formatted."""
+        if not v.startswith(('http://', 'https://')):
+            raise ValueError(f"URL must start with http:// or https://: {v}")
+        return v
+
+    @validator("vlm_port")
+    def validate_optional_vlm_url(cls, v):
+        if v is not None and not v.startswith(("http://", "https://")):
+            raise ValueError(f"URL must start with http:// or https://: {v}")
+        return v
+
+    @validator('memory_length')
+    def validate_memory_length(cls, v):
+        """Validate memory length is positive."""
+        if v <= 0:
+            raise ValueError("memory_length must be positive")
+        return v
+
+    @validator('top_k_retrieve')
+    def validate_top_k(cls, v):
+        """Validate top_k_retrieve is positive."""
+        if v <= 0:
+            raise ValueError("top_k_retrieve must be positive")
+        return v
+
+    @validator('deepagents_recursion_limit')
+    def validate_deepagents_recursion_limit(cls, v):
+        """Validate Deep Agents recursion limit is positive."""
+        if v <= 0:
+            raise ValueError("deepagents_recursion_limit must be positive")
+        return v
+
+    @validator('deepagents_execution_timeout_seconds')
+    def validate_deepagents_execution_timeout_seconds(cls, v):
+        """Validate Deep Agents execution timeout is positive."""
+        if not math.isfinite(v) or v <= 0:
+            raise ValueError(
+                "deepagents_execution_timeout_seconds must be finite and positive"
+            )
+        return v
+
+    @validator('max_catalog_searches_per_turn')
+    def validate_max_catalog_searches_per_turn(cls, v):
+        """Validate the per-turn catalog taxonomy-scope budget is positive."""
+        if v <= 0:
+            raise ValueError("max_catalog_searches_per_turn must be positive")
+        return v
+
+    @validator('max_product_detail_reads_per_turn')
+    def validate_max_product_detail_reads_per_turn(cls, v):
+        """Validate per-turn product-detail read cap is positive."""
+        if v <= 0:
+            raise ValueError("max_product_detail_reads_per_turn must be positive")
+        return v
+
+    @validator('grounding_rewrite_max_evidence_chars')
+    def validate_grounding_rewrite_max_evidence_chars(cls, v):
+        """Validate grounding editor evidence window size."""
+        if v <= 0:
+            raise ValueError("grounding_rewrite_max_evidence_chars must be positive")
+        return v
+
+    @validator('llm_temperature')
+    def validate_llm_temperature(cls, v):
+        """Validate the temperature is a finite, non-negative number."""
+        if not math.isfinite(v) or v < 0:
+            raise ValueError("llm_temperature must be a finite, non-negative number")
+        return v
+
+    @validator('llm_max_output_tokens', 'grounding_editor_max_output_tokens')
+    def validate_max_output_tokens(cls, v):
+        """Validate output token ceilings are positive."""
+        if v <= 0:
+            raise ValueError("max output token settings must be positive")
+        return v
+
+    @validator('catalog_search_timeout_seconds')
+    def validate_catalog_search_timeout(cls, v):
+        """Validate optional catalog search timeout."""
+        if v is not None and v <= 0:
+            raise ValueError("catalog_search_timeout_seconds must be positive")
+        return v
+
+    @validator('guardrails_timeout_seconds')
+    def validate_guardrails_timeout(cls, v):
+        if not math.isfinite(v) or v <= 0:
+            raise ValueError("guardrails_timeout_seconds must be finite and positive")
+        return v
+
+    @validator('guardrails_enabled', always=True)
+    def validate_guardrails_enabled(cls, v, values):
+        if values.get("guardrails_available") is False:
+            return False
+        return v
+
+    class Config:
+        """Pydantic configuration."""
+        extra = "forbid"  # Prevent additional fields
+        validate_assignment = True  # Validate when attributes are set
+
+
+def load_config(config_path: str | None = None) -> OrchestratorConfig:
+    """
+    Load service configuration and inject the configured app LLM endpoint.
+
+    Args:
+        config_path: Optional path to config file. If None, uses default path.
+
+    Returns:
+        OrchestratorConfig: The loaded configuration
+
+    Raises:
+        FileNotFoundError: If config file is not found
+        ValueError: If config validation fails
+    """
+    if config_path is None:
+        config_root = Path(os.environ.get("SHARED_CONFIG_ROOT", "/app/shared/configs"))
+        config_path = str(config_root / "orchestrator" / "config.yaml")
+
+    config_data = load_config_data(config_path)
+    env_overrides = {
+        "retriever_port": os.environ.get("CATALOG_RETRIEVER_URL"),
+        "memory_port": os.environ.get("MEMORY_RETRIEVER_URL"),
+        "guardrails_url": os.environ.get("GUARDRAILS_URL"),
+        "catalog_search_timeout_seconds": os.environ.get("CATALOG_SEARCH_TIMEOUT_SECONDS"),
+        "deepagents_recursion_limit": os.environ.get("DEEPAGENTS_RECURSION_LIMIT"),
+        "grounding_editor_reserve_seconds": os.environ.get(
+            "GROUNDING_EDITOR_RESERVE_SECONDS"
+        ),
+        "deepagents_execution_timeout_seconds": os.environ.get(
+            "DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS"
+        ),
+        "max_catalog_searches_per_turn": os.environ.get("MAX_CATALOG_SEARCHES_PER_TURN"),
+        "max_product_detail_reads_per_turn": os.environ.get(
+            "MAX_PRODUCT_DETAIL_READS_PER_TURN"
+        ),
+        "grounding_rewrite_enabled": _env_bool("GROUNDING_REWRITE_ENABLED"),
+        "grounding_rewrite_max_evidence_chars": os.environ.get(
+            "GROUNDING_REWRITE_MAX_EVIDENCE_CHARS"
+        ),
+        "llm_temperature": os.environ.get("APP_LLM_TEMPERATURE"),
+        "llm_max_output_tokens": os.environ.get("LLM_MAX_OUTPUT_TOKENS"),
+        "grounding_editor_max_output_tokens": os.environ.get(
+            "GROUNDING_EDITOR_MAX_OUTPUT_TOKENS"
+        ),
+        "expose_agent_diagnostics": _env_bool("EXPOSE_AGENT_DIAGNOSTICS"),
+        "relay_enabled": _env_bool("RELAY_ENABLED"),
+        "guardrails_available": _env_bool("GUARDRAILS_AVAILABLE"),
+        "guardrails_enabled": _env_bool("GUARDRAILS_ENABLED"),
+        "guardrails_client_can_disable": _env_bool("GUARDRAILS_CLIENT_CAN_DISABLE"),
+        "guardrails_failure_mode": os.environ.get("GUARDRAILS_FAILURE_MODE"),
+        "guardrails_timeout_seconds": os.environ.get("GUARDRAILS_TIMEOUT_SECONDS"),
+        "guardrails_speculative_main_model_enabled": _env_bool(
+            "GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED"
+        ),
+    }
+    config_data.update(
+        {
+            key: value
+            for key, value in env_overrides.items()
+            if value is not None and value != ""
+        }
+    )
+    if env_overrides["guardrails_enabled"] and config_data.get("guardrails_available") is False:
+        raise ValueError(
+            "GUARDRAILS_ENABLED cannot be true when GUARDRAILS_AVAILABLE is false"
+        )
+    supported_guardrail_modalities = os.environ.get("GUARDRAILS_SUPPORTED_MODALITIES")
+    if supported_guardrail_modalities:
+        config_data["guardrails_supported_modalities"] = [
+            item.strip().lower()
+            for item in supported_guardrail_modalities.split(",")
+            if item.strip()
+        ]
+    weather_enabled = _env_bool("WEATHER_ENABLED")
+    if weather_enabled is not None:
+        weather_data = dict(config_data.get("weather") or {})
+        weather_data["enabled"] = weather_enabled
+        config_data["weather"] = weather_data
+
+    config_root = Path(os.environ.get("SHARED_CONFIG_ROOT", str(Path(config_path).parents[1])))
+    model_config = resolve_model_config(config_root=config_root)
+    validate_model_config(model_config, roles=("app_llm",))
+    app_llm = model_config.require("app_llm")
+    vlm = model_config.get("vlm")
+    if vlm is not None and not vlm.disabled:
+        validate_model_config(model_config, roles=("vlm",))
+    config_data.update(
+        {
+            "llm_port": app_llm.base_url,
+            "llm_name": app_llm.model,
+            "llm_api_key_env": app_llm.api_key_env,
+            "llm_api_key_required": app_llm.api_key_required,
+            "vlm_enabled": bool(vlm is not None and not vlm.disabled),
+            "vlm_port": vlm.base_url if vlm is not None and not vlm.disabled else None,
+            "vlm_name": vlm.model if vlm is not None and not vlm.disabled else None,
+            "vlm_api_key_env": (
+                vlm.api_key_env if vlm is not None and not vlm.disabled else None
+            ),
+            "vlm_api_key_required": (
+                vlm.api_key_required if vlm is not None and not vlm.disabled else False
+            ),
+        }
+    )
+
+    # Create Pydantic config instance
+    try:
+        return OrchestratorConfig(**config_data)
+    except Exception as e:
+        raise ValueError(f"Configuration validation failed: {e}") from e
+
+
+def _env_bool(name: str) -> bool | None:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(
+        f"{name} must be one of true/false, yes/no, on/off, or 1/0; got {value!r}"
+    )

@@ -280,12 +280,11 @@ class TestWeatherRequest:
         place string reaches the URL, and "../" or a bare slash would silently
         retarget the request."""
 
-        from orchestrator.src.weather import VisualCrossingWeatherClient
-
-        client = VisualCrossingWeatherClient(enabled_config(), "key")
-        url = client._request_url(
+        client, session = client_for(FakeResponse(status_code=500))
+        client.get_forecast(
             WeatherRequest(location="../../etc/passwd", date="2026-08-10")
         )
+        url = session.calls[0]["url"]
 
         assert "../" not in url
         assert "%2F" in url

@@ -1,0 +1,26 @@
+name: SonarQube analysis
+
+on:
+  push:
+    branches: [ "main", "staging" ]
+  workflow_dispatch:
+
+jobs:
+  Analysis:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history, needed for accurate analysis
+
+      - name: Analyze with SonarQube
+        uses: SonarSource/sonarqube-scan-action@7295e71c9583053f5bf40e9d4068a0c974603ec8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          # Project key is read from sonar-project.properties
+          args: >
+            -Dsonar.branch.name=${{ github.ref_name }}

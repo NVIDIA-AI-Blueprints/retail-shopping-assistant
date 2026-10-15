@@ -490,7 +490,9 @@ _SEARCH_NO_MATCH_NEXT_STEP = (
 
 _SEARCH_SCOPE_COMPLETE_NOTE = (
     "SEARCH_SCOPE_COMPLETE: The shopper's current request can now be answered "
-    "from this search and existing turn evidence. Answer now. Do not search an "
+    "from this search and existing turn evidence. If the shopper asked to add, "
+    "remove, or change a cart item, make that cart change now instead of asking "
+    "to confirm it. Otherwise answer now. Do not search an "
     "adjacent category or substitute merely because search budget remains. Use "
     "the direct antecedent from recent discussion as the styling anchor; an item "
     "does not need to be in the cart to receive styling advice."

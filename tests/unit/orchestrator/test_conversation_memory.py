@@ -259,6 +259,27 @@ def test_start_result_accepts_existing_cart_contract_values() -> None:
     assert len(result.cart[0].item) > 1_000
 
 
+def test_start_result_keeps_the_size_of_each_cart_line() -> None:
+    payload = _start_payload()
+    payload["cart"] = [
+        {"cart_line_id": "line-6", "item": "Jade Suede Heels", "amount": 1, "size": "6"},
+        {"cart_line_id": "line-bag", "item": "Linen Canvas Tote Bag", "amount": 1},
+    ]
+    client = ConversationMemoryClient(
+        "http://memory",
+        session=FakeSession(FakeResponse(payload)),
+    )
+
+    result = client.start_turn(
+        "conversation-a",
+        request_id="request-a",
+        shopper_text="actually make those a 7",
+        cart_user_id=17,
+    )
+
+    assert [line.size for line in result.cart] == ["6", None]
+
+
 def test_finalize_turn_posts_the_typed_event_contract() -> None:
     response = {
         "turn_id": "turn-2",

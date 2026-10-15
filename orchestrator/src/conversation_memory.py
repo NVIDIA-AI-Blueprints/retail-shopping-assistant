@@ -103,6 +103,7 @@ class ConversationCartItem(_MemoryModel):
     item: str = Field(..., min_length=1)
     amount: int = Field(..., ge=1)
     price: float | None = None
+    size: str | None = None
 
 
 class TurnReplayOutput(_MemoryModel):

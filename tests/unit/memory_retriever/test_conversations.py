@@ -2275,6 +2275,12 @@ def test_two_sizes_of_one_product_are_two_cart_lines(conversation_db) -> None:
     assert sorted(line["size"] for line in cart) == ["6", "8"]
     assert all(line["amount"] == 1 for line in cart)
 
+    started = _start_turn(
+        conversation_db, "conversation-sizes", request_id="request-sizes", cart_user_id=9911
+    )
+    assert started.status_code == 200, started.text
+    assert sorted(line["size"] for line in started.json()["cart"]) == ["6", "8"]
+
 
 def test_the_same_size_added_twice_merges_into_one_line(conversation_db) -> None:
     """Quantity, not a second line."""

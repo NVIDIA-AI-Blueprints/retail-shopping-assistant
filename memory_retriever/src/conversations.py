@@ -173,6 +173,8 @@ def _cart_item_dict(item: CartItem) -> dict[str, Any]:
     }
     if item.product_id:
         result["product_id"] = item.product_id
+    if item.size:
+        result["size"] = item.size
     return result
 
 

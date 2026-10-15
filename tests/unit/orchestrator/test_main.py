@@ -1700,17 +1700,17 @@ class TestDeepAgentsRuntimeMediaFailures:
 
 class TestDeepAgentsRuntimeRefs:
     def test_product_type_text_normalization_is_conservative(self) -> None:
-        from orchestrator.src import catalog_vocabulary as catalog_vocabulary_mod
+        from orchestrator.src import category_resolver as category_resolver_mod
 
-        assert catalog_vocabulary_mod._normalize_product_text("Accessories") == "accessory"
-        assert catalog_vocabulary_mod._normalize_product_text("dresses") == "dress"
-        assert catalog_vocabulary_mod._normalize_product_text("crossbody_bags") == (
+        assert category_resolver_mod._normalize_product_text("Accessories") == "accessory"
+        assert category_resolver_mod._normalize_product_text("dresses") == "dress"
+        assert category_resolver_mod._normalize_product_text("crossbody_bags") == (
             "crossbody bag"
         )
-        assert catalog_vocabulary_mod._normalize_product_text("Crossbody-Bags") == (
+        assert category_resolver_mod._normalize_product_text("Crossbody-Bags") == (
             "crossbody bag"
         )
-        assert catalog_vocabulary_mod._normalize_product_text("boots & flats") == (
+        assert category_resolver_mod._normalize_product_text("boots & flats") == (
             "boot and flat"
         )
 
@@ -1733,7 +1733,7 @@ class TestDeepAgentsRuntimeRefs:
     def test_full_product_scope_does_not_conflate_advertised_bag_types(
         self,
     ) -> None:
-        from orchestrator.src import catalog_vocabulary as catalog_vocabulary_mod
+        from orchestrator.src import category_resolver as category_resolver_mod
 
         capabilities = CatalogCapabilities(
             catalog_id="scope-test",
@@ -1755,37 +1755,37 @@ class TestDeepAgentsRuntimeRefs:
             ),
         )
 
-        assert catalog_vocabulary_mod._product_scope_key("crossbody_bags") == "crossbody bag"
-        assert not catalog_vocabulary_mod._same_product_scope(
+        assert category_resolver_mod._product_scope_key("crossbody_bags") == "crossbody bag"
+        assert not category_resolver_mod._same_product_scope(
             "crossbody bag",
             "tote bag",
             capabilities,
         )
-        assert not catalog_vocabulary_mod._same_product_scope(
+        assert not category_resolver_mod._same_product_scope(
             "crossbody bag",
             "formal crossbody bag",
             capabilities,
         )
-        assert catalog_vocabulary_mod._same_product_scope(
+        assert category_resolver_mod._same_product_scope(
             "formal crossbody bag",
             "crossbody bag",
             capabilities,
         )
-        assert not catalog_vocabulary_mod._same_product_scope(
+        assert not category_resolver_mod._same_product_scope(
             "formal crossbody bag",
             "bag",
             capabilities,
         )
-        assert not catalog_vocabulary_mod._same_product_scope(
+        assert not category_resolver_mod._same_product_scope(
             "crossbody bag or tote bag",
             "tote bag",
             capabilities,
         )
-        assert catalog_vocabulary_mod._exact_taxonomy_issue(
+        assert category_resolver_mod._exact_taxonomy_issue(
             "crossbody bags",
             {"category": ["bags"], "subcategory": []},
         ) is not None
-        assert catalog_vocabulary_mod._advertised_taxonomy_scope_issue(
+        assert category_resolver_mod._advertised_taxonomy_scope_issue(
             "crossbody bags",
             "member_of_requested_umbrella",
             {"category": ["bags"], "subcategory": ["tote_bags"]},
@@ -1796,19 +1796,19 @@ class TestDeepAgentsRuntimeRefs:
         # substitution is still refused mid-turn, by the gate holding a repair
         # to the scope it is repairing: see, in the search-tool suite,
         # test_a_modifier_does_not_license_the_substitution.
-        assert catalog_vocabulary_mod._advertised_taxonomy_scope_issue(
+        assert category_resolver_mod._advertised_taxonomy_scope_issue(
             "formal crossbody bags",
             "member_of_requested_umbrella",
             {"category": ["bags"], "subcategory": ["tote_bags"]},
             capabilities,
         ) is None
-        assert catalog_vocabulary_mod._advertised_taxonomy_scope_issue(
+        assert category_resolver_mod._advertised_taxonomy_scope_issue(
             "formal crossbody bags",
             "exact_requested_type",
             {"category": ["bags"], "subcategory": ["crossbody_bags"]},
             capabilities,
         ) is None
-        assert catalog_vocabulary_mod._advertised_taxonomy_scope_issue(
+        assert category_resolver_mod._advertised_taxonomy_scope_issue(
             "bags",
             "member_of_requested_umbrella",
             {"category": ["apparel"], "subcategory": ["dresses"]},
@@ -1818,7 +1818,7 @@ class TestDeepAgentsRuntimeRefs:
     def test_typed_multi_subcategory_selection_preserves_coverage(
         self,
     ) -> None:
-        from orchestrator.src import catalog_vocabulary as catalog_vocabulary_mod
+        from orchestrator.src import category_resolver as category_resolver_mod
         capabilities = CatalogCapabilities(
             catalog_id="alternatives-test",
             retrieval_modes=["text"],
@@ -1838,7 +1838,7 @@ class TestDeepAgentsRuntimeRefs:
             ),
         )
 
-        alternatives = search_input_mod._selected_advertised_subcategories(
+        alternatives = category_resolver_mod._selected_advertised_subcategories(
             {
                 "category": ["footwear"],
                 "subcategory": ["heels", "flats", "sandals"],
@@ -1846,14 +1846,14 @@ class TestDeepAgentsRuntimeRefs:
             capabilities,
         )
         assert alternatives == ("footwear", ["heels", "flats", "sandals"])
-        assert search_input_mod._selected_advertised_subcategories(
+        assert category_resolver_mod._selected_advertised_subcategories(
             {
                 "category": ["footwear"],
                 "subcategory": ["heels"],
             },
             capabilities,
         ) is None
-        assert search_input_mod._selected_advertised_subcategories(
+        assert category_resolver_mod._selected_advertised_subcategories(
             {
                 "category": ["bags"],
                 "subcategory": ["heels", "flats"],
@@ -1883,7 +1883,7 @@ class TestDeepAgentsRuntimeRefs:
             )
             for index in range(2)
         ]
-        covered = catalog_vocabulary_mod._products_with_subcategory_coverage(
+        covered = category_resolver_mod._products_with_subcategory_coverage(
             products,
             alternatives,
             4,
@@ -1904,7 +1904,7 @@ class TestDeepAgentsRuntimeRefs:
     def test_search_catalog_tool_schema_is_generated_from_catalog_taxonomy(
         self,
     ) -> None:
-        from orchestrator.src import catalog_vocabulary as catalog_vocabulary_mod
+        from orchestrator.src import category_resolver as category_resolver_mod
         from orchestrator.src.tools import schemas as tool_schemas_mod
 
         capabilities = CatalogCapabilities(
@@ -1944,27 +1944,27 @@ class TestDeepAgentsRuntimeRefs:
             ),
         )
 
-        assert catalog_vocabulary_mod._duplicates_unavailable_product_type(
+        assert category_resolver_mod._duplicates_unavailable_product_type(
             ["sneakers"],
             "sneakers",
             capabilities,
         )
-        assert not catalog_vocabulary_mod._duplicates_unavailable_product_type(
+        assert not category_resolver_mod._duplicates_unavailable_product_type(
             ["sneakers", "water resistance"],
             "sneakers",
             capabilities,
         )
-        assert not catalog_vocabulary_mod._duplicates_unavailable_product_type(
+        assert not category_resolver_mod._duplicates_unavailable_product_type(
             ["sneakers", "sneakers"],
             "sneakers",
             capabilities,
         )
-        assert not catalog_vocabulary_mod._duplicates_unavailable_product_type(
+        assert not category_resolver_mod._duplicates_unavailable_product_type(
             ["bags"],
             "bags",
             capabilities,
         )
-        assert not catalog_vocabulary_mod._duplicates_unavailable_product_type(
+        assert not category_resolver_mod._duplicates_unavailable_product_type(
             ["sneakers or boots"],
             "sneakers or boots",
             capabilities,
@@ -2227,7 +2227,7 @@ class TestDeepAgentsRuntimeRefs:
             }
         )
         assert "single taxonomy value must match requested_product_type" in (
-            catalog_vocabulary_mod._exact_taxonomy_issue(
+            category_resolver_mod._exact_taxonomy_issue(
                 mismatched_exact.requested_product_type,
                 mismatched_exact.taxonomy,
             )
@@ -2251,7 +2251,7 @@ class TestDeepAgentsRuntimeRefs:
             }
         )
         assert modified_exact_type.taxonomy.subcategory == ["clutches"]
-        assert catalog_vocabulary_mod._exact_taxonomy_issue(
+        assert category_resolver_mod._exact_taxonomy_issue(
             modified_exact_type.requested_product_type,
             modified_exact_type.taxonomy,
         ) is not None
@@ -2263,7 +2263,7 @@ class TestDeepAgentsRuntimeRefs:
                 "taxonomy_status": "exact_requested_type",
             }
         )
-        assert catalog_vocabulary_mod._exact_taxonomy_issue(
+        assert category_resolver_mod._exact_taxonomy_issue(
             semantic_direction_exact.requested_product_type,
             semantic_direction_exact.taxonomy,
         ) is None
@@ -2296,7 +2296,7 @@ class TestDeepAgentsRuntimeRefs:
             }
         )
         assert "selected taxonomy must faithfully represent one requested type" in (
-            catalog_vocabulary_mod._exact_taxonomy_issue(
+            category_resolver_mod._exact_taxonomy_issue(
                 multi_value_exact.requested_product_type,
                 multi_value_exact.taxonomy,
             )
@@ -2448,7 +2448,7 @@ class TestDeepAgentsRuntimeRefs:
             )
 
     def test_taxonomy_mapping_uses_catalog_fields_and_validates_scope(self) -> None:
-        from orchestrator.src import catalog_vocabulary as catalog_vocabulary_mod
+        from orchestrator.src import category_resolver as category_resolver_mod
         capabilities = CatalogCapabilities(
             catalog_id="custom",
             taxonomy=CatalogTaxonomyCapabilities(
@@ -2548,21 +2548,21 @@ class TestDeepAgentsRuntimeRefs:
                 },
             ),
         )
-        assert catalog_vocabulary_mod._advertised_scope_match(
+        assert category_resolver_mod._advertised_scope_match(
             "waterproof boots",
             footwear_capabilities,
         ) == ("subcategory", "boots", "footwear", "boot")
-        assert catalog_vocabulary_mod._advertised_scope_match(
+        assert category_resolver_mod._advertised_scope_match(
             "closed shoes or boots",
             footwear_capabilities,
         ) is None
-        assert catalog_vocabulary_mod._advertised_scope_match(
+        assert category_resolver_mod._advertised_scope_match(
             "boots & flats",
             footwear_capabilities,
         ) is None
-        assert not catalog_vocabulary_mod._same_product_scope(
-            catalog_vocabulary_mod._product_scope_key("boots / flats"),
-            catalog_vocabulary_mod._product_scope_key("flats"),
+        assert not category_resolver_mod._same_product_scope(
+            category_resolver_mod._product_scope_key("boots / flats"),
+            category_resolver_mod._product_scope_key("flats"),
             footwear_capabilities,
         )
 
@@ -4904,24 +4904,24 @@ class TestDeepAgentsRuntimeRefs:
         )
 
     def test_private_taxonomy_helpers_validate_legacy_execution_modes(self) -> None:
-        from orchestrator.src import catalog_vocabulary as catalog_vocabulary_mod
+        from orchestrator.src import category_resolver as category_resolver_mod
 
-        assert catalog_vocabulary_mod._exact_taxonomy_issue(
+        assert category_resolver_mod._exact_taxonomy_issue(
             "bottoms",
             {"category": ["apparel"], "subcategory": ["skirts"]},
         ) is not None
-        assert catalog_vocabulary_mod._exact_taxonomy_issue(
+        assert category_resolver_mod._exact_taxonomy_issue(
             "sneakers",
             {"category": ["footwear"], "subcategory": ["flats"]},
         ) is not None
-        assert not catalog_vocabulary_mod._agent_selected_scope_is_advertised(
+        assert not category_resolver_mod._agent_selected_scope_is_advertised(
             "bag",
             {
                 "category": ["bags"],
                 "subcategory": ["clutches", "satchels"],
             },
         )
-        assert catalog_vocabulary_mod._agent_selected_scope_is_advertised(
+        assert category_resolver_mod._agent_selected_scope_is_advertised(
             "clutch",
             {
                 "category": ["bags"],
@@ -4930,7 +4930,7 @@ class TestDeepAgentsRuntimeRefs:
         )
 
     def test_advertised_taxonomy_value_matches_singular_requested_type(self) -> None:
-        from orchestrator.src import catalog_vocabulary as catalog_vocabulary_mod
+        from orchestrator.src import category_resolver as category_resolver_mod
 
         capabilities = CatalogCapabilities(
             catalog_id="fashion",
@@ -4950,20 +4950,20 @@ class TestDeepAgentsRuntimeRefs:
             ),
         )
 
-        assert catalog_vocabulary_mod._advertised_taxonomy_value("bag", capabilities) == "bags"
+        assert category_resolver_mod._advertised_taxonomy_value("bag", capabilities) == "bags"
         assert (
-            catalog_vocabulary_mod._advertised_taxonomy_value("clutch", capabilities)
+            category_resolver_mod._advertised_taxonomy_value("clutch", capabilities)
             == "clutches"
         )
-        assert catalog_vocabulary_mod._advertised_taxonomy_value("backpack", capabilities) is None
-        assert not catalog_vocabulary_mod._agent_selected_scope_is_advertised(
+        assert category_resolver_mod._advertised_taxonomy_value("backpack", capabilities) is None
+        assert not category_resolver_mod._agent_selected_scope_is_advertised(
             "outerwear",
             {
                 "category": ["apparel"],
                 "subcategory": ["dresses", "skirts"],
             },
         )
-        assert not catalog_vocabulary_mod._agent_selected_scope_is_advertised(
+        assert not category_resolver_mod._agent_selected_scope_is_advertised(
             "shoes",
             {
                 "category": ["footwear"],

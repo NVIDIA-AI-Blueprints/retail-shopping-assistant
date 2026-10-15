@@ -92,47 +92,6 @@ def _unsupported_requirement_message(requirements: list[str]) -> str:
     )
 
 
-def _advertised_subcategories_for_selection(
-    taxonomy: BaseModel | dict[str, Any],
-    capabilities: CatalogCapabilities,
-) -> list[str]:
-    """Return advertised role choices within the selected category."""
-
-    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
-    selected_categories = payload.get("category") or []
-    categories = capabilities.taxonomy.categories
-    category_names = selected_categories or list(categories)
-    return sorted(
-        {
-            subcategory
-            for category_name in category_names
-            if (category := categories.get(category_name)) is not None
-            for subcategory in category.subcategories
-        }
-    )
-
-
-def _selected_advertised_subcategories(
-    taxonomy: BaseModel | dict[str, Any],
-    capabilities: CatalogCapabilities,
-) -> tuple[str, list[str]] | None:
-    """Return one typed multi-subcategory selection owned by one category."""
-
-    payload = taxonomy.model_dump() if isinstance(taxonomy, BaseModel) else taxonomy
-    selected = list(dict.fromkeys(payload.get("subcategory") or []))
-    if len(selected) < 2:
-        return None
-    owners = [
-        category_name
-        for category_name, category in capabilities.taxonomy.categories.items()
-        if all(value in category.subcategories for value in selected)
-    ]
-    selected_categories = set(payload.get("category") or [])
-    if len(owners) != 1 or selected_categories not in (set(), {owners[0]}):
-        return None
-    return owners[0], selected
-
-
 def _multi_subcategory_candidate_limit(
     selection: tuple[str, list[str]] | None,
     capabilities: CatalogCapabilities,

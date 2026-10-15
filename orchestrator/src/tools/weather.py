@@ -40,8 +40,7 @@ WEATHER_PLACE_NOT_STATED = (
 )
 
 
-#: One event, one date: a turn never needs many forecasts, and each is a paid
-#: external call.
+#: Each forecast is a paid external call.
 WEATHER_CALLS_PER_TURN = 2
 
 
@@ -54,14 +53,7 @@ WEATHER_NO_DATE = (
 
 
 class WeatherForecastInput(BaseModel):
-    """The agent-facing shape of a forecast request.
-
-    Separate from `WeatherRequest` for one reason: the field is called `city`.
-    Twice the prose form of this rule was ignored -- "going to Italy tomorrow"
-    called the tool 5/5 and forecast "Italia" at 74-101F as though a country
-    had one temperature -- and a rule the model reads is weaker than a
-    parameter it has to fill. `location` invites any place; `city` does not.
-    """
+    """The agent-facing request: `city` rather than `location`, so a country is not one."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -75,12 +67,6 @@ class WeatherForecastInput(BaseModel):
             "the shopper which city instead of calling."
         ),
     )
-    #: Where the place came from, as a parameter rather than a rule, for the
-    #: reason above: a place carried over from an earlier turn can be right or
-    #: wrong, so the field asks which place they mean now and names the two
-    #: things that disqualify a carried-over one.
-    #:
-    #: Nothing to quote is the signal. Ask which place they mean.
     shopper_words_naming_the_place: str = Field(
         ...,
         min_length=1,
@@ -117,13 +103,7 @@ class WeatherForecastInput(BaseModel):
 def weather_call_needs_a_date(
     date: Any, start_date: Any, end_date: Any
 ) -> bool:
-    """Whether this call would silently forecast today instead of the event.
-
-    Extracted from the tool closure so it can be tested. Left inside, deleting
-    it entirely kept all 1089 tests passing -- the third time today that a
-    constant was asserted while the enforcement sat somewhere nothing could
-    reach.
-    """
+    """Whether this call would silently forecast today instead of the event."""
 
     return date is None and start_date is None and end_date is None
 
@@ -136,12 +116,7 @@ WEATHER_BUDGET_EXHAUSTED = (
 
 
 def claim_weather_call(scope: Any) -> bool:
-    """Take one of this turn's forecast calls, or report that none are left.
-
-    Extracted from the tool closure so the budget can be tested. It could not
-    be before, and deleting the check entirely left all 1081 tests passing --
-    a paid external call with no enforced ceiling and nothing to notice.
-    """
+    """Take one of this turn's forecast calls, or report that none are left."""
 
     with scope.weather_lock:
         if scope.weather_calls >= WEATHER_CALLS_PER_TURN:
@@ -151,18 +126,9 @@ def claim_weather_call(scope: Any) -> bool:
 
 
 def _format_weather_result(result: Any) -> str:
-    """Render a forecast, or an honest failure, as evidence for the reply.
-
-    Failures are the common case, not the edge: most event shopping happens
-    more than fifteen days ahead, and the horizon is fifteen days. So every
-    failure says the same thing -- say plainly that the forecast is not
-    available, then style the occasion -- because a turn that cannot see the
-    weather is still a turn that can dress someone.
-    """
+    """Render a forecast, or the failure, as evidence for the reply."""
 
     if not getattr(result, "ok", False):
-        # One sentence only: how to behave without a forecast lives in the
-        # agent prompt, where it applies whether or not this tool exists.
         return (
             "WEATHER_UNAVAILABLE: "
             + str(getattr(result, "message", "No forecast is available."))
@@ -206,8 +172,6 @@ def _format_weather_result(result: Any) -> str:
         "nowhere in particular: say so plainly, and ask which city they will "
         "be in before dressing them for the weather."
     )
-    # The provider's own label and link travel with the data, so the terms are
-    # met by whatever provider answered rather than by a constant here.
     attribution = getattr(result, "attribution", None)
     if attribution is not None:
         lines.append(
@@ -219,16 +183,7 @@ def _format_weather_result(result: Any) -> str:
 
 
 def forecast_prompt_section() -> str:
-    """When to fetch a forecast, for a request that was granted the tool.
-
-    Its own section rather than part of the search fan-out rule, because a
-    turn with nothing to search -- "going to Cancun next week, what's the
-    weather like" -- still needs it.
-
-    Held out of the static prompt for the same reason the catalog rules
-    are: ordering instructions for a tool the request was not granted are
-    unreadable cost.
-    """
+    """When to fetch a forecast; rendered only for a request granted the tool."""
 
     return """Forecast ordering:
 - A shopper who has told you the conditions has already answered the weather
@@ -365,8 +320,6 @@ def build_weather_tool(
         ):
             return WEATHER_PLACE_NOT_STATED
         if weather_call_needs_a_date(date, start_date, end_date):
-            # The library treats a missing date as today, which silently
-            # gives the wrong forecast for a future event. Ask instead.
             return WEATHER_NO_DATE
         if not claim_weather_call(scope):
             return WEATHER_BUDGET_EXHAUSTED

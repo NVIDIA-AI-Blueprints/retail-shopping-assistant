@@ -27,6 +27,7 @@ from ..catalog_capabilities import (
     CatalogCapabilitiesClient,
     format_catalog_capabilities_for_prompt,
 )
+from ..category_resolver import CatalogVocabularyJudge
 from ..commerce_tools import (
     get_cart,
 )
@@ -54,7 +55,6 @@ from ..tools.skill_gate import (
 from ..tools.skills import build_skill_activation
 from ..tools.store import build_store_tools
 from ..tools.weather import build_weather_tool
-from ..vocabulary_judge import CatalogVocabularyJudge
 from ..weather import WeatherConfig, build_weather_client
 from .control_signals import (
     committed_effects_in,

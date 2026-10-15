@@ -62,14 +62,33 @@ def _line(line_id: str, size: str | None, quantity: int = 1) -> dict[str, Any]:
 
 
 class _Cart:
+    """The memory service's cart, including its idempotency ledger.
+
+    A key it has seen is answered with the stored result and changes nothing,
+    exactly as the service replays a retried mutation.
+    """
+
     def __init__(self, lines: list[dict[str, Any]]) -> None:
         self.lines = lines
         self.writes: list[Any] = []
+        self.ledger: dict[str, CartMutationResult] = {}
 
     def read(self, _user_id: int) -> Cart:
         return Cart(contents=[dict(line) for line in self.lines])
 
+    def remove(self, request, _port) -> CartMutationResult:
+        if request.idempotency_key in self.ledger:
+            return self.ledger[request.idempotency_key]
+        self.lines = [
+            line for line in self.lines if line["cart_line_id"] != request.cart_line_id
+        ]
+        self.ledger[request.idempotency_key] = CartMutationResult(ok=True)
+        return self.ledger[request.idempotency_key]
+
     def add(self, request, _port) -> CartMutationResult:
+        if request.idempotency_key in self.ledger:
+            return self.ledger[request.idempotency_key]
+        self.ledger[request.idempotency_key] = CartMutationResult(ok=True)
         self.writes.append(request)
         self.lines.append(
             {
@@ -154,6 +173,7 @@ def add_tool(base_config, monkeypatch: pytest.MonkeyPatch):
         ),
     )
     monkeypatch.setattr(cart_ops_mod, "add_cart_item", cart.add)
+    monkeypatch.setattr(cart_ops_mod, "remove_cart_item", cart.remove)
     monkeypatch.setattr(runtime, "_read_cart", cart.read)
 
     def start(query: str, lines: list[dict[str, Any]]):
@@ -161,7 +181,9 @@ def add_tool(base_config, monkeypatch: pytest.MonkeyPatch):
         state = State(user_id=111, query=query)
         state.cart = cart.read(222)
         runtime._create_agent(state, identity)
-        return {fn.__name__: fn for fn in captured["tools"]}["add_cart_items_tool"]
+        tools = {fn.__name__: fn for fn in captured["tools"]}
+        start.remove = tools["remove_cart_item_tool"]
+        return tools["add_cart_items_tool"]
 
     return SimpleNamespace(start=start, cart=cart)
 
@@ -214,3 +236,24 @@ def test_an_add_to_a_cart_without_it_says_nothing_extra(add_tool) -> None:
 
     assert [write.size for write in add_tool.cart.writes] == ["4"]
     assert "already" not in text
+
+
+def test_adding_back_what_this_turn_removed_reaches_the_cart(add_tool) -> None:
+    """Add, remove, add again in one turn: the second add is a new change.
+
+    Its key used to repeat the first add's, so the service replayed that
+    success and wrote nothing, and the tool reported an add the cart did not
+    hold.
+    """
+
+    add = add_tool.start("add it in a 2, no remove it, actually add it back", [])
+
+    add(items=_add("2"))
+    add_tool.start.remove(cart_line_id="line_new_2")
+    assert add_tool.cart.lines == []
+
+    result = add(items=_add("2"))
+
+    assert [line["size"] for line in add_tool.cart.lines] == ["2"]
+    assert "Added:" in _text(result)
+    assert len({write.idempotency_key for write in add_tool.cart.writes}) == 2

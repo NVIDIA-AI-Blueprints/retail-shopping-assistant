@@ -86,6 +86,20 @@ class TurnScope:
 
     repair: CatalogRepairState = field(default_factory=CatalogRepairState)
 
+    # Cart mutation keys issued this turn. The memory service answers a key it
+    # has already seen by replaying that result and changing nothing, so the
+    # same change made twice in one turn needs a second key.
+    cart_key_lock: Lock = field(default_factory=Lock)
+    cart_keys_issued: Counter[str] = field(default_factory=Counter)
+
+    def cart_mutation_key(self, base: str) -> str:
+        """`base` the first time this turn, then `base#2`, `base#3`, ..."""
+
+        with self.cart_key_lock:
+            self.cart_keys_issued[base] += 1
+            issued = self.cart_keys_issued[base]
+        return base if issued == 1 else f"{base}#{issued}"
+
     def answer_already_given(
         self,
         tool_name: str,

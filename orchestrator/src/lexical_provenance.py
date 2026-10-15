@@ -19,8 +19,8 @@ What replaces it is a judgment about meaning, which is what the resolver
 already makes for taxonomy and colour. Nothing here should be repaired in
 place; repairing a stemmer is how it earns its keep and stays.
 
-Moved verbatim out of `catalog_vocabulary.py`, which holds the honest
-neighbour: comparing one value against the closed set the catalog advertises.
+Its honest neighbour, comparing one value against the closed set the catalog
+advertises, is `category_resolver.py`.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from .agenttypes import DialogueTurn
-from .catalog_vocabulary import (
+from .category_resolver import (
     _normalize_product_text,
     _product_scope_key,
     _singularize_product_word,

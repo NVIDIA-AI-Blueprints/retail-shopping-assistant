@@ -747,7 +747,7 @@ def test_closed_loop_strips_a_model_emitted_invalid_tool_call() -> None:
     assert "reliable catalog match" in response.result[0].content
 
 
-def test_one_search_schema_repair_is_exposed_then_tools_are_removed() -> None:
+def test_one_search_schema_repair_is_exposed_then_tools_return() -> None:
     middleware = ToolLoopControlMiddleware(
         catalog_context="Taxonomy: footwear > boots, flats"
     )
@@ -766,12 +766,16 @@ def test_one_search_schema_repair_is_exposed_then_tools_are_removed() -> None:
         status="error",
     )
     repair_messages = [HumanMessage(content="shopper request"), invalid_call, error]
-    repair_request = _capture_model_request(middleware, repair_messages)
+    repair_call = _search_call("call-b", {"semantic_query": "boots"})
+    repair_request = _capture_model_request(
+        middleware, repair_messages, model_response=repair_call
+    )
     repair_result = _tool_result(
-        "catalog results\nSEARCH_SCOPE_COMPLETE: complete",
+        "SEARCH_RESULT_GROUNDING_NOTE: catalog results\n"
+        "SEARCH_SCOPE_COMPLETE: complete",
         tool_call_id="call-b",
     )
-    completed_messages = [*repair_messages, repair_result]
+    completed_messages = [*repair_messages, repair_call, repair_result]
 
     assert [tool.name for tool in repair_request.tools] == ["search_catalog_tool"]
     assert repair_request.tool_choice == "auto"

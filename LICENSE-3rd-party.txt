@@ -239,13 +239,13 @@ Packages under the Apache License, Version 2.0 with their respective copyright h
    aiofiles 24.1.0
    Copyright (c) 2016 Tin Tvrtkovic
 
-   Milvus v2.6.5 (container image)
+   Milvus v3.0.3 (container image)
    Copyright (c) The Milvus Authors
 
-   SeaweedFS 3.73 (container image)
+   SeaweedFS 4.48 (container image)
    Copyright (c) The SeaweedFS Authors
 
-   vLLM v0.32.0 and v0.24.0 (container images, optional local-model deployment)
+   vLLM v0.32.0, v0.31.0, v0.24.0 and v0.20.0 (container images, optional local-model deployment)
    Copyright (c) The vLLM Authors
 
 
@@ -337,7 +337,7 @@ Packages under BSD License with their respective copyright holders:
    pandas 2.3.1
    Copyright (c) 2008-2023, AQR Capital Management, LLC, Lambda Foundry, Inc. and PyData Development Team
 
-   protobuf 6.31.1
+   protobuf 7.36.2
    Copyright (c) 2008 Google Inc.
 
    python-dotenv 1.1.1

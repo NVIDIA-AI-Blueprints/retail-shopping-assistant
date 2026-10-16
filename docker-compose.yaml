@@ -223,7 +223,7 @@ services:
   # etcd
   etcd:
     container_name: milvus-etcd
-    image: quay.io/coreos/etcd:v3.6.5
+    image: quay.io/coreos/etcd:v3.7.2
     # Deliberately not published to the host. milvus-standalone reaches this
     # over the shopping-network as http://etcd:2379, so nothing outside the
     # network needs it -- and 2379 is etcd's well-known port, so publishing it
@@ -256,7 +256,7 @@ services:
   # MINIO_ACCESS_KEY_ID / MINIO_SECRET_ACCESS_KEY on milvus.
   seaweedfs:
     container_name: milvus-seaweedfs
-    image: chrislusf/seaweedfs:3.73
+    image: chrislusf/seaweedfs:4.48
     volumes:
       - ./catalog_retriever/volumes/seaweedfs:/data
       - ./seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
@@ -280,7 +280,7 @@ services:
   # GPU reservation; see docs/VECTOR_SEARCH.md.
   milvus:
     container_name: milvus-standalone
-    image: milvusdb/milvus:${MILVUS_VERSION:-v2.6.5}
+    image: milvusdb/milvus:${MILVUS_VERSION:-v3.0.3}
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
@@ -310,7 +310,7 @@ services:
 
   # Nginx Proxy
   nginx:
-    image: nginx:1.25.3-alpine
+    image: nginx:1.31.7-alpine
     container_name: nginx-proxy
     ports:
       - "3000:80"
@@ -326,7 +326,7 @@ services:
   # The orchestrator exports OTLP here and knows nothing else; changing where
   # traces land is a change to otel-collector-config.yaml, not to any service.
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.140.0
+    image: otel/opentelemetry-collector-contrib:0.163.1
     container_name: otel-collector
     command: ["--config=/etc/otel-collector-config.yaml"]
     # Published on loopback so an orchestrator run as a local process -- which is
@@ -347,7 +347,7 @@ services:
   # and forwards to otel-collector. Recreating orchestrator orphans it, so
   # restart both together: `docker compose up -d orchestrator relay-collector`.
   relay-collector:
-    image: otel/opentelemetry-collector-contrib:0.140.0
+    image: otel/opentelemetry-collector-contrib:0.163.1
     container_name: relay-collector
     command: ["--config=/etc/relay-collector-config.yaml"]
     network_mode: "service:orchestrator"
@@ -359,7 +359,7 @@ services:
 
   # Arize Phoenix - trace viewer.
   phoenix:
-    image: arizephoenix/phoenix:version-19.19.0
+    image: arizephoenix/phoenix:version-20.23.0
     container_name: phoenix
     ports:
       # All interfaces, matching the UI, so a tunnel can reach it. Phoenix holds

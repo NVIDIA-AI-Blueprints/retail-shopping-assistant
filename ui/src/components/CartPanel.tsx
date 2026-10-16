@@ -11,7 +11,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Close as CloseIcon,
-  DeleteOutline as DeleteOutlineIcon,
+  DeleteOutlined as DeleteOutlineIcon,
   ShoppingCart as ShoppingCartIcon,
 } from "@mui/icons-material";
 

@@ -61,12 +61,6 @@ What follows is what those cannot say.
 
 ## Sizes
 
-- Products list the sizes they come in, and the runs differ: one dress may be a
-  2 to a 12 and another only a 4 to a 10. Before adding a sized product to the
-  cart, ask which size, offering that product's own run, and never add a size
-  the product does not list.
-- Never ask when the only size is `onesize`. Asking what size handbag someone
-  wants is worse than not asking at all.
 - Bags, sunglasses and jewellery are `onesize`. Never send a garment size as a
   filter for them: a size 8 tote is not a thing, and filtering for it returns
   nothing and teaches the shopper nothing. If they ask for one, say those come

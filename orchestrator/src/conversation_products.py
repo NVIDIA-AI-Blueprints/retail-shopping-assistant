@@ -435,6 +435,18 @@ def _presented_attribute_facts(product: Any) -> dict[str, str]:
     return facts
 
 
+def near_miss_field(resolution: Any) -> str | None:
+    """The one field that stopped a match, unless it was the product's name.
+
+    A name that matches nothing shown is the shopper naming a product they
+    were never shown, however well a turn or category fits; that is a search,
+    not a field to correct.
+    """
+
+    field = getattr(resolution, "blocking_field", None)
+    return None if field == "display_name" else field
+
+
 def format_product_resolution(result: ResolveConversationProductsResult) -> str:
     """Render resolution outcomes without authorizing a guessed product."""
 
@@ -513,13 +525,14 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
                 for name, value in _presented_attribute_facts(product).items():
                     lines.append(f"    {name}: {value}")
             continue
-        if resolution.blocking_field:
+        blocking_field = near_miss_field(resolution)
+        if blocking_field:
             # Name the blocking field so the model can correct the call; a bare
             # NOT FOUND reads as the product being gone.
             lines.append(
                 f"REFERENCE {resolution.reference_id}: NOT FOUND. Every other "
                 f"field you supplied matched one earlier product; "
-                f"'{resolution.blocking_field}' did not. Correct that field and "
+                f"'{blocking_field}' did not. Correct that field and "
                 "retry, or ask which earlier product the shopper means. Do not "
                 "guess."
             )

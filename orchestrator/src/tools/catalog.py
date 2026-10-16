@@ -22,6 +22,7 @@ from ..conversation_products import (
     ResolveConversationProductsRequest,
     format_historical_product_index,
     format_product_resolution,
+    near_miss_field,
 )
 from ..product_records import (
     _ONE_SIZE,
@@ -395,7 +396,7 @@ def build_catalog_tools(
         unresolved = {
             item.reference_id
             for item in result.results
-            if item.status == "not_found" and not item.blocking_field
+            if item.status == "not_found" and not near_miss_field(item)
         }
         names: list[str] = []
         for descriptor in references or []:
@@ -611,7 +612,7 @@ def build_catalog_tools(
         # miss only (a blocking field means one field was wrong). A total miss
         # names a product never shown, which is a search request; listing
         # earlier products would suppress that search.
-        near_miss = any(item.blocking_field for item in result.results)
+        near_miss = any(near_miss_field(item) for item in result.results)
         if not near_miss:
             looked_up = _catalog_name_lookup(result, references)
             if looked_up:

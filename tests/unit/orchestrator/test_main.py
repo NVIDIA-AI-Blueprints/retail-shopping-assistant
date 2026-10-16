@@ -6442,10 +6442,14 @@ class TestDeepAgentsRuntimeRefs:
         # choice is what could not be undone.
         assert [item.display_name for item in added] == ["Belle Noir Satin Gown"]
 
+    # "display_name" is a call that also gave a turn and category that fit
+    # something shown: only the name missed, and the name is the shopper's.
+    @pytest.mark.parametrize("blocking_field", [None, "display_name"])
     def test_a_product_never_shown_is_looked_up_in_the_catalog(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
+        blocking_field: str | None,
     ) -> None:
         """The runtime does the search instead of asking the model to.
 
@@ -6576,7 +6580,7 @@ class TestDeepAgentsRuntimeRefs:
                         status="not_found",
                         matches=[],
                         match_count=0,
-                        blocking_field=None,
+                        blocking_field=blocking_field,
                     )
                     for descriptor in references
                 ]
@@ -6610,6 +6614,7 @@ class TestDeepAgentsRuntimeRefs:
         # whether one was shown is now read from the record rather than
         # assumed from having arrived here -- and this product was not.
         assert "CATALOG NAME LOOKUP" in missed
+        assert "Correct that field" not in missed
         assert "-- not shown earlier" in missed
         assert "SHOWN EARLIER" not in missed
         assert "The Office A-line Dress" in missed

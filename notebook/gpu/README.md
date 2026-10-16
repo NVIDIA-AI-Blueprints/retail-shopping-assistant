@@ -81,8 +81,8 @@ tunnel, not the model, sets the numbers.
   Notebook 5's caching-off runs judge by TTFT.
 - **Mamba reuse is unvalidated on this checkpoint.** If startup rejects
   `--mamba-cache-mode align`, `MAMBA_PREFIX=0` and note it in the results.
-- **Pinned image.** vLLM `v0.30.0`; earlier releases don't load this
-  architecture, and nightly tags are deleted after a few days.
+- **Pinned image.** vLLM `v0.32.0`, the release the model card names;
+  nightly tags are deleted after a few days.
 - **Crashes at high concurrency** (a known MoE kernel issue): lower `MAX_NUM_SEQS`.
 - **Watch it:** `docker logs -f nemotron35`, `nvidia-smi`.
   Stop: `docker rm -f nemotron35`.

@@ -24,15 +24,15 @@ services:
     # BF16 weights are ~227 GB: four 80 GB GPUs at tensor parallel 4. The first
     # start downloads them into HF_CACHE quietly and can take an hour.
     #
-    # Pinned to a release: vLLM before 0.30 does not load this architecture.
-    image: ${LOCAL_LLM_VLLM_IMAGE:-vllm/vllm-openai:v0.30.0}
+    # Pinned to the vLLM release the model card names.
+    image: ${LOCAL_LLM_VLLM_IMAGE:-vllm/vllm-openai:v0.32.0}
     # vLLM is started without --api-key, so the host port is loopback only.
     ports:
       - "127.0.0.1:8000:8000"
     environment:
       - HF_TOKEN=${HF_TOKEN}
     command:
-      - --model=${LOCAL_LLM_HF_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026}
+      - --model=${LOCAL_LLM_HF_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16}
       # The name LLM_MODEL asks for, whichever checkpoint is loaded.
       - --served-model-name=nemotron-3.5-super
       - --host=0.0.0.0

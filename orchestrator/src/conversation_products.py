@@ -485,6 +485,15 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
                     + ", ".join(resolution.corroboration_mismatch)
                     + ". Use the values above."
                 )
+                if "attributes.sizes" in resolution.corroboration_mismatch:
+                    # The size is the shopper's own word, and a product not
+                    # sold in it is probably not the one they mean.
+                    lines.append(
+                        "This product is not sold in the size you supplied, so "
+                        "it is probably not the one the shopper means. Do not "
+                        "add it; resolve the reference again without a "
+                        "position, or ask which product they mean."
+                    )
             continue
         if resolution.status == "ambiguous":
             # List each candidate with its confirmed attributes: names alone

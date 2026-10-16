@@ -2013,6 +2013,54 @@ def test_where_the_judge_has_placed_a_role_the_string_rule_is_not_consulted(
     )
 
 
+def test_a_category_named_in_other_words_is_searched_where_the_judge_puts_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """J10 t5, "ok I can stretch to $150 for a nice piece of jewellery".
+
+    The model sent the jewelry category and kept the shopper's word. The judge
+    placed "jewellery" in bracelets, earrings and necklaces, but the scope was
+    still labelled a category-only alternative, so validation refused it and
+    the shopper was told jewellery is not carried.
+    """
+
+    tote = ProductSummary(
+        product_id="t1",
+        display_name="Ombre Canvas Tote Bag",
+        category="tote_bags",
+        price=Money(amount=49.99, currency="USD"),
+    )
+    monkeypatch.setattr(
+        catalog_search_mod,
+        "execute_catalog_search",
+        lambda *_a, **_k: SimpleNamespace(
+            result=SearchCatalogResult(ok=True, products=[tote]),
+            fallback_attempted=False,
+            fallback_used=False,
+        ),
+    )
+    ctx = _context(
+        "show me some handbags",
+        judge=_Judge({"handbags": ["tote_bags", "crossbody_bags"]}),
+    )
+
+    result = search_catalog(
+        ctx,
+        [
+            _scope(
+                semantic_query="handbags",
+                requested_product_type="handbags",
+                taxonomy={"category": ["bags"]},
+            )
+        ],
+    )
+
+    assert _rejection_codes(result) == []
+    assert isinstance(result, tuple)
+    assert not (result[1] or {}).get(NOT_CARRIED_KEY)
+    assert tote.display_name in result[0]
+
+
 def test_a_narrowed_role_is_not_told_to_widen() -> None:
     """A role with no filter behind it gets the narrowing advice only. The
     wider shapes are for a request that named no type at all."""

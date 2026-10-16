@@ -1911,6 +1911,10 @@ def _resolved_against_the_catalogue(
         return None
     if named:
         attempt.taxonomy = _scoped_to(attempt.taxonomy, named, ctx.capabilities)
+        # A category-only label no longer describes the subcategories written
+        # above, and validation would refuse the role as not carried.
+        if attempt.taxonomy_status == "parent_category_alternative":
+            attempt.taxonomy_status = "member_of_requested_umbrella"
         return None
     return _role_this_shop_does_not_carry(ctx, attempt)
 

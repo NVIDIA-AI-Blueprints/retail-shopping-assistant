@@ -116,7 +116,7 @@ into a turn-five purchase. Nothing shorter would have caught either.
 |---|---|---|---|---|
 | J01 | `wedding_abroad` | 20 | 13 | weather, outfit-styling, references, cart-management, sizes, honesty |
 | J02 | `video_look_full` | 13 | 10 | media, references, sizes, cart-management, weather, budget-shopping |
-| J03 | `indecisive_shopper` | 11 | 11 | references, cart-management, sizes, memory |
+| J03 | `indecisive_shopper` | 10 | 10 | references, cart-management, sizes, memory |
 | J04 | `colour_ambiguity` | 7 | 6 | references, cart-management, discovery |
 | J05 | `long_memory` | 10 | 9 | memory, references, cart-management, sizes |
 | J06 | `size_explorer` | 10 | 7 | cart-management, sizes, references |

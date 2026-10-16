@@ -1,10 +1,10 @@
 id: J17_gift_shopping
 covers: [cart-management, sizes, discovery, references]
 why: >
-  Jewellery and eyewear are one size, so nothing here should ever be asked what
+  Jewelry and eyewear are one size, so nothing here should ever be asked what
   size it is -- a question that reads as broken to a shopper buying a bracelet.
 turns:
-  - say: I'm buying a gift, show me some jewellery
+  - say: I'm buying a gift, show me some jewelry
     expect: {products_min: 2}
   - say: what bracelets do you have
     expect:

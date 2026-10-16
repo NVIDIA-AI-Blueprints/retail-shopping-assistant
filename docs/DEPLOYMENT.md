@@ -168,7 +168,7 @@ Face checkpoints served by vLLM from `docker-compose-model-local.yaml`:
 
 | Service | Role | Checkpoint | Weights | GPU memory in use | Default GPU |
 |---------|------|------------|---------|-------------------|-------------|
-| `local-llm` | `app_llm`, `vlm` | [`nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026`](https://docs.nvidia.com/nemo/automodel/model-coverage/omni/nvidia/nemotron-3-5-super-vl), BF16, tensor parallel 4 | ~227 GB | ~70 GB on each of 4 GPUs | 0-3, its own |
+| `local-llm` | `app_llm`, `vlm` | [`nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16), BF16, tensor parallel 4 | ~227 GB | ~70 GB on each of 4 GPUs | 0-3, its own |
 | `local-embedding` | `text_embedding` | [`nvidia/Nemotron-3-Embed-1B-BF16`](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16) | ~2 GB | ~4 GB | 4, shared |
 | `local-content-safety` | `content_safety` | [`nvidia/Nemotron-3.5-Content-Safety`](https://huggingface.co/nvidia/Nemotron-3.5-Content-Safety) | ~9 GB | ~22 GB | 4, shared |
 | `local-topic-control` | `topic_control` | [`nvidia/llama-3.1-nemoguard-8b-topic-control`](https://huggingface.co/nvidia/llama-3.1-nemoguard-8b-topic-control) LoRA on `meta-llama/Llama-3.1-8B-Instruct` | ~15 GB | ~28 GB | 4, shared |
@@ -277,7 +277,7 @@ well into the first start. Check the token first; each line should print `200`
 (`403` means the access request is still pending or was declined):
 
 ```bash
-for repo in nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026 meta-llama/Llama-3.1-8B-Instruct; do
+for repo in nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 meta-llama/Llama-3.1-8B-Instruct; do
   curl -s -o /dev/null -w "%{http_code} $repo\n" \
     -H "Authorization: Bearer $HF_TOKEN" \
     "https://huggingface.co/$repo/resolve/main/config.json"
@@ -634,10 +634,10 @@ set there; a unit test fails if the two differ, so change both together.
 | `ORCHESTRATOR_RELOAD` | Reload the orchestrator on source changes; development only | No | off |
 | `HF_TOKEN` | Hugging Face token with access to the gated local checkpoints: the LLM and Llama 3.1 8B Instruct | Local only | - |
 | `HF_CACHE` | Hugging Face cache the locally deployed models download into | Local only | `~/.cache/huggingface` |
-| `LOCAL_LLM_HF_MODEL` | Checkpoint the local vLLM server loads | Local only | `nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026` |
+| `LOCAL_LLM_HF_MODEL` | Checkpoint the local vLLM server loads | Local only | `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16` |
 | `LOCAL_LLM_GPUS` | Comma-separated GPU ids for the local LLM; supply as many as `LOCAL_LLM_TP` | Local only | `0,1,2,3` |
 | `LOCAL_LLM_TP` | Tensor parallel size for the local LLM | Local only | `4` |
-| `LOCAL_LLM_VLLM_IMAGE` | vLLM image serving the local LLM | Local only | `vllm/vllm-openai:v0.30.0` |
+| `LOCAL_LLM_VLLM_IMAGE` | vLLM image serving the local LLM | Local only | `vllm/vllm-openai:v0.32.0` |
 | `LOCAL_EMBED_GPU` | GPU id for the local embedding model | Local only | `4` |
 | `LOCAL_EMBED_VLLM_IMAGE` | vLLM image serving local embeddings | Local only | `vllm/vllm-openai:v0.24.0` |
 | `LOCAL_CONTENT_SAFETY_GPU` | GPU id for the local content safety model | Local only | `4` |

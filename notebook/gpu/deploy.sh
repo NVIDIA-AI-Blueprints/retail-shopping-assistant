@@ -18,10 +18,10 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-MODEL="${MODEL:-nvidia/NVIDIA-Nemotron-3.5-Super-EA-09112026}"
-# Pinned to a release: vLLM before 0.30 does not load this architecture, and
-# nightly tags are deleted from Docker Hub after a few days.
-VLLM_IMAGE="${VLLM_IMAGE:-vllm/vllm-openai:v0.30.0}"
+MODEL="${MODEL:-nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16}"
+# Pinned to the release the model card names; nightly tags are deleted from
+# Docker Hub after a few days.
+VLLM_IMAGE="${VLLM_IMAGE:-vllm/vllm-openai:v0.32.0}"
 
 PORT="${PORT:-8000}"
 CONTAINER_NAME="${CONTAINER_NAME:-nemotron35}"

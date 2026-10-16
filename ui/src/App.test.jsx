@@ -13,7 +13,7 @@ vi.mock("@mui/icons-material", () => ({
   Close: () => null,
   RestartAlt: () => null,
   ShoppingCart: () => null,
-  DeleteOutline: () => null,
+  DeleteOutlined: () => null,
 }));
 vi.mock("@mui/material/Switch", () => ({ default: () => null }));
 vi.mock("@mui/material/styles", () => ({

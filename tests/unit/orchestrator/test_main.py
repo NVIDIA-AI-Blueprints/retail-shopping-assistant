@@ -2944,9 +2944,9 @@ class TestDeepAgentsRuntimeRefs:
         # duplication load-bearing.
         reachable = {
             "cart-management": (
-                "Cart mutation scope must match",
-                "Selection, approval, or styling preference is not cart intent",
-                "ask one concise clarification naming the candidates",
+                "Change only what the request names",
+                "Liking, approving or discussing a product is not a request",
+                "ask one short question",
                 "For an explicit swap",
                 "remove the",
             ),
@@ -3019,17 +3019,16 @@ class TestDeepAgentsRuntimeRefs:
         # word of the rule, which teaches the next person to reflow the test
         # rather than read it.
         cart = " ".join(skill("cart-management").split())
-        assert "ask which size, offering that product's own run" in cart
-        assert "worse than not asking at all" in cart
-        assert "never add a size the product does not list" in cart
+        assert "If they have not named one, ask, listing that product's sizes" in cart
+        assert "Never ask a size when the only size is `onesize`" in cart
+        assert "Never add or substitute a size it does not list" in cart
         # A size guess is invisible until the parcel arrives, so it is
         # disclosed where it cannot be missed and names its neighbours.
-        assert "say which in the line that confirms the add" in cart
-        assert "cannot see a size until it arrives" in cart
+        assert "say which in the confirmation, naming its neighbours" in cart
         # Offering pieces that do come in the wanted size is an add-path rule,
         # so it is stated once, by the skill that adds. product-discovery said
         # it too, word for word.
-        assert "offer pieces that do come in it" in cart
+        assert "offer similar pieces in theirs" in cart
         # Live: "add it in a 10 too" raised the size-8 line to quantity 2 and
         # then asked whether the second should be a 10 -- the wrong garment
         # twice, presented as agreement.
@@ -3049,8 +3048,8 @@ class TestDeepAgentsRuntimeRefs:
         product_discovery = " ".join(skill("product-discovery").split())
         assert "a size 8 tote is not a thing" in product_discovery
         assert "those come in one size" in product_discovery
-        assert "another line, not more of" in cart
-        assert "adds the wrong garment twice" in cart
+        assert "is a new line" in cart
+        assert "Never raise the existing line's quantity instead" in cart
         assert "Advice is not an answer on its own either" in (
             captured["system_prompt"]
         )

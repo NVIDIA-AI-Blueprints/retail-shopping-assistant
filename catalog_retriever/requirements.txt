@@ -24,7 +24,7 @@ openai==1.97.0
 orjson==3.11.6
 packaging==26.2
 pillow==12.3.0
-protobuf==6.33.6
+protobuf==7.36.2
 pydantic==2.13.4
 pydantic_core==2.46.4
 pymilvus==2.6.0

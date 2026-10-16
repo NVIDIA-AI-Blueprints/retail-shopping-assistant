@@ -293,7 +293,9 @@ services:
       MINIO_ACCESS_KEY_ID: seaweedfsadmin
       MINIO_SECRET_ACCESS_KEY: seaweedfsadmin
     volumes:
-      - ./catalog_retriever/volumes/milvus:/var/lib/milvus
+      # A named volume, not a bind mount: the image runs as uid 999 and
+      # Docker creates bind-mount directories as root.
+      - milvus-data:/var/lib/milvus
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 10s
@@ -381,4 +383,5 @@ networks:
 
 volumes:
   memory-data:
+  milvus-data:
   phoenix-data:

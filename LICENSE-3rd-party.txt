@@ -239,7 +239,7 @@ Packages under the Apache License, Version 2.0 with their respective copyright h
    aiofiles 24.1.0
    Copyright (c) 2016 Tin Tvrtkovic
 
-   Milvus v2.6.5 (container image)
+   Milvus v2.6.25 (container image)
    Copyright (c) The Milvus Authors
 
    SeaweedFS 3.73 (container image)

@@ -28,7 +28,7 @@ uses.
 |---------|-------|------|
 | `etcd` | `quay.io/coreos/etcd:v3.6.5` | Milvus metadata |
 | `seaweedfs` | `chrislusf/seaweedfs:3.73` | S3-compatible object storage for Milvus segments and index files |
-| `milvus` | `milvusdb/milvus:v2.6.5` (CPU) or `v2.6.5-gpu` | Vector database, standalone |
+| `milvus` | `milvusdb/milvus:v2.6.25` (CPU) or `v2.6.25-gpu` | Vector database, standalone |
 
 Milvus talks to SeaweedFS through its S3 gateway on port 9010. The `MINIO_*`
 variables on the `milvus` service are Milvus's own names for its S3 endpoint
@@ -41,7 +41,7 @@ index files. It does not hold product images; the catalog service reads those
 from local disk.
 
 `MILVUS_VERSION` selects the Milvus image tag, so the GPU image is
-`MILVUS_VERSION=v2.6.5-gpu`.
+`MILVUS_VERSION=v2.6.25-gpu`.
 
 ## Choosing an index
 
@@ -108,7 +108,7 @@ run against this repository yet, so treat it as a starting point:
 # docker-compose.gpu-milvus.yaml
 services:
   milvus:
-    image: milvusdb/milvus:v2.6.5-gpu
+    image: milvusdb/milvus:v2.6.25-gpu
     environment:
       KNOWHERE_GPU_MEM_POOL_SIZE: "2048;4096"
     deploy:

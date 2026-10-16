@@ -280,7 +280,7 @@ services:
   # GPU reservation; see docs/VECTOR_SEARCH.md.
   milvus:
     container_name: milvus-standalone
-    image: milvusdb/milvus:${MILVUS_VERSION:-v2.6.5}
+    image: milvusdb/milvus:${MILVUS_VERSION:-v2.6.25}
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
@@ -310,7 +310,7 @@ services:
 
   # Nginx Proxy
   nginx:
-    image: nginx:1.25.3-alpine
+    image: nginx:1.30.6-alpine
     container_name: nginx-proxy
     ports:
       - "3000:80"

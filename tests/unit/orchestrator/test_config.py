@@ -631,8 +631,8 @@ class TestLoadConfig:
         config = load_config(str(path))
 
         assert config.llm_temperature == 0.7
-        assert config.llm_max_output_tokens == 1024
-        assert config.grounding_editor_max_output_tokens == 1024
+        assert config.llm_max_output_tokens == 4096
+        assert config.grounding_editor_max_output_tokens == 3072
         assert config.retriever_port == shipped["retriever_port"]
         assert config.memory_port == shipped["memory_port"]
         assert (

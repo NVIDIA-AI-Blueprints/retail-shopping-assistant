@@ -1145,8 +1145,8 @@ docker run --rm -v retail-shopping-assistant_memory-data:/data \
 docker compose start memory-retriever
 ```
 
-`docker compose down -v` removes `memory-data`; back it up first when durable
-turns or carts must survive teardown.
+`docker compose down -v` removes `memory-data` and `milvus-data`; back up
+`memory-data` first when durable turns or carts must survive teardown.
 
 ---
 

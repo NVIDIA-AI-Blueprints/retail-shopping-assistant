@@ -321,10 +321,9 @@ class ToolLoopControlMiddleware(AgentMiddleware):
                 continue
             if self._repair_in_flight:
                 self._clear_in_flight_repair()
-                if (
-                    "SEARCH_RESULT_GROUNDING_NOTE" not in content
-                    or SEARCH_SCOPE_COMPLETE_PREFIX in content
-                ):
+                if SEARCH_SCOPE_COMPLETE_PREFIX in content:
+                    self._search_scope_closed = True
+                elif "SEARCH_RESULT_GROUNDING_NOTE" not in content:
                     self._synthesis_required = True
                 continue
             if SEARCH_SCOPE_COMPLETE_PREFIX in content:

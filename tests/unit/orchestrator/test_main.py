@@ -3049,8 +3049,8 @@ class TestDeepAgentsRuntimeRefs:
         product_discovery = " ".join(skill("product-discovery").split())
         assert "a size 8 tote is not a thing" in product_discovery
         assert "those come in one size" in product_discovery
-        assert "another line, not more of" in cart
-        assert "adds the wrong garment twice" in cart
+        assert "is a new line" in cart
+        assert "Never raise the existing line's quantity instead" in cart
         assert "Advice is not an answer on its own either" in (
             captured["system_prompt"]
         )

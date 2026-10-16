@@ -204,7 +204,7 @@ suites see [Testing and Evaluation](tests/README.md).
 
 GOVERNING TERMS: Use of the blueprint software and materials and NIM containers are governed by the [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) and [Product-specific Terms for AI products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/);  and the use of models is governed by the [NVIDIA Community Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/).
  
-ADDITIONAL INFORMATION: [Llama 3.1 Community License Agreement](https://www.llama.com/llama3_1/license/) for the Llama 3.1 NemoGuard 8B - Topic Control model, built with Llama.
+ADDITIONAL INFORMATION: [Llama 3.1 Community License Agreement](https://www.llama.com/llama3_1/license/) for the Llama 3.1 NemoGuard 8B - Topic Control model, built with Llama. [OpenMDW-1.1](https://openmdw.ai/license/1-1/) for the Nemotron 3.5 Super VL 120B A12B BF16 checkpoint downloaded for local deployment.
  
 This project will download and install additional third-party open source software projects. Review the license terms of these open source projects before use, found in [License-3rd-party.txt](LICENSE-3rd-party.txt).
  

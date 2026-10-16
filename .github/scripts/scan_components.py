@@ -92,6 +92,7 @@ NVIDIA_NIM_CATALOG = {}
 # Models referenced by ID in config files (keyed by "org/model-name")
 MODEL_ID_CATALOG = {
     'nvidia/nemotron-3.5-super-vl-preview': {'name': 'Nemotron 3.5 Super VL', 'url': 'https://build.nvidia.com/nvidia/nemotron-3.5-super-vl-preview', 'license': 'NVIDIA Community Models License', 'license_url': 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/'},
+    'nvidia/nvidia-nemotron-3.5-super-vl-120b-a12b-bf16': {'name': 'Nemotron 3.5 Super VL 120B A12B BF16', 'url': 'https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16', 'license': 'OpenMDW-1.1', 'license_url': 'https://openmdw.ai/license/1-1/'},
     'nvidia/nemotron-3-embed-1b': {'name': 'Nemotron 3 Embed 1B', 'url': 'https://build.nvidia.com/nvidia/nemotron-3-embed-1b', 'license': 'NVIDIA Community Models License', 'license_url': 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/'},
     'nvidia/nemotron-3-embed-1b-bf16': {'name': 'Nemotron 3 Embed 1B', 'url': 'https://build.nvidia.com/nvidia/nemotron-3-embed-1b', 'license': 'NVIDIA Community Models License', 'license_url': 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/'},
     'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning': {'name': 'Nemotron 3 Nano Omni 30B A3B Reasoning', 'url': 'https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', 'license': 'NVIDIA Community Models License', 'license_url': 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/'},
@@ -465,6 +466,13 @@ def parse_env_example_models(path: Path):
     return model_ids
 
 
+def parse_compose_models(path: Path):
+    """Extract model IDs from vLLM arguments like --model=org/name or --model=${X:-org/name}."""
+    text = path.read_text(errors='ignore')
+    pattern = r'--model=(?:\$\{\w+:-)?([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)'
+    return [m.group(1).lower() for m in re.finditer(pattern, text)]
+
+
 def parse_notebook(path: Path):
     """Extract model IDs and nvcr.io images from Jupyter notebooks."""
     model_ids = []
@@ -600,6 +608,7 @@ def scan_repo(root: Path):
     for p in root.rglob('docker-compose*.y*ml'):
         if not any(s in p.parts for s in always_skip):
             found['compose_images'].extend(parse_compose_all_images(p))
+            found['model_ids'].update(parse_compose_models(p))
 
     for p in root.rglob('config.y*ml'):
         if not any(s in p.parts for s in always_skip):

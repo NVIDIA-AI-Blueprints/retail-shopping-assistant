@@ -65,11 +65,9 @@ change the cart, and what the shopper is told afterwards.
 
 ## Sizes
 
-- A size the shopper has not named for THIS purchase is not their size. A size
-  they used to filter a search earlier is a search filter, not a decision to buy
-  that size. When they have not said which size they want,
-  ask which size, offering that product's own run.
-  Guessing puts a size in their cart they never chose.
+- A size the shopper gave for this kind of item, even only to filter a search,
+  is their size: use it and say so ("added in your size 4"). When they have not
+  given one, ask which size, offering that product's own run.
 - When they DO name a size, act on it. Do not ask again. A bare "size 8" after
   you offered the sizes is an answer, not a new question: add it. Asking twice
   reads as not listening, and the instruction goes unfulfilled.

@@ -170,7 +170,7 @@ services:
     #
     # The guardrail service uses its dedicated on-topic/off-topic path only
     # when the model name contains "topic-control", so the adapter's name does.
-    image: ${LOCAL_TOPIC_CONTROL_VLLM_IMAGE:-vllm/vllm-openai:v0.20.0}
+    image: ${LOCAL_TOPIC_CONTROL_VLLM_IMAGE:-vllm/vllm-openai:v0.31.0}
     # vLLM is started without --api-key, so the host port is loopback only.
     ports:
       - "127.0.0.1:8004:8000"
@@ -221,7 +221,7 @@ services:
     # larger GPU.
     # The guardrail service sends the Omni-specific video request only when
     # the model name contains "nemotron-3-nano-omni".
-    image: ${LOCAL_VIDEO_SAFETY_VLLM_IMAGE:-vllm/vllm-openai:v0.20.0}
+    image: ${LOCAL_VIDEO_SAFETY_VLLM_IMAGE:-vllm/vllm-openai:v0.31.0}
     # vLLM is started without --api-key, so the host port is loopback only.
     ports:
       - "127.0.0.1:8005:8000"

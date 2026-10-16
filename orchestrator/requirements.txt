@@ -5,7 +5,7 @@ anyio==4.14.2
 attrs==26.1.0
 certifi==2026.5.20
 charset-normalizer==3.4.7
-click==8.2.1
+click==8.3.3
 distro==1.9.0
 deepagents==0.7.13
 fastapi==0.136.1

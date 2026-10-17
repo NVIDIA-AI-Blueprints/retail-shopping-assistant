@@ -21,7 +21,7 @@ services:
     # notebook/gpu/deploy.sh uses. app_llm and vlm both point here, as they
     # share one hosted model, so the checkpoint must read images and video.
     #
-    # BF16 weights are ~227 GB: four 80 GB GPUs at tensor parallel 4. The first
+    # BF16 weights are ~249 GB: four 80 GB GPUs at tensor parallel 4. The first
     # start downloads them into HF_CACHE quietly and can take an hour.
     #
     # Pinned to the vLLM release the model card names.

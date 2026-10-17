@@ -28,7 +28,7 @@ deployed models are vLLM serving Hugging Face checkpoints from
 ### System Requirements
 
 #### Minimum Requirements
-- **OS**: Ubuntu 20.04+ or equivalent Linux distribution
+- **OS**: Ubuntu 22.04 LTS or later, or an equivalent Linux distribution
 - **CPU**: 8+ cores
 - **RAM**: 32GB system memory
 - **Storage**: 50GB available disk space
@@ -38,7 +38,7 @@ deployed models are vLLM serving Hugging Face checkpoints from
 - **OS**: Ubuntu 22.04 LTS
 - **CPU**: 16+ cores
 - **RAM**: 128GB+ system memory
-- **Storage**: 100GB+ available disk space
+- **Storage**: 400GB available disk space for locally deployed models
 - **GPUs**: 6x H100 80 GB for locally deployed models (see [GPU Sizing](#gpu-sizing))
 - **Network**: High-speed internet connection
 
@@ -168,10 +168,10 @@ Face checkpoints served by vLLM from `docker-compose-model-local.yaml`:
 
 | Service | Role | Checkpoint | Weights | GPU memory in use | Default GPU |
 |---------|------|------------|---------|-------------------|-------------|
-| `local-llm` | `app_llm`, `vlm` | [`nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16), BF16, tensor parallel 4 | ~227 GB | ~70 GB on each of 4 GPUs | 0-3, its own |
+| `local-llm` | `app_llm`, `vlm` | [`nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16), BF16, tensor parallel 4 | ~249 GB | ~70 GB on each of 4 GPUs | 0-3, its own |
 | `local-embedding` | `text_embedding` | [`nvidia/Nemotron-3-Embed-1B-BF16`](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16) | ~2 GB | ~4 GB | 4, shared |
 | `local-content-safety` | `content_safety` | [`nvidia/Nemotron-3.5-Content-Safety`](https://huggingface.co/nvidia/Nemotron-3.5-Content-Safety) | ~9 GB | ~22 GB | 4, shared |
-| `local-topic-control` | `topic_control` | [`nvidia/llama-3.1-nemoguard-8b-topic-control`](https://huggingface.co/nvidia/llama-3.1-nemoguard-8b-topic-control) LoRA on `meta-llama/Llama-3.1-8B-Instruct` | ~15 GB | ~28 GB | 4, shared |
+| `local-topic-control` | `topic_control` | [`nvidia/llama-3.1-nemoguard-8b-topic-control`](https://huggingface.co/nvidia/llama-3.1-nemoguard-8b-topic-control) LoRA on `meta-llama/Llama-3.1-8B-Instruct` | ~16 GB | ~28 GB | 4, shared |
 | `local-video-safety` | `multimodal_safety` | [`nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8`](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8) | ~35 GB | ~72 GB | 5, its own |
 
 Memory in use was measured on H100 80 GB GPUs. It is more than the weights
@@ -232,7 +232,8 @@ BF16 checkpoint (~66 GB) leaves little room on that card; on a larger GPU, set
   [Software Dependencies](#software-dependencies))
 - **Six 80 GB GPUs** for the default layout, such as H100 80 GB; see
   [GPU Sizing](#gpu-sizing) for the other layouts
-- About 300 GB of disk for the checkpoints, most of it the chat model's BF16 weights
+- About 400 GB of disk: ~311 GB of checkpoints, most of it the chat model's
+  BF16 weights, plus the four vLLM images the services pull
 - A Hugging Face token with access to the two gated checkpoints: the
   Nemotron 3.5 Super chat model, and the base checkpoint that the NemoGuard
   topic control adapter runs on (`meta-llama/Llama-3.1-8B-Instruct`, approved

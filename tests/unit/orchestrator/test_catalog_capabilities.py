@@ -287,6 +287,51 @@ def test_formats_nested_taxonomy_and_semantic_fields_compactly() -> None:
     assert "5/32" not in prompt_text
 
 
+def test_a_value_meaning_says_which_categories_stock_it() -> None:
+    """J20 t2: shown women's sweaters, the reply said everything here is women's."""
+
+    def audience(**counts: int) -> CatalogFieldCapability:
+        return CatalogFieldCapability(
+            type="enum",
+            filterable=True,
+            operators=["in"],
+            source_fields=["target_audience"],
+            coverage=CatalogCoverage(present=sum(counts.values()), total=sum(counts.values())),
+            values=[CatalogValueCapability(value=v, count=n) for v, n in counts.items()],
+            value_meanings={
+                "adult_all_genders": "made to be worn by any adult",
+                "womens": "cut and sized for a woman's body",
+            },
+        )
+
+    capabilities = CatalogCapabilities(
+        catalog_id="fashion",
+        retrieval_modes=["text"],
+        fields={"target_audience": audience(womens=38, adult_all_genders=9)},
+        taxonomy=CatalogTaxonomyCapabilities(
+            category_field="category",
+            categories={
+                "apparel": CatalogTaxonomyCategory(
+                    product_count=18,
+                    filters={"target_audience": audience(womens=18)},
+                ),
+                "eyewear": CatalogTaxonomyCategory(
+                    product_count=29,
+                    filters={"target_audience": audience(womens=20, adult_all_genders=9)},
+                ),
+            },
+        ),
+    )
+
+    prompt_text = format_catalog_capabilities_for_prompt(capabilities)
+
+    assert "- adult_all_genders: made to be worn by any adult (eyewear 9 of 29)" in prompt_text
+    assert (
+        "- womens: cut and sized for a woman's body (apparel 18 of 18, eyewear 20 of 29)"
+        in prompt_text
+    )
+
+
 def test_formats_custom_taxonomy_keys_and_all_enum_values() -> None:
     values = [
         CatalogValueCapability(value=f"tag_{index}", count=1) for index in range(81)

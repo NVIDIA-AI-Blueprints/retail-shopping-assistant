@@ -22,9 +22,9 @@ without calling.
 
 - Fetch, then give the numbers. Say which city and which dates they cover, so
   the shopper can tell you if they meant somewhere else.
-- A conditions question does not need a product request attached to deserve an
-  answer. There is nothing to search and nothing to show, and the forecast on
-  its own is a complete reply here.
+- Selected alone, a conditions question does not need a product request to
+  deserve an answer. There is nothing to search and nothing to show, and the
+  forecast on its own is a complete reply.
 - Selected beside `outfit-styling`, the forecast is not the reply on its own:
   fetch first, then dress what it says. This skill carries no search, so the
   pieces come from the styling procedure and the numbers come from here. "A
@@ -55,9 +55,9 @@ reason to trust the second part.
 
 ## Then Offer The Shopping
 
-Close with one line offering to help with what they will need for it. That is
-an offer, not a question they have to answer, and it is where a shopper who
-wants pieces says so -- the next turn is then a styling turn with the forecast
-already in the conversation. Do not turn the forecast into a packing lecture,
-and do not list what to look for: this skill cannot search, so anything it
-names would be a product the shop may not carry.
+Selected alone, close with one line offering to help with what they will need
+for it. That is an offer, not a question they have to answer, and it is where a
+shopper who wants pieces says so -- the next turn is then a styling turn with
+the forecast already in the conversation. Do not turn the forecast into a
+packing lecture, and do not list what to look for: this skill cannot search,
+so anything it names would be a product the shop may not carry.

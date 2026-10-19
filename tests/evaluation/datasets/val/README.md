@@ -1,6 +1,6 @@
 # val — replaying fixed conversations, checking state
 
-Forty-five conversations whose words never change, with assertions answered by
+Fifty-eight conversations whose words never change, with assertions answered by
 the cart the service holds, the products it returned, and the tools it called.
 
 ## Running
@@ -30,8 +30,9 @@ conversations for the model and the timings mean something. `--parallel` runs
 up to six at once; beyond that nothing finishes sooner, because the bottleneck
 is the model endpoint.
 
-Forty-five scenarios -- twenty journeys and twenty-five probes, 231 turns --
-take roughly two hours one at a time, or about forty minutes with `--parallel`.
+Fifty-eight scenarios -- twenty-five journeys, thirty-one probes and two
+regression checks, 271 turns -- take roughly two and a half hours one at a
+time, or about fifty minutes with `--parallel`.
 A single journey is four to ten minutes.
 
 Needs the stack up (orchestrator on 8009, memory on 8011) and
@@ -106,7 +107,7 @@ is what must not change. That mistake was made in the first draft of
 
 ## Two kinds of script
 
-**Journeys** (`scripts/journeys/`) are continuous conversations of six to twenty
+**Journeys** (`scripts/journeys/`) are continuous conversations of two to nineteen
 turns, like the demo scripts they came from. They are where context accumulates,
 and accumulated context is what produced most of this week's failures: a navy
 dress chosen at turn nineteen, a size carried out of a turn-one search filter
@@ -114,26 +115,31 @@ into a turn-five purchase. Nothing shorter would have caught either.
 
 | # | journey | turns | asserted | covers |
 |---|---|---|---|---|
-| J01 | `wedding_abroad` | 20 | 13 | weather, outfit-styling, references, cart-management, sizes, honesty |
+| J01 | `wedding_abroad` | 19 | 17 | weather, outfit-styling, references, cart-management, sizes, honesty |
 | J02 | `video_look_full` | 13 | 10 | media, references, sizes, cart-management, weather, budget-shopping |
 | J03 | `indecisive_shopper` | 10 | 10 | references, cart-management, sizes, memory |
 | J04 | `colour_ambiguity` | 7 | 6 | references, cart-management, discovery |
 | J05 | `long_memory` | 10 | 9 | memory, references, cart-management, sizes |
-| J06 | `size_explorer` | 10 | 7 | cart-management, sizes, references |
-| J07 | `cart_manager` | 10 | 5 | cart-management, sizes, references |
-| J08 | `abandon_and_restart` | 8 | 4 | cart-management, references, memory |
-| J09 | `one_size_conversation` | 9 | 6 | sizes, cart-management, discovery |
-| J10 | `budget_journey` | 9 | 6 | budget-shopping, filters, cart-management, honesty |
+| J06 | `size_explorer` | 10 | 9 | cart-management, sizes, references |
+| J07 | `cart_manager` | 10 | 10 | cart-management, sizes, references |
+| J08 | `abandon_and_restart` | 8 | 8 | cart-management, references, memory |
+| J09 | `one_size_conversation` | 9 | 9 | sizes, cart-management, discovery |
+| J10 | `budget_journey` | 8 | 6 | budget-shopping, filters, cart-management, honesty |
 | J11 | `work_capsule` | 9 | 8 | outfit-styling, budget-shopping, cart-management, sizes |
-| J12 | `beach_holiday` | 10 | 8 | weather, outfit-styling, discovery, cart-management, sizes |
+| J12 | `beach_holiday` | 10 | 10 | weather, outfit-styling, discovery, cart-management, sizes |
 | J13 | `comparison_shopper` | 9 | 9 | discovery, memory, honesty, cart-management |
-| J14 | `changing_mind` | 8 | 6 | discovery, filters, references, cart-management |
-| J15 | `impossible_requirements` | 7 | 2 | discovery, filters, honesty |
-| J16 | `not_carried_pivot` | 7 | 4 | discovery, honesty, cart-management |
+| J14 | `changing_mind` | 8 | 8 | discovery, filters, references, cart-management |
+| J15 | `impossible_requirements` | 7 | 4 | discovery, filters, honesty |
+| J16 | `not_carried_pivot` | 7 | 6 | discovery, honesty, cart-management |
 | J17 | `gift_shopping` | 7 | 7 | cart-management, sizes, discovery, references |
 | J18 | `policy_and_purchase` | 8 | 5 | store-policy-answers, honesty, cart-management |
 | J19 | `photo_then_build` | 7 | 6 | media, discovery, outfit-styling, cart-management |
 | J20 | `menswear_pivot` | 6 | 5 | media, honesty, discovery, cart-management |
+| J21 | `demo_ten_turns` | 10 | 10 | weather, media, references, discovery, filters, sizes, cart-management, honesty |
+| J22 | `counting_what_was_shown` | 5 | 5 | discovery, references, cart |
+| J23 | `show_me_more` | 4 | 4 | discovery, references |
+| J24 | `no_product_type` | 4 | 2 | product-discovery, typeless-scope, colour, honesty |
+| J25 | `a_size_before_a_product` | 2 | 2 | product-discovery, sizes, filters, honesty |
 
 Run one by its number: `--only J13`. A prefix runs a group: `--only J1`
 runs J10 through J19.

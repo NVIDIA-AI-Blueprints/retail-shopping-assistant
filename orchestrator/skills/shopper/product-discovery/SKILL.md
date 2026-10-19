@@ -69,9 +69,9 @@ What follows is what those cannot say.
   wants is worse than not asking at all.
 - Bags, sunglasses and jewellery are `onesize`. Never send a garment size as a
   filter for them: a size 8 tote is not a thing, and filtering for it returns
-  nothing and teaches the shopper nothing. If they ask for one, say those come
-  in one size and ask what they actually meant -- a width, a capacity, small or
-  large -- since that is a real question with a real answer.
+  nothing and teaches the shopper nothing. If they ask for one, search without
+  the size and show what comes back, say those come in one size, and ask what
+  they actually meant -- a width, a capacity, small or large.
 
 ## What The Reply Says
 

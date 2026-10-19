@@ -101,7 +101,10 @@ def format_catalog_capabilities_for_prompt(
             for value, meaning in sorted(
                 (getattr(capability, "value_meanings", None) or {}).items()
             ):
-                lines.append(f"    - {value}: {meaning}")
+                lines.append(
+                    f"    - {value}: {meaning}"
+                    + _categories_carrying(capabilities, name, value)
+                )
 
     semantic_only = {
         name: field
@@ -213,6 +216,30 @@ def _format_filter_capability(
     if searchable is not None:
         parts.append(f"semantic {'yes' if searchable else 'no'}")
     return "; ".join(parts)
+
+
+def _categories_carrying(
+    capabilities: CatalogCapabilities,
+    field_name: str,
+    value: str,
+) -> str:
+    """Where a value is stocked, as " (bags 29 of 30, eyewear 9 of 29)".
+
+    A meaning alone leaves the model to infer where a value applies from the
+    few products it was shown, and "everything here is women's" follows.
+    """
+
+    counts = []
+    for category_name in sorted(capabilities.taxonomy.categories, key=str.casefold):
+        category = capabilities.taxonomy.categories[category_name]
+        field = category.filters.get(field_name)
+        count = next(
+            (item.count for item in (field.values if field else []) if item.value == value),
+            0,
+        )
+        if count:
+            counts.append(f"{category_name} {count} of {category.product_count}")
+    return f" ({', '.join(counts)})" if counts else ""
 
 
 def _format_semantic_field(field: CatalogFieldCapability) -> str:

@@ -1,10 +1,9 @@
 id: P08_cart_two_sizes_are_two_lines
 covers: [cart-management, sizes]
 why: >
-  A size is a line, not a quantity, and a size nobody named is not their size.
-  Both were learned the hard way: reversing the first emptied a cart, and
-  ignoring the second put a size 6 in one and left the shopper with three
-  dresses.
+  A size is a line, not a quantity, and a size the shopper gave to filter a
+  search is their size. Reversing the first emptied a cart; asking again for a
+  size they had just said made them repeat themselves.
 turns:
   - say: show me black dresses in a size 2
     expect:
@@ -13,7 +12,8 @@ turns:
 
   - say: add the Black Satin Lace-Up Dress to my cart
     expect:
-      cart_unchanged: true            # it must ask the size, not choose one
+      cart:
+        - {name: Black Satin Lace-Up Dress, size: "2", qty: 1}
 
   - say: size 2
     expect:

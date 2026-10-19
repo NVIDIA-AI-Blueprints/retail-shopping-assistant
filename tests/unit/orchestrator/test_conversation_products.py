@@ -469,3 +469,50 @@ def test_result_formatter_resolves_one_and_requires_clarification_otherwise() ->
     assert "Nothing shown in this conversation matches it" not in rendered
     # Neither may authorise adding something the shopper has not seen.
     assert "Never add a product the shopper has not been shown" in rendered
+
+
+def test_a_size_the_product_is_not_sold_in_stops_the_add() -> None:
+    """J04: "add the black one in a size 8" after black dresses, heels and bags.
+
+    The model resolved the first bag with size 8. The purse is one size, so the
+    size was set aside and the note said to use the record; the purse went in
+    the cart, and the heels sold in an 8 did not.
+    """
+
+    from orchestrator.src.conversation_products import (
+        ConversationProductMatch,
+        ProductReferenceResolution,
+        ResolveConversationProductsResult,
+        format_product_resolution,
+    )
+    from shared.commerce_contracts import Money, ProductSummary
+
+    def _resolved(mismatch: list[str]) -> str:
+        return format_product_resolution(
+            ResolveConversationProductsResult(
+                results=[
+                    ProductReferenceResolution(
+                        reference_id="black_one_size_8",
+                        status="resolved",
+                        match_count=1,
+                        matches=[
+                            ConversationProductMatch(
+                                product=ProductSummary(
+                                    product_id="p1",
+                                    display_name="Classic Black Patent Leather Purse",
+                                    price=Money(amount=49.90),
+                                    attributes={"sizes": ["onesize"]},
+                                ),
+                                candidate_set_id="set-3",
+                                turn_sequence=3,
+                                position=1,
+                            )
+                        ],
+                        corroboration_mismatch=mismatch,
+                    )
+                ]
+            )
+        )
+
+    assert "Do not add it" in _resolved(["attributes.sizes"])
+    assert "Do not add it" not in _resolved(["attributes.primary_color"])

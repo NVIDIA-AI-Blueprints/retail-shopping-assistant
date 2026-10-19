@@ -154,7 +154,7 @@ fixed bug fixed.
 | `cart_readback` | cart-management | What it says is in the cart is what the cart holds | 3 | `cart, products_min` | — |
 | `cart_size_change` | cart-management, sizes | A size change adds the new line before removing the old | 3 | `cart, products_min` | — |
 | `cart_size_required` | cart-management, sizes | No size, no add -- and the size comes from the shopper | 3 | `cart, cart_unchanged, products_min` | — |
-| `cart_two_sizes_are_two_lines` | cart-management, sizes | Two sizes are two lines; a search filter is not a purchase decision | 4 | `cart, cart_unchanged, every_product, products_min` | — |
+| `cart_two_sizes_are_two_lines` | cart-management, sizes | Two sizes are two lines; a size given as a search filter is their size | 4 | `cart, every_product, products_min` | — |
 | `image_find_similar` | media, discovery | A photo becomes search terms, not catalog facts | 1 | `products_min` | Black_dress.jpeg |
 | `image_out_of_catalog` | media, honesty | No menswear exists; it says so rather than offering womenswear | 1 | `cart_unchanged` | male_look.jpeg |
 | `no_results_recovery` | discovery, filters | A combination with nothing behind it relaxes and says what it relaxed | 1 | `cart_unchanged` | — |

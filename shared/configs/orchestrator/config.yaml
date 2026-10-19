@@ -26,12 +26,13 @@ grounding_editor_reserve_seconds: 15.0
 # Sampling for the shopping agent and the grounding editor, which share one
 # model client. APP_LLM_TEMPERATURE, LLM_MAX_OUTPUT_TOKENS and
 # GROUNDING_EDITOR_MAX_OUTPUT_TOKENS override these; docs/DEPLOYMENT.md, Model
-# Sampling and Output Limits, lists every call. A long reply, such as a
-# detailed comparison of several products, can need more than 1024 tokens; a
-# reply that hits the ceiling is cut off mid-sentence.
+# Sampling and Output Limits, lists every call. The model's reasoning counts
+# against the ceiling too: at 1024 it sometimes spent the whole allowance
+# thinking and returned no tool call and no reply. A reply that hits the
+# ceiling is cut off mid-sentence.
 llm_temperature: 0.7
-llm_max_output_tokens: 1024
-grounding_editor_max_output_tokens: 1024
+llm_max_output_tokens: 4096
+grounding_editor_max_output_tokens: 3072
 # Catalog filter naming who a product is for. Only the field name lives here;
 # its values come from the catalog and reach the model through /capabilities,
 # so a catalog serving new audiences needs no change on this side.

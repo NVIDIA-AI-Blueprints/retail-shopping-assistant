@@ -923,8 +923,8 @@ output token ceiling are set in one place, listed here:
 
 | Call | Temperature | Max output tokens |
 |------|-------------|-------------------|
-| Shopping agent: picks tools, writes the reply | `llm_temperature` in `shared/configs/orchestrator/config.yaml`, default `0.7`; `APP_LLM_TEMPERATURE` overrides | `llm_max_output_tokens` in the same file, default `1024`; `LLM_MAX_OUTPUT_TOKENS` overrides |
-| Grounding editor: rewrites the draft to match the tools' product data | Same client as the agent: `llm_temperature` | `grounding_editor_max_output_tokens` in the same file, default `1024`; `GROUNDING_EDITOR_MAX_OUTPUT_TOKENS` overrides |
+| Shopping agent: picks tools, writes the reply | `llm_temperature` in `shared/configs/orchestrator/config.yaml`, default `0.7`; `APP_LLM_TEMPERATURE` overrides | `llm_max_output_tokens` in the same file, default `4096`; `LLM_MAX_OUTPUT_TOKENS` overrides |
+| Grounding editor: rewrites the draft to match the tools' product data | Same client as the agent: `llm_temperature` | `grounding_editor_max_output_tokens` in the same file, default `3072`; `GROUNDING_EDITOR_MAX_OUTPUT_TOKENS` overrides |
 | Media perception: reads uploaded photos and videos | `0.6`, `_TEMPERATURE` in `orchestrator/src/media_perception.py` | `4096`, `_MAX_TOKENS` in the same file; change `_MAX_ANALYSIS_CHARS` (`16000`) with it, as it caps the analysis passed to the agent |
 | Vocabulary judge: matches shopper words to catalog values | `0`, in `orchestrator/src/category_resolver.py` | `1200`, `_MAX_TOKENS` in the same file |
 
@@ -952,8 +952,8 @@ variables in the env profile you source; they win over these defaults. Compose
 passes all four to `orchestrator`.
 
 A reply that reaches its token ceiling is cut off mid-sentence, with no error.
-Long answers, such as a detailed comparison of several products, can need more
-than 1024 tokens.
+The model's reasoning counts against the same ceiling, so a ceiling of 1024 can
+end a turn with no tool call and no reply.
 
 #### Guardrail Defaults
 

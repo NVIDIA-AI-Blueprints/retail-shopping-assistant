@@ -92,6 +92,7 @@ NVIDIA_NIM_CATALOG = {}
 # Models referenced by ID in config files (keyed by "org/model-name")
 MODEL_ID_CATALOG = {
     'nvidia/nemotron-3.5-super-vl-preview': {'name': 'Nemotron 3.5 Super VL', 'url': 'https://build.nvidia.com/nvidia/nemotron-3.5-super-vl-preview', 'license': 'NVIDIA Community Models License', 'license_url': 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/'},
+    'nvidia/nemotron-3.5-super-vl-120b-a12b': {'name': 'Nemotron 3.5 Super VL 120B A12B', 'url': 'https://build.nvidia.com/nvidia/nemotron-3.5-super-vl-120b-a12b', 'license': 'OpenMDW-1.1', 'license_url': 'https://openmdw.ai/license/1-1/'},
     'nvidia/nvidia-nemotron-3.5-super-vl-120b-a12b-bf16': {'name': 'Nemotron 3.5 Super VL 120B A12B BF16', 'url': 'https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16', 'license': 'OpenMDW-1.1', 'license_url': 'https://openmdw.ai/license/1-1/'},
     'nvidia/nemotron-3-embed-1b': {'name': 'Nemotron 3 Embed 1B', 'url': 'https://build.nvidia.com/nvidia/nemotron-3-embed-1b', 'license': 'NVIDIA Community Models License', 'license_url': 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/'},
     'nvidia/nemotron-3-embed-1b-bf16': {'name': 'Nemotron 3 Embed 1B', 'url': 'https://build.nvidia.com/nvidia/nemotron-3-embed-1b', 'license': 'NVIDIA Community Models License', 'license_url': 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/'},

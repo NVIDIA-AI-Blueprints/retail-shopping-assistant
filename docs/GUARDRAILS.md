@@ -104,7 +104,7 @@ server at startup, as the two contradict each other.
 | --- | --- | --- |
 | `GUARDRAILS_AVAILABLE` | `false`: no guardrails in this deployment ([above](#deploying-without-guardrails)) | true |
 | `RAIL_API_KEY` | API key for content safety and topic control | Required |
-| `MULTIMODAL_SAFETY_API_KEY` | API key for video safety; falls back to `VLM_API_KEY`, then `NVIDIA_API_KEY` | Required for video |
+| `MULTIMODAL_SAFETY_API_KEY` | API key for video safety; falls back to `RAIL_API_KEY` | Required for video |
 | `GUARDRAILS_URL` | Where the orchestrator reaches the service | `http://rails:8012` |
 | `GUARDRAILS_ENABLED` | Deployment default for requests that omit `guardrails` | on (off when `GUARDRAILS_AVAILABLE=false`) |
 | `GUARDRAILS_FAILURE_MODE` | What an `error` costs | `closed` |
@@ -158,7 +158,8 @@ instruction carried inside the video's own text, speech, or symbols. A video
 takes longer to judge than an image, which is why `GUARDRAILS_TIMEOUT_SECONDS`
 defaults to 45 seconds.
 
-A video with no audio track cannot be judged: it is an `error`, and under the
+The hosted judge also accepts a video with no audio track. The local
+`local-video-safety` server does not: it returns an `error`, and under the
 default `closed` failure mode the turn stops. Removing `video` from
 `GUARDRAILS_SUPPORTED_MODALITIES` turns video judging off; an uploaded video
 then returns `unsupported_video_safety`, which is also an `error`.

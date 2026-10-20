@@ -374,9 +374,9 @@ shoes like the ones in this video"; the turn should proceed and report
   longer than `GUARDRAILS_TIMEOUT_SECONDS` (45 s) to judge, so those turns stop
   with the guardrails-unavailable message. Once one has been judged, later
   videos take about 2 s.
-- The judge includes the video's audio, and a video with no audio track
-  cannot be judged: it is an `error`, which stops the turn under the default
-  `closed` failure mode.
+- `local-video-safety` cannot judge a video with no audio track: it is an
+  `error`, which stops the turn under the default `closed` failure mode. The
+  hosted judge accepts such videos.
 
 ### Model Metrics
 
@@ -581,7 +581,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `GUARDRAILS_URL` | Orchestrator URL for the guardrail service | No | `http://rails:8012` |
 | `RAILS_CONTENT_BASE_URL` / `RAILS_CONTENT_MODEL` | Endpoint and model for current text/image content safety | With guardrails | `.env.example` |
 | `RAILS_TOPIC_BASE_URL` / `RAILS_TOPIC_MODEL` | Topic-control endpoint and model. The dedicated Topic Control model is preferred; selecting Content Safety applies the configured retail policy through `custom_policy` | With guardrails | `.env.example` |
-| `MULTIMODAL_SAFETY_API_KEY` | Key for the independently routed video safety judge; Compose falls back to the VLM/NVIDIA key | When the video safety endpoint requires authentication | `RAIL_API_KEY` in `.env.example`; `VLM_API_KEY` in Compose alone |
+| `MULTIMODAL_SAFETY_API_KEY` | Key for the independently routed video safety judge | When the video safety endpoint requires authentication | `RAIL_API_KEY` |
 | `MULTIMODAL_SAFETY_BASE_URL` | OpenAI-compatible endpoint for the video safety judge | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_MODEL` | Video safety model, independent of perception | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_VIDEO_FPS` | Temporal sampling rate sent to Nemotron Omni. The complete video object and embedded audio are submitted, but the model evaluates sampled frames | No | `rails.py` (2.0) |

@@ -82,8 +82,22 @@ below is historical; these are the current shapes.
 
 ## Known Issues
 
+- **Hosted endpoints rate-limit requests (HTTP 429).** One shopper turn makes
+  several model calls, so parallel conversations or a run of quick turns can
+  hit a key's limit. The orchestrator logs show `429 Too Many Requests` or
+  `RateLimitError`.
+  - Language model and embedding calls retry twice. If those fail too, the
+    reply is "I encountered an error while helping with your shopping request.
+    Please try again."
+  - Guardrail calls do not retry, and a failed check refuses the turn: "I
+    cannot safely validate this request right now. Please retry. If it
+    involved a cart change, check your cart first." The Safety row shows the
+    check as Unavailable.
+  - Wait and retry. For sustained load, use
+    [locally hosted models](docs/DEPLOYMENT.md#-locally-hosted-models).
 - **"Show me more" repeats the same products.** A follow-up search returns the
-  products already shown and presents them as new; there is no paging yet.
+  products already shown and presents them as new. Paging is planned for a
+  follow-up release.
 - **A product named by colour or detail can resolve to a similar one.** "The
   amber ones" or a product's name sometimes picks a near neighbour from the
   same showing. Check the cart after an add.

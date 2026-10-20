@@ -367,16 +367,16 @@ should refuse it. With the toggle off the same question gets an answer.
 To check video safety, keep the toggle on and attach
 `tests/evaluation/datasets/val/assets/casual_lady_fall.mp4` with "Find me
 shoes like the ones in this video"; the turn should proceed and report
-"Video safety and retail relevance" as used. Two limits apply to video, which
-[Guardrails](GUARDRAILS.md#media) describes as not yet vetted:
+"Video safety and retail relevance" as used. Two limits apply to video (see
+[Guardrails](GUARDRAILS.md#media)):
 
 - For about a minute after `local-video-safety` starts, the first videos take
-  longer than `GUARDRAILS_TIMEOUT_SECONDS` (15 s) to judge, so those turns stop
+  longer than `GUARDRAILS_TIMEOUT_SECONDS` (45 s) to judge, so those turns stop
   with the guardrails-unavailable message. Once one has been judged, later
   videos take about 2 s.
-- The judge includes the video's audio, and a video with no audio track
-  cannot be judged: it is an `error`, which stops the turn under the default
-  `closed` failure mode.
+- `local-video-safety` cannot judge a video with no audio track: it is an
+  `error`, which stops the turn under the default `closed` failure mode. The
+  hosted judge accepts such videos.
 
 ### Model Metrics
 
@@ -581,7 +581,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `GUARDRAILS_URL` | Orchestrator URL for the guardrail service | No | `http://rails:8012` |
 | `RAILS_CONTENT_BASE_URL` / `RAILS_CONTENT_MODEL` | Endpoint and model for current text/image content safety | With guardrails | `.env.example` |
 | `RAILS_TOPIC_BASE_URL` / `RAILS_TOPIC_MODEL` | Topic-control endpoint and model. The dedicated Topic Control model is preferred; selecting Content Safety applies the configured retail policy through `custom_policy` | With guardrails | `.env.example` |
-| `MULTIMODAL_SAFETY_API_KEY` | Key for the independently routed video safety judge; Compose falls back to the VLM/NVIDIA key | When the video safety endpoint requires authentication | `RAIL_API_KEY` in `.env.example`; `VLM_API_KEY` in Compose alone |
+| `MULTIMODAL_SAFETY_API_KEY` | Key for the independently routed video safety judge | When the video safety endpoint requires authentication | `RAIL_API_KEY` |
 | `MULTIMODAL_SAFETY_BASE_URL` | OpenAI-compatible endpoint for the video safety judge | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_MODEL` | Video safety model, independent of perception | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_VIDEO_FPS` | Temporal sampling rate sent to Nemotron Omni. The complete video object and embedded audio are submitted, but the model evaluates sampled frames | No | `rails.py` (2.0) |
@@ -590,7 +590,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `GUARDRAILS_ENABLED` | Default orchestrator guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Set false to turn guardrails off by default | No | `config.yaml`: `guardrails_enabled` (on; off when `GUARDRAILS_AVAILABLE=false`) |
 | `GUARDRAILS_CLIENT_CAN_DISABLE` | With guardrails enabled, whether a request's `guardrails: false` is honoured. On by default, so the UI toggle can show before and after; set `false` to lock guardrails on | No | true |
 | `GUARDRAILS_FAILURE_MODE` | Required-check error/timeout behavior: `open` bypasses and `closed` stops the turn. Explicit unsafe decisions always block in either mode | No | `config.yaml`: `guardrails_failure_mode` (closed) |
-| `GUARDRAILS_TIMEOUT_SECONDS` | Timeout for each isolated guardrail service decision. Both services read it: the orchestrator bounds its call, the guardrail service bounds the judges behind it | No | `config.yaml`: `guardrails_timeout_seconds`, and `rails.py` (15.0) |
+| `GUARDRAILS_TIMEOUT_SECONDS` | Timeout for each isolated guardrail service decision. Both services read it: the orchestrator bounds its call, the guardrail service bounds the judges behind it | No | `config.yaml`: `guardrails_timeout_seconds`, and `rails.py` (45.0) |
 | `GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` | For guarded text-only turns, overlap the first app-model step with input guardrails while holding every tool behind the allow decision. Reduces latency but blocked turns can still incur one app-model request. Media remains sequential | No | `config.yaml`: `guardrails_speculative_main_model_enabled` (off) |
 | `GUARDRAILS_SUPPORTED_MODALITIES` | Modalities enforced by guardrails and advertised to clients | No | `config.yaml`: `guardrails_supported_modalities` |
 | `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` | Shared deadline for the Deep Agents graph and grounding editor before the durable turn fails cleanly | No | `config.yaml`: `deepagents_execution_timeout_seconds` |
@@ -791,9 +791,9 @@ max_catalog_searches_per_turn: 10
 max_product_detail_reads_per_turn: 10
 guardrails_enabled: true
 guardrails_failure_mode: closed
-guardrails_timeout_seconds: 15.0
+guardrails_timeout_seconds: 45.0
 guardrails_speculative_main_model_enabled: false
-guardrails_supported_modalities: [text, image]
+guardrails_supported_modalities: [text, image, video]
 ```
 
 ### Updating Catalog Filter Metadata

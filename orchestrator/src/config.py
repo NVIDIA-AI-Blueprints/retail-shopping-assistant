@@ -236,7 +236,7 @@ class OrchestratorConfig(BaseModel):
         description="Whether provider errors bypass or stop the guarded turn.",
     )
     guardrails_timeout_seconds: float = Field(
-        default=15.0,
+        default=45.0,
         description="Maximum duration of each guardrail service request.",
     )
     guardrails_speculative_main_model_enabled: bool = Field(
@@ -249,7 +249,7 @@ class OrchestratorConfig(BaseModel):
         ),
     )
     guardrails_supported_modalities: list[Literal["text", "image", "video"]] = Field(
-        default_factory=lambda: ["text", "image"],
+        default_factory=lambda: ["text", "image", "video"],
         description="Modalities covered by required configured safety judges.",
     )
     unsafe_message: str = Field(..., description="Message to display for unsafe content")

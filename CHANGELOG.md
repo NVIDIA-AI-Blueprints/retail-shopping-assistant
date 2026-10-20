@@ -78,9 +78,6 @@ below is historical; these are the current shapes.
 
 ## Removed
 
-- Shopper profiles ([#292](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/292)).
-- The PostgreSQL memory backend ([#293](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/293)).
-- Unused memory endpoints ([#294](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/294)).
 - NIM containers for self-hosted models ([#284](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/284)).
 
 # Retail Shopping Assistant 1.0.0 (03 September 2025)

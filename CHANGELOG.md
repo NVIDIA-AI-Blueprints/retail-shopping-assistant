@@ -80,6 +80,23 @@ below is historical; these are the current shapes.
 
 - NIM containers for self-hosted models ([#284](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/284)).
 
+## Known Issues
+
+- **"Show me more" repeats the same products.** A follow-up search returns the
+  products already shown and presents them as new; there is no paging yet.
+- **A product named by colour or detail can resolve to a similar one.** "The
+  amber ones" or a product's name sometimes picks a near neighbour from the
+  same showing. Check the cart after an add.
+- **"The first one" over a mixed showing is not always questioned.** When
+  dresses and shoes are shown together, a bare number can be taken from the
+  first group instead of the assistant asking which was meant.
+- **Earlier products are sometimes described from memory.** A follow-up such as
+  "what are they made of" can be answered from the conversation rather than
+  re-read from the catalog, so a detail can be wrong.
+- **A follow-up question can be answered without products.** A forecast
+  question that also asks what to wear may answer the forecast and show
+  nothing.
+
 # Retail Shopping Assistant 1.0.0 (03 September 2025)
 
 ## 🎉 First Release

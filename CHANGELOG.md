@@ -1,4 +1,4 @@
-# Unreleased
+# Release 2.0.0 (October 2026)
 
 Substantial changes since 1.0.0. The architecture described in the 1.0.0 notes
 below is historical; these are the current shapes.

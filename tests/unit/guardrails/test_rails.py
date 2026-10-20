@@ -71,7 +71,7 @@ def test_a_named_setting_still_wins(rails_module, monkeypatch):
 
 
 @pytest.mark.parametrize("value", ["", None])
-def test_empty_modalities_cover_image_rather_than_nothing(
+def test_empty_modalities_cover_the_defaults_rather_than_nothing(
     rails_module, monkeypatch, value
 ):
     """An unset list must not read as an empty one.
@@ -95,7 +95,7 @@ def test_empty_modalities_cover_image_rather_than_nothing(
         "/nonexistent", image_safety=object()
     )
 
-    assert evaluator._supported_modalities == {"image"}
+    assert evaluator._supported_modalities == {"image", "video"}
 
 
 @pytest.mark.asyncio

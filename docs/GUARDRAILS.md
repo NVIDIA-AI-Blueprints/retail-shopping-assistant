@@ -108,9 +108,9 @@ server at startup, as the two contradict each other.
 | `GUARDRAILS_URL` | Where the orchestrator reaches the service | `http://rails:8012` |
 | `GUARDRAILS_ENABLED` | Deployment default for requests that omit `guardrails` | on (off when `GUARDRAILS_AVAILABLE=false`) |
 | `GUARDRAILS_FAILURE_MODE` | What an `error` costs | `closed` |
-| `GUARDRAILS_TIMEOUT_SECONDS` | Deadline for one decision | `15.0` |
+| `GUARDRAILS_TIMEOUT_SECONDS` | Deadline for one decision | `45.0` |
 | `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the two text input rails `parallel` or `sequential` | `parallel` |
-| `GUARDRAILS_SUPPORTED_MODALITIES` | Which modalities are covered | `text,image` |
+| `GUARDRAILS_SUPPORTED_MODALITIES` | Which modalities are covered | `text,image,video` |
 | `GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` | Overlap the first model step with input rails | off |
 | `MULTIMODAL_SAFETY_VIDEO_FPS` | Frames per second sampled from a video | `2.0` |
 
@@ -150,18 +150,18 @@ it, so a refusal is legible rather than mysterious.
 
 ## Media
 
-Images are judged by default. **Video is not.**
+Images and video are both judged by default.
 
-The video judge is fully implemented — it samples frames at
-`MULTIMODAL_SAFETY_VIDEO_FPS`, includes embedded audio in the judgement, and
-prompts the model to ignore any instruction carried inside the video's own
-text, speech, or symbols. But `video` is absent from the default
-`GUARDRAILS_SUPPORTED_MODALITIES`, so an uploaded video returns
-`unsupported_video_safety`, which is an `error` — and under the default
-`closed` failure mode the turn stops.
+The video judge samples frames at `MULTIMODAL_SAFETY_VIDEO_FPS`, includes
+embedded audio in the judgement, and prompts the model to ignore any
+instruction carried inside the video's own text, speech, or symbols. A video
+takes longer to judge than an image, which is why `GUARDRAILS_TIMEOUT_SECONDS`
+defaults to 45 seconds.
 
-Video judging is not vetted for this release. Adding `video` to
-`GUARDRAILS_SUPPORTED_MODALITIES` enables it, and validating it is then yours.
+A video with no audio track cannot be judged: it is an `error`, and under the
+default `closed` failure mode the turn stops. Removing `video` from
+`GUARDRAILS_SUPPORTED_MODALITIES` turns video judging off; an uploaded video
+then returns `unsupported_video_safety`, which is also an `error`.
 
 ## Reading a decision afterwards
 

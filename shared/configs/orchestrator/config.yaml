@@ -89,9 +89,9 @@ guardrails_enabled: true
 # Set false to lock them on wherever untrusted callers can reach the API.
 guardrails_client_can_disable: true
 guardrails_failure_mode: closed
-guardrails_timeout_seconds: 15.0
+guardrails_timeout_seconds: 45.0
 # Overlap text input rails with the first model step; tools still wait for allow.
 guardrails_speculative_main_model_enabled: false
-guardrails_supported_modalities: [text, image]
+guardrails_supported_modalities: [text, image, video]
 unsafe_message: "Sorry, I am a shopping assistant that specializes in apparel. Do you have any questions that align better with my expertise?"
 guardrails_unavailable_message: "I cannot safely validate this request right now. Please retry. If it involved a cart change, check your cart first."

@@ -424,7 +424,7 @@ class MultimodalSafetyEvaluator:
             item.strip().lower()
             for item in (
                 os.environ.get("GUARDRAILS_SUPPORTED_MODALITIES")
-                or "text,image"
+                or "text,image,video"
             ).split(",")
             if item.strip().lower() in {"image", "video"}
         }
@@ -563,7 +563,7 @@ class GuardrailEngine:
             config_path,
             shared_safety,
         )
-        outer_timeout = _positive_float_env("GUARDRAILS_TIMEOUT_SECONDS", 15.0)
+        outer_timeout = _positive_float_env("GUARDRAILS_TIMEOUT_SECONDS", 45.0)
         # Leave one second for serialization and the network return before the
         # orchestrator's outer HTTP deadline cancels this request.
         self._policy_timeout_seconds = max(0.1, outer_timeout - 1.0)

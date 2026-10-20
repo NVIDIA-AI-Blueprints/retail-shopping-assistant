@@ -107,9 +107,9 @@ below is historical; these are the current shapes.
 - **Earlier products are sometimes described from memory.** A follow-up such as
   "what are they made of" can be answered from the conversation rather than
   re-read from the catalog, so a detail can be wrong.
-- **A follow-up question can be answered without products.** A forecast
-  question that also asks what to wear may answer the forecast and show
-  nothing.
+- **With the weather tool on, a forecast question can be answered without
+  products.** A question that asks about the weather and what to wear may
+  answer the forecast and show nothing. The weather tool is off by default.
 
 # Retail Shopping Assistant 1.0.0 (03 September 2025)
 

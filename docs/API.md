@@ -714,13 +714,13 @@ turns are not cut off before the SSE response is emitted.
   "models": {
     "app_llm": {
       "label": "Language reasoning",
-      "model": "nvidia/nvidia/nemotron-3.5-super-vl-preview",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
       "source": "endpoint",
       "enabled": true
     },
     "vlm": {
       "label": "Vision-language inference",
-      "model": "nvidia/nvidia/nemotron-3.5-super-vl-preview",
+      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
       "source": "endpoint",
       "enabled": true
     },

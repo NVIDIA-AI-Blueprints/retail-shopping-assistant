@@ -528,33 +528,22 @@ the service at startup with the names of the missing variables.
 
 | Role | What it does | Host in `.env.example` | URL and model variables | Key variable |
 |------|--------------|------------------------|-------------------------|--------------|
-| `app_llm` | Answers the shopper and drives tool use | `inference-api.nvidia.com` | `LLM_BASE_URL`, `LLM_MODEL` | `LLM_API_KEY` |
-| `vlm` | Reads photo and video uploads | `inference-api.nvidia.com` | `VLM_BASE_URL`, `VLM_MODEL` | `VLM_API_KEY` |
-| `text_embedding` | Embeds the catalog and text queries | `inference-api.nvidia.com` | `TEXT_EMBED_BASE_URL`, `TEXT_EMBED_MODEL` | `EMBED_API_KEY` |
+| `app_llm` | Answers the shopper and drives tool use | `integrate.api.nvidia.com` | `LLM_BASE_URL`, `LLM_MODEL` | `LLM_API_KEY` |
+| `vlm` | Reads photo and video uploads | `integrate.api.nvidia.com` | `VLM_BASE_URL`, `VLM_MODEL` | `VLM_API_KEY` |
+| `text_embedding` | Embeds the catalog and text queries | `integrate.api.nvidia.com` | `TEXT_EMBED_BASE_URL`, `TEXT_EMBED_MODEL` | `EMBED_API_KEY` |
 | `content_safety` | Checks text and images for unsafe content (guardrails, on by default) | `integrate.api.nvidia.com` | `RAILS_CONTENT_BASE_URL`, `RAILS_CONTENT_MODEL` | `RAIL_API_KEY` |
 | `topic_control` | Checks whether a request is on topic (guardrails) | `integrate.api.nvidia.com` | `RAILS_TOPIC_BASE_URL`, `RAILS_TOPIC_MODEL` | `RAIL_API_KEY` |
 | `multimodal_safety` | Checks video, including embedded audio (guardrails) | `integrate.api.nvidia.com` | `MULTIMODAL_SAFETY_BASE_URL`, `MULTIMODAL_SAFETY_MODEL` | `MULTIMODAL_SAFETY_API_KEY` |
 
-**The two hosts issue different keys, and they are not interchangeable.** A key
-that works against `inference-api.nvidia.com` will be rejected by
-`integrate.api.nvidia.com` and vice versa. The app roles use
-`inference-api.nvidia.com`, so one key in `NVIDIA_API_KEY` runs them.
-Guardrails, on by default, add the `integrate.api.nvidia.com` roles, which need
-a build.nvidia.com key in `RAIL_API_KEY` and `MULTIMODAL_SAFETY_API_KEY`. A
-mismatch is the most common first-deploy failure: the language model answers
-normally while catalog search or guardrails return authentication errors, which
-looks like a broken service rather than a key problem.
+Every role in `.env.example` is on `integrate.api.nvidia.com`, so one
+[build.nvidia.com](https://build.nvidia.com) key in `NVIDIA_API_KEY` runs them
+all: every key variable falls back to it. **A key works only on the host that
+issued it.** When a role is repointed to another host, set that role's key
+variable to a key from that host; a mismatch looks like a broken service, with
+one role returning authentication errors while the others answer normally.
 `python scripts/model_config.py show --validate` reports which URL, model and
 key variables are missing, though it cannot tell whether a present key is the
 right one for its host.
-
-Compose chains sensible fallbacks so a single-key deployment works: `VLM_API_KEY`
-falls back to `NVIDIA_API_KEY`, and `MULTIMODAL_SAFETY_API_KEY` falls back to
-`VLM_API_KEY` and then `NVIDIA_API_KEY`. `.env.example` points video safety at
-`integrate.api.nvidia.com`, so it falls back to `RAIL_API_KEY` instead. Set the
-specific variables when the roles live on different hosts: `RAIL_API_KEY` for
-the guardrail models, `NVIDIA_API_KEY` (or `LLM_API_KEY`, `EMBED_API_KEY`,
-`VLM_API_KEY`) for the rest. Each model uses only its own key.
 
 To repoint a role, set its `*_BASE_URL` and `*_MODEL` variables in your
 profile, together: hosts name the same model differently
@@ -577,7 +566,7 @@ set there; a unit test fails if the two differ, so change both together.
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `NVIDIA_API_KEY` | Fallback inference key for roles whose own key variable is unset | No | - |
+| `NVIDIA_API_KEY` | Fallback build.nvidia.com key for roles whose own key variable is unset | No | - |
 | `LLM_API_KEY` | Language model API key | Yes | - |
 | `LLM_BASE_URL` / `LLM_MODEL` | Shopping agent endpoint and model | Yes | `.env.example` |
 | `TEXT_EMBED_BASE_URL` / `TEXT_EMBED_MODEL` | Catalog text embedding endpoint and model | Yes | `.env.example` |

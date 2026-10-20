@@ -374,9 +374,9 @@ shoes like the ones in this video"; the turn should proceed and report
   longer than `GUARDRAILS_TIMEOUT_SECONDS` (45 s) to judge, so those turns stop
   with the guardrails-unavailable message. Once one has been judged, later
   videos take about 2 s.
-- `local-video-safety` cannot judge a video with no audio track: it is an
-  `error`, which stops the turn under the default `closed` failure mode. The
-  hosted judge accepts such videos.
+- A video with no audio track at all cannot be judged (a silent audio track
+  is fine): it is an `error`, which stops the turn under the default `closed`
+  failure mode.
 
 ### Model Metrics
 
@@ -585,6 +585,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `MULTIMODAL_SAFETY_BASE_URL` | OpenAI-compatible endpoint for the video safety judge | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_MODEL` | Video safety model, independent of perception | With guardrails | `.env.example` |
 | `MULTIMODAL_SAFETY_VIDEO_FPS` | Temporal sampling rate sent to Nemotron Omni. The complete video object and embedded audio are submitted, but the model evaluates sampled frames | No | `rails.py` (2.0) |
+| `MULTIMODAL_SAFETY_USE_AUDIO` | `false` leaves the video's audio out of the judgement, for an Omni endpoint that rejects audio such as `inference-api.nvidia.com` | No | `rails.py` (true) |
 | `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the content and topic input rails in `parallel` or `sequential` mode | No | `shared/configs/rails/config.yml`: `rails.input.parallel` (parallel) |
 | `GUARDRAILS_AVAILABLE` | `false` deploys without guardrails: no guardrail model is called or needs a key, `.env.local-models` starts no guardrail model, the UI hides the Guardrails toggle, and a request with `guardrails: true` gets a 400. Cannot be combined with `GUARDRAILS_ENABLED=true`. Read from the environment only, as both services and `.env.local-models` need it | No | true |
 | `GUARDRAILS_ENABLED` | Default orchestrator guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Set false to turn guardrails off by default | No | `config.yaml`: `guardrails_enabled` (on; off when `GUARDRAILS_AVAILABLE=false`) |

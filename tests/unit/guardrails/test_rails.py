@@ -285,6 +285,7 @@ async def test_nemotron_omni_uses_compact_instruct_mode(rails_module):
         chat=SimpleNamespace(completions=Completions())
     )
     evaluator._video_fps = 2.0
+    evaluator._video_audio = True
     decision = await evaluator.check(
         "find this look",
         [SimpleNamespace(type="video", data="data:video/mp4;base64,AAAA")],
@@ -301,6 +302,54 @@ async def test_nemotron_omni_uses_compact_instruct_mode(rails_module):
     assert captured["extra_body"]["media_io_kwargs"] == {
         "video": {"fps": 2.0, "num_frames": -1}
     }
+
+
+@pytest.mark.asyncio
+async def test_nemotron_omni_without_audio_sends_frames_only(rails_module):
+    captured = {}
+
+    class Completions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(choices=[SimpleNamespace(
+                message=SimpleNamespace(content='{"status":"allow"}')
+            )])
+
+    evaluator = object.__new__(rails_module.MultimodalSafetyEvaluator)
+    evaluator._supported_modalities = {"image", "video"}
+    evaluator._model = "nvidia/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+    evaluator._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=Completions())
+    )
+    evaluator._video_fps = 2.0
+    evaluator._video_audio = False
+    decision = await evaluator.check(
+        "find this look",
+        [SimpleNamespace(type="video", data="data:video/mp4;base64,AAAA")],
+    )
+
+    assert decision.status == "allow"
+    assert "mm_processor_kwargs" not in captured["extra_body"]
+    assert captured["extra_body"]["media_io_kwargs"] == {
+        "video": {"fps": 2.0, "num_frames": -1}
+    }
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("", True), ("true", True), ("1", True), ("false", False), ("NO", False)],
+)
+def test_use_audio_setting_reads_booleans(rails_module, monkeypatch, raw, expected):
+    monkeypatch.setenv("MULTIMODAL_SAFETY_USE_AUDIO", raw)
+
+    assert rails_module._bool_env("MULTIMODAL_SAFETY_USE_AUDIO", True) is expected
+
+
+def test_use_audio_setting_rejects_other_values(rails_module, monkeypatch):
+    monkeypatch.setenv("MULTIMODAL_SAFETY_USE_AUDIO", "sometimes")
+
+    with pytest.raises(ValueError, match="MULTIMODAL_SAFETY_USE_AUDIO"):
+        rails_module._bool_env("MULTIMODAL_SAFETY_USE_AUDIO", True)
 
 
 @pytest.mark.asyncio

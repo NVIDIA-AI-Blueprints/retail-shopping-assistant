@@ -167,8 +167,7 @@ is an `error` too.
 
 `MULTIMODAL_SAFETY_USE_AUDIO=false` judges frames only, so speech in the video
 is not checked, and a video without an audio track is judged normally. Use it
-for an endpoint that rejects audio, such as Omni on
-`inference-api.nvidia.com`. Removing `video` from
+for an Omni endpoint that rejects audio. Removing `video` from
 `GUARDRAILS_SUPPORTED_MODALITIES` turns video judging off; an uploaded video
 then returns `unsupported_video_safety`, which is also an `error`.
 

@@ -370,6 +370,7 @@ def _scope_as_sent(attempt: _Attempt) -> str:
             "required_constraints": attempt.required_constraints,
             "scope_complete": attempt.scope_complete,
             "search_mode": attempt.search_mode,
+            "exclude_shown": attempt.exclude_shown,
         },
         sort_keys=True,
         default=str,
@@ -674,6 +675,7 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 "required_constraints": constraint_payload,
                 "scope_complete": scope_complete,
                 "search_mode": search_mode,
+                "exclude_shown": attempt.exclude_shown,
             }
         )
     except ValidationError as exc:
@@ -1050,6 +1052,7 @@ def _role_key(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     # below when nothing came back.
     shopper_scope_key = (
         (_normalize_product_text(ctx.state.query), candidate_scope_key)
+        + (("exclude_shown",) if attempt.exclude_shown else ())
         if candidate_scope_key
         else None
     )
@@ -1366,6 +1369,9 @@ def _reserved_search_slot(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             taxonomy_constraints,
             normalized_constraints,
         )
+        if attempt.exclude_shown:
+            # Leaving shown products out is a different search, not a repeat.
+            search_scope["exclude_shown"] = True
         attempt.catalog_scope = search_scope
         # Judged against earlier calls only, never a sibling in this call:
         # sibling roles are not retries of each other. An identical sibling is

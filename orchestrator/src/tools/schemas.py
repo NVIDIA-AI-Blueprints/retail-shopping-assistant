@@ -162,7 +162,7 @@ class SearchCatalogToolArguments(BaseModel):
         description="Optional search mode from Catalog capabilities.",
     )
     exclude_shown: bool = Field(
-        default=False,
+        ...,
         description=(
             "True when the shopper wants more, other or different products of "
             "a kind already shown in this conversation: every product shown so "

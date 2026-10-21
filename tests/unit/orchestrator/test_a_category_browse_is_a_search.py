@@ -52,6 +52,7 @@ BASE = {
     "required_constraints": {},
     "scope_complete": True,
     "search_mode": "text",
+    "exclude_shown": False,
     "taxonomy_status": "exact_requested_type",
 }
 

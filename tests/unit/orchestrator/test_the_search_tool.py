@@ -1082,6 +1082,18 @@ class TestMoreOfWhatWasShown:
             plan.exclude_ids == ["newer_bag", "old_bag"] for plan in turn.plans
         )
 
+    def test_more_after_an_ordinary_search_in_the_same_turn_still_searches(
+        self, a_turn
+    ) -> None:
+        turn = a_turn("show me more tote bags", judge=_JUDGE)
+        self._earlier_showings(turn)
+
+        turn.search(**self._bags())
+        turn.search(**self._bags(exclude_shown=True))
+
+        assert turn.searches == 2
+        assert "prod_1" in turn.plan.exclude_ids
+
     def test_nothing_new_left_is_said_and_not_read_as_a_miss(self, a_turn) -> None:
         turn = a_turn("show me more tote bags", judge=_JUDGE)
         self._earlier_showings(turn)

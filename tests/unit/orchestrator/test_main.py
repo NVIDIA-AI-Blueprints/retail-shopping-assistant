@@ -1992,6 +1992,7 @@ class TestDeepAgentsRuntimeRefs:
             "taxonomy",
             "required_constraints",
             "scope_complete",
+            "exclude_shown",
         }
         assert schema["properties"]["taxonomy_status"]["enum"] == [
             "exact_requested_type",
@@ -2090,6 +2091,7 @@ class TestDeepAgentsRuntimeRefs:
             },
             "required_constraints": {},
             "scope_complete": True,
+            "exclude_shown": False,
         }
         request = schema_model.model_validate(complete_request)
         assert request.taxonomy.category == ["bags"]
@@ -2398,6 +2400,7 @@ class TestDeepAgentsRuntimeRefs:
                 "taxonomy": {"category": [], "subcategory": []},
                 "required_constraints": {},
                 "scope_complete": True,
+                "exclude_shown": False,
             }
         )
         assert image_only.taxonomy.category == []

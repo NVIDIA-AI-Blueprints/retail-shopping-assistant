@@ -541,18 +541,16 @@ def build_catalog_tools(
         return "\n\n".join(section for section in sections if section)
 
     def _show_again(results: Any) -> None:
-        """Present resolved products as this turn's showing, under their
-        earlier headings, so the shopper sees the cards they asked for."""
+        """Present every matched product as this turn's showing, under its
+        earlier heading, so the shopper sees the cards they asked for."""
 
-        matches = [
-            item.matches[0]
-            for item in results
-            if item.status == "resolved" and item.matches
-        ]
+        matches = [match for item in results for match in item.matches]
         _append_product_results(state, [match.product for match in matches])
         groups: dict[str, list[str]] = {}
         for match in matches:
-            groups.setdefault(match.group, []).append(str(match.product.product_id))
+            group = groups.setdefault(match.group, [])
+            if str(match.product.product_id) not in group:
+                group.append(str(match.product.product_id))
         for heading, product_ids in groups.items():
             state.product_groups.append(
                 {"heading": heading, "product_ids": product_ids}
@@ -624,10 +622,12 @@ def build_catalog_tools(
             product = resolution.matches[0].product
             if product.image_url:
                 scope.retrieved[product.display_name] = product.image_url
+        if show_again and any(item.matches for item in result.results):
+            scope.product_resolution_used = True
+            _show_again(result.results)
+            return format_product_resolution(result, show_again=True)
         if any(item.status == "resolved" for item in result.results):
             scope.product_resolution_used = True
-            if show_again:
-                _show_again(result.results)
             return format_product_resolution(result)
         # Nothing resolved. Offer the record of shown products for a near
         # miss only (a blocking field means one field was wrong). A total miss

@@ -6959,6 +6959,122 @@ class TestDeepAgentsRuntimeRefs:
             assert shown == []
             assert state.product_groups == []
 
+    @pytest.mark.parametrize("show_again", [True, False])
+    def test_a_whole_earlier_showing_is_shown_again_not_queried(
+        self,
+        base_config,
+        monkeypatch: pytest.MonkeyPatch,
+        show_again: bool,
+    ) -> None:
+        """'Those totes again' names a set, which matches several products."""
+
+        from orchestrator.src.runtime import runtime as runtime_mod
+        captured: dict[str, Any] = {}
+        deepagents_mod = ModuleType("deepagents")
+        tools_mod = ModuleType("langchain_core.tools")
+        openai_mod = ModuleType("langchain_openai")
+
+        class FakeProfile:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        class FakeChatOpenAI:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+        def fake_tool(*, args_schema=None, return_direct: bool = False, **_kw):
+            def decorate(fn):
+                fn.args_schema = args_schema
+                fn.return_direct = return_direct
+                return fn
+
+            return decorate
+
+        deepagents_mod.GeneralPurposeSubagentProfile = FakeProfile
+        deepagents_mod.HarnessProfile = FakeProfile
+        deepagents_mod.create_deep_agent = lambda **kwargs: (
+            captured.update(kwargs) or SimpleNamespace()
+        )
+        deepagents_mod.register_harness_profile = lambda *args, **kwargs: None
+        tools_mod.tool = fake_tool
+        openai_mod.ChatOpenAI = FakeChatOpenAI
+        monkeypatch.setitem(sys.modules, "deepagents", deepagents_mod)
+        monkeypatch.setitem(sys.modules, "langchain_core.tools", tools_mod)
+        monkeypatch.setitem(sys.modules, "langchain_openai", openai_mod)
+
+        runtime = runtime_mod.DeepAgentsRuntime(base_config)
+        runtime._catalog_capabilities = SimpleNamespace(
+            get=lambda **_: CatalogCapabilities(
+                catalog_id="fashion", retrieval_modes=["text"], filters={}
+            )
+        )
+        identity = identity_mod.RequestIdentity(
+            session_id="session-a",
+            conversation_id="conversation-a",
+            cart_id="cart-a",
+            context_user_id=111,
+            cart_user_id=222,
+            request_id="request-a",
+        )
+        totes = [
+            ProductSummary(
+                product_id=f"prod_tote_{index}",
+                display_name=f"Tote {index}",
+                price=Money(amount=49.99),
+            )
+            for index in (1, 2, 3)
+        ]
+        the_set = ResolveConversationProductsResult(
+            results=[
+                ProductReferenceResolution(
+                    reference_id="those totes",
+                    status="ambiguous",
+                    matches=[
+                        ConversationProductMatch(
+                            product=tote,
+                            candidate_set_id="totes-set",
+                            turn_sequence=1,
+                            position=position,
+                            group="tote bags",
+                        )
+                        for position, tote in enumerate(totes, start=1)
+                    ],
+                    match_count=len(totes),
+                )
+            ]
+        )
+        runtime._conversation_products = SimpleNamespace(resolve=lambda *_: the_set)
+        state = State(user_id=111, query="show me those totes again")
+        runtime._create_agent(state, identity)
+        resolver = {fn.__name__: fn for fn in captured["tools"]}[
+            "resolve_conversation_products_tool"
+        ]
+
+        text = tool_text(
+            resolver(
+                references=[
+                    {
+                        "reference_id": "those totes",
+                        "candidate_set_id": "totes-set",
+                        "group": "tote bags",
+                    }
+                ],
+                show_again=show_again,
+            )
+        )
+
+        shown = [product["product_id"] for product in state.product_results]
+        if show_again:
+            assert shown == ["prod_tote_1", "prod_tote_2", "prod_tote_3"]
+            assert state.product_groups == [
+                {"heading": "tote bags", "product_ids": shown}
+            ]
+            assert "SHOWN AGAIN" in text
+            assert "CLARIFICATION REQUIRED" not in text
+        else:
+            assert shown == []
+            assert "CLARIFICATION REQUIRED" in text
+
     def test_add_cart_items_tool_requires_turn_refs_and_batches_adds(
         self,
         base_config,

@@ -171,10 +171,12 @@ class ResolveConversationProductsToolArguments(ResolveConversationProductsReques
     show_again: bool = Field(
         ...,
         description=(
-            "True when the shopper asked to see these products again: they "
-            "are shown as product cards and become the latest showing. False "
-            "when the shopper only refers to them -- to add one to the cart, "
-            "compare them or ask about one -- and nothing new is shown."
+            "True when the shopper asked to see these products again: every "
+            "product the references match is shown as a product card, and "
+            "they become the latest showing. False when the shopper only "
+            "refers to them -- to add one to the cart, compare them or ask "
+            "about one -- and nothing new is shown. Set once for the call, "
+            "beside references, not inside a reference."
         ),
     )
 
@@ -465,8 +467,16 @@ def near_miss_field(resolution: Any) -> str | None:
     return None if field == "display_name" else field
 
 
-def format_product_resolution(result: ResolveConversationProductsResult) -> str:
-    """Render resolution outcomes without authorizing a guessed product."""
+def format_product_resolution(
+    result: ResolveConversationProductsResult,
+    *,
+    show_again: bool = False,
+) -> str:
+    """Render resolution outcomes without authorizing a guessed product.
+
+    With ``show_again`` every match of a reference is shown, so several of
+    them answer the request instead of needing a clarification.
+    """
 
     lines: list[str] = []
     for resolution in result.results:
@@ -529,9 +539,13 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
             # List each candidate with its confirmed attributes: names alone
             # cannot answer "the black one", and the record already holds them.
             lines.append(
-                f"REFERENCE {resolution.reference_id}: CLARIFICATION REQUIRED. "
-                "These were shown; tell them apart on the facts below and ask "
-                "the shopper which one. Do not guess."
+                f"REFERENCE {resolution.reference_id}: SHOWN AGAIN. These "
+                "were shown earlier and are on screen again now, in this "
+                "order; present them as the products the shopper asked to see."
+                if show_again
+                else f"REFERENCE {resolution.reference_id}: CLARIFICATION "
+                "REQUIRED. These were shown; tell them apart on the facts "
+                "below and ask the shopper which one. Do not guess."
             )
             for match in resolution.matches:
                 product = match.product

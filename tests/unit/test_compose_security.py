@@ -47,6 +47,7 @@ def test_guardrail_settings_have_one_source() -> None:
     for name in (
         "GUARDRAILS_SUPPORTED_MODALITIES",
         "MULTIMODAL_SAFETY_VIDEO_FPS",
+        "MULTIMODAL_SAFETY_USE_AUDIO",
         "GUARDRAILS_INPUT_EXECUTION_MODE",
         "GUARDRAILS_TIMEOUT_SECONDS",
     ):

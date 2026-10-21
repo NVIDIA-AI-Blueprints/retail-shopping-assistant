@@ -95,6 +95,12 @@ below is historical; these are the current shapes.
     check as Unavailable.
   - Wait and retry. For sustained load, use
     [locally hosted models](docs/DEPLOYMENT.md#-locally-hosted-models).
+- **Some video uploads are refused by guardrails.** The turn ends with the
+  cannot-safely-validate message above in two cases:
+  - The hosted video judge is at capacity (HTTP 503, `ResourceExhausted`).
+    Retry, or use locally hosted models.
+  - The video has no audio track at all. A silent audio track is fine, and
+    `MULTIMODAL_SAFETY_USE_AUDIO=false` judges frames only.
 - **"Show me more" repeats the same products.** A follow-up search returns the
   products already shown and presents them as new. Paging is planned for a
   follow-up release.

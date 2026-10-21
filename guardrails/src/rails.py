@@ -429,6 +429,8 @@ class MultimodalSafetyEvaluator:
             if item.strip().lower() in {"image", "video"}
         }
         self._video_fps = _positive_float_env("MULTIMODAL_SAFETY_VIDEO_FPS", 2.0)
+        # Some hosted Omni deployments reject audio input outright.
+        self._video_audio = _bool_env("MULTIMODAL_SAFETY_USE_AUDIO", True)
 
     async def check(
         self,
@@ -501,21 +503,20 @@ class MultimodalSafetyEvaluator:
                 "max_tokens": 160,
             }
             if "nemotron-3-nano-omni" in self._model.lower():
+                extra_body = {
+                    "top_k": 1,
+                    "chat_template_kwargs": {"enable_thinking": False},
+                    "media_io_kwargs": {
+                        "video": {
+                            "fps": self._video_fps,
+                            "num_frames": -1,
+                        }
+                    },
+                }
+                if self._video_audio:
+                    extra_body["mm_processor_kwargs"] = {"use_audio_in_video": True}
                 request_options.update(
-                    {
-                        "temperature": 0.2,
-                        "extra_body": {
-                            "top_k": 1,
-                            "chat_template_kwargs": {"enable_thinking": False},
-                            "mm_processor_kwargs": {"use_audio_in_video": True},
-                            "media_io_kwargs": {
-                                "video": {
-                                    "fps": self._video_fps,
-                                    "num_frames": -1,
-                                }
-                            },
-                        },
-                    }
+                    {"temperature": 0.2, "extra_body": extra_body}
                 )
             response = await self._client.chat.completions.create(**request_options)
             parsed = _parse_json_object(response.choices[0].message.content or "")
@@ -686,6 +687,17 @@ def _positive_float_env(name: str, default: float) -> float:
     if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be finite and positive")
     return value
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = (os.environ.get(name) or "").strip().lower()
+    if not value:
+        return default
+    if value in {"true", "1", "yes"}:
+        return True
+    if value in {"false", "0", "no"}:
+        return False
+    raise ValueError(f"{name} must be true or false")
 
 
 def _load_topic_policy(config_path: str) -> str:

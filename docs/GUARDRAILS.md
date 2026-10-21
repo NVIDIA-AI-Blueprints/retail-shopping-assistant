@@ -113,6 +113,7 @@ server at startup, as the two contradict each other.
 | `GUARDRAILS_SUPPORTED_MODALITIES` | Which modalities are covered | `text,image,video` |
 | `GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` | Overlap the first model step with input rails | off |
 | `MULTIMODAL_SAFETY_VIDEO_FPS` | Frames per second sampled from a video | `2.0` |
+| `MULTIMODAL_SAFETY_USE_AUDIO` | Include the video's audio in the judgement; `false` judges frames only | `true` |
 
 Guardrails spans two services, so each default lives with whichever service
 reads it: the orchestrator ones in `shared/configs/orchestrator/config.yaml`,
@@ -158,9 +159,15 @@ instruction carried inside the video's own text, speech, or symbols. A video
 takes longer to judge than an image, which is why `GUARDRAILS_TIMEOUT_SECONDS`
 defaults to 45 seconds.
 
-The hosted judge also accepts a video with no audio track. The local
-`local-video-safety` server does not: it returns an `error`, and under the
-default `closed` failure mode the turn stops. Removing `video` from
+With audio included, a video must carry an audio track, even a silent one. A
+video with no audio track at all fails on both the hosted judge and
+`local-video-safety`: it is an `error`, and under the default `closed` failure
+mode the turn stops. The hosted judge can also be at capacity (HTTP 503), which
+is an `error` too.
+
+`MULTIMODAL_SAFETY_USE_AUDIO=false` judges frames only, so speech in the video
+is not checked, and a video without an audio track is judged normally. Use it
+for an Omni endpoint that rejects audio. Removing `video` from
 `GUARDRAILS_SUPPORTED_MODALITIES` turns video judging off; an uploaded video
 then returns `unsupported_video_safety`, which is also an `error`.
 

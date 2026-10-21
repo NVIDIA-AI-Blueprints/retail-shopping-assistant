@@ -68,9 +68,9 @@ deployed models are vLLM serving Hugging Face checkpoints from
    with `nvapi-`). No NGC account is needed; the `nvcr.io` images this project
    uses pull without a login.
 2. **Hugging Face token**, for locally hosted models only: request access to the
-   Nemotron 3.5 Super checkpoint and to the NemoGuard topic control model's base
-   checkpoint (see [Locally Hosted Models](#-locally-hosted-models)), then create
-   an `HF_TOKEN`.
+   NemoGuard topic control model's base checkpoint,
+   `meta-llama/Llama-3.1-8B-Instruct` (see
+   [Locally Hosted Models](#-locally-hosted-models)), then create an `HF_TOKEN`.
 
 ## 🚀 Hosted Endpoints
 
@@ -177,9 +177,10 @@ Face checkpoints served by vLLM from `docker-compose-model-local.yaml`:
 Memory in use was measured on H100 80 GB GPUs. It is more than the weights
 because vLLM also reserves a KV cache, plus a few GB of working memory.
 
-The chat model figures are for the BF16 checkpoint of Nemotron 3.5 Super, which
-needs four 80 GB GPUs. FP8 and NVFP4 checkpoints are planned but not yet
-released; this guide will add their GPU sizing once they are available.
+The chat model figures are for the BF16 checkpoint of Nemotron 3.5 Super, the
+default, which needs four 80 GB GPUs. An NVFP4 checkpoint,
+[`nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4),
+is released for Blackwell GPUs; this guide has not yet validated or sized it.
 
 The default layout needs six 80 GB GPUs. `.env.local-models.example` points
 every role at these services through the environment, so `models.yaml` does not change,
@@ -234,10 +235,10 @@ BF16 checkpoint (~66 GB) leaves little room on that card; on a larger GPU, set
   [GPU Sizing](#gpu-sizing) for the other layouts
 - About 400 GB of disk: ~311 GB of checkpoints, most of it the chat model's
   BF16 weights, plus the four vLLM images the services pull
-- A Hugging Face token with access to the two gated checkpoints: the
-  Nemotron 3.5 Super chat model, and the base checkpoint that the NemoGuard
-  topic control adapter runs on (`meta-llama/Llama-3.1-8B-Instruct`, approved
-  by hand). The other three are public.
+- A Hugging Face token with access to the one gated checkpoint: the base
+  checkpoint that the NemoGuard topic control adapter runs on
+  (`meta-llama/Llama-3.1-8B-Instruct`, approved by hand). The other four are
+  public.
 - Network access from the `local-video-safety` container at start, which
   installs vLLM's audio packages before serving
 
@@ -273,16 +274,14 @@ nvidia-smi --query-gpu=memory.total,memory.used,memory.free --format=csv
 
 ### Step 3: Check Hugging Face Access
 
-The two gated checkpoints fail only once their download starts, which can be
-well into the first start. Check the token first; each line should print `200`
-(`403` means the access request is still pending or was declined):
+The gated checkpoint fails only once its download starts, which can be well
+into the first start. Check the token first; this should print `200` (`403`
+means the access request is still pending or was declined):
 
 ```bash
-for repo in nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 meta-llama/Llama-3.1-8B-Instruct; do
-  curl -s -o /dev/null -w "%{http_code} $repo\n" \
-    -H "Authorization: Bearer $HF_TOKEN" \
-    "https://huggingface.co/$repo/resolve/main/config.json"
-done
+curl -s -o /dev/null -w "%{http_code}\n" \
+  -H "Authorization: Bearer $HF_TOKEN" \
+  "https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct/resolve/main/config.json"
 ```
 
 ### Step 4: Start the Models, Then the App
@@ -623,7 +622,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `INSTALL_RELAY` | Build argument that installs the Relay dependency into the orchestrator image; required before `RELAY_ENABLED` can work | No | `false` |
 | `SHUTDOWN_GRACE_SECONDS` | Time the orchestrator and memory service drain in-flight turns before exiting | No | image default |
 | `ORCHESTRATOR_RELOAD` | Reload the orchestrator on source changes; development only | No | off |
-| `HF_TOKEN` | Hugging Face token with access to the gated local checkpoints: the LLM and Llama 3.1 8B Instruct | Local only | - |
+| `HF_TOKEN` | Hugging Face token with access to the gated Llama 3.1 8B Instruct checkpoint | Local only | - |
 | `HF_CACHE` | Hugging Face cache the locally deployed models download into | Local only | `~/.cache/huggingface` |
 | `LOCAL_LLM_HF_MODEL` | Checkpoint the local vLLM server loads | Local only | `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16` |
 | `LOCAL_LLM_GPUS` | Comma-separated GPU ids for the local LLM; supply as many as `LOCAL_LLM_TP` | Local only | `0,1,2,3` |
@@ -636,7 +635,8 @@ set there; a unit test fails if the two differ, so change both together.
 | `LOCAL_VIDEO_SAFETY_GPU` | GPU id for the local video safety model | Local only | `5` |
 | `LOCAL_VIDEO_SAFETY_HF_MODEL` | Checkpoint the local video safety server loads; the `-BF16` variant needs about twice the memory | Local only | `nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8` |
 | `LOCAL_CONTENT_SAFETY_VLLM_IMAGE` | vLLM image serving the local content safety model | Local only | `vllm/vllm-openai:v0.20.0` |
-| `LOCAL_TOPIC_CONTROL_VLLM_IMAGE` / `LOCAL_VIDEO_SAFETY_VLLM_IMAGE` | vLLM images serving the local topic control and video safety models | Local only | `vllm/vllm-openai:v0.31.0` |
+| `LOCAL_TOPIC_CONTROL_VLLM_IMAGE` | vLLM image serving the local topic control model | Local only | `vllm/vllm-openai:v0.31.0` |
+| `LOCAL_VIDEO_SAFETY_VLLM_IMAGE` | vLLM image serving the local video safety model; it installs `vllm[audio]` at the same version on start | Local only | `vllm/vllm-openai:v0.20.0` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
 | `SHARED_CONFIG_ROOT` | Directory the services read `shared/configs/` from | No | `/app/shared/configs` |

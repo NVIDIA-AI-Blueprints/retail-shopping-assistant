@@ -15,7 +15,7 @@ basis of whether you have GPUs.
 | Path | What it needs | Start at |
 |------|---------------|----------|
 | **NVIDIA-hosted endpoints** | An API key, no local GPU | [Deployment Guide - Hosted Endpoints](DEPLOYMENT.md#-hosted-endpoints) |
-| **Self-hosted models (vLLM)** | GPUs, plus a Hugging Face token for gated checkpoints | [Deployment Guide - Locally Hosted Models](DEPLOYMENT.md#-locally-hosted-models) |
+| **Self-hosted models (vLLM)** | GPUs, plus a Hugging Face token for the gated Llama 3.1 8B Instruct checkpoint | [Deployment Guide - Locally Hosted Models](DEPLOYMENT.md#-locally-hosted-models) |
 | **Managed cloud GPU** | An NVIDIA Brev account | [Deployment Guide - On NVIDIA Brev](DEPLOYMENT.md#on-nvidia-brev) |
 
 The self-hosted path moves the language, text-embedding and guardrail models
@@ -143,7 +143,7 @@ place.
 | The app runs but answers look wrong | [Observability](OBSERVABILITY.md) to see what the model was told |
 | Turns are slow | [Performance](PERFORMANCE.md) |
 | Something in the UI misbehaves | [User Guide - Troubleshooting](USER_GUIDE.md#%EF%B8%8F-troubleshooting) |
-| Authentication or API key errors | [Deployment - NVIDIA Account Setup](DEPLOYMENT.md#nvidia-account-setup) |
+| Authentication or API key errors | [Deployment - Accounts and Keys](DEPLOYMENT.md#accounts-and-keys) |
 | Search returns nothing for your own catalog | [Catalog Architecture - Replace the catalog](CATALOG_ARCHITECTURE.md#replace-the-catalog) |
 
 ## Getting help

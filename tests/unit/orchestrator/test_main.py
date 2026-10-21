@@ -1982,6 +1982,7 @@ class TestDeepAgentsRuntimeRefs:
             "required_constraints",
             "scope_complete",
             "search_mode",
+            "exclude_shown",
         }
         assert set(schema["required"]) == {
             "semantic_query",

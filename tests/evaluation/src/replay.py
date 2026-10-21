@@ -386,6 +386,7 @@ _SUPPORTED_EXPECTATIONS = {
     "products_within",
     "reply_asks",
     "reply_must_not_say",
+    "same_kinds_as",
     "tools_not_used",
     "tools_used",
     "unsized_scopes",
@@ -474,6 +475,31 @@ def check_turn(
             f"{len(repeated)} of {len(now_ids)} already shown on turn {shown_on}"
             if now_ids
             else "no products shown",
+        )
+
+    if "same_kinds_as" in expect:
+        # "Show me more" after a showing of several kinds owes more of each,
+        # and nothing else. Kinds are the catalog's subcategories, read from
+        # the catalog rather than from the heading the model wrote.
+        wanted = expect["same_kinds_as"] or {}
+        shown_on = int(wanted.get("turn") or 0)
+
+        def kinds(products: Sequence[Mapping[str, Any]]) -> set[str]:
+            return {
+                str(_attribute(product, "subcategory") or "?") for product in products
+            }
+
+        earlier_kinds = kinds(
+            next(
+                (earlier.products for earlier in earlier_turns if earlier.index == shown_on),
+                [],
+            )
+        )
+        now_kinds = kinds(turn.products)
+        record(
+            "same_kinds_as",
+            bool(earlier_kinds) and now_kinds == earlier_kinds,
+            f"turn {shown_on} showed {sorted(earlier_kinds)}, this turn {sorted(now_kinds)}",
         )
 
     if "any_of" in expect:

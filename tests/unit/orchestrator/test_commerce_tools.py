@@ -119,6 +119,18 @@ def test_search_catalog_posts_stateless_text_payload() -> None:
     assert result.products[0].category == "bag"
 
 
+def test_search_catalog_sends_the_products_to_leave_out() -> None:
+    session = FakeSession(FakeResponse({"products": [], "no_result_reason": None}))
+
+    search_catalog(
+        SearchCatalogInput(query="black purse", exclude_ids=["prod_1", "prod_2"]),
+        "http://catalog-retriever:8010",
+        session=session,
+    )
+
+    assert session.calls[0]["json"]["exclude_ids"] == ["prod_1", "prod_2"]
+
+
 def test_search_catalog_prefers_structured_products_when_returned() -> None:
     session = FakeSession(
         FakeResponse(

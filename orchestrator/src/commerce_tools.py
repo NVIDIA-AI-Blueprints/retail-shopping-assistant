@@ -88,6 +88,8 @@ def search_catalog(
     }
     if request.candidate_k is not None:
         payload["candidate_k"] = request.candidate_k
+    if request.exclude_ids:
+        payload["exclude_ids"] = list(request.exclude_ids)
     if image:
         payload["image_base64"] = image
 

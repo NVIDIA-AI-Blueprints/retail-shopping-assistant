@@ -488,6 +488,15 @@ _SEARCH_NO_MATCH_NEXT_STEP = (
 )
 
 
+_SEARCH_ALL_SHOWN_NOTE = (
+    "SEARCH_ALL_SHOWN: every product matching this search has already been "
+    "shown in this conversation, so there are no new ones. Tell the shopper "
+    "they have seen all of them. Do not present earlier products as new, do "
+    "not say the shop has none, and do not widen the search unasked: offer "
+    "to change it instead."
+)
+
+
 _SEARCH_SCOPE_COMPLETE_NOTE = (
     "SEARCH_SCOPE_COMPLETE: The shopper's current request can now be answered "
     "from this search and existing turn evidence. If the shopper asked to add, "

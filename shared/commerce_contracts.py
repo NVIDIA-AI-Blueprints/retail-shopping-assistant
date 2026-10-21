@@ -120,6 +120,8 @@ class SearchCatalogInput(CommerceModel):
     filters: dict[str, Any] = Field(default_factory=dict)
     top_k: int = Field(default=4, ge=1, le=50)
     candidate_k: int | None = Field(default=None, ge=1, le=200)
+    #: Products to leave out of the results, so the next-ranked ones show.
+    exclude_ids: list[str] = Field(default_factory=list, max_length=200)
 
 
 class SearchCatalogResult(CommerceModel):

@@ -42,3 +42,12 @@ turns:
       products_min: 2
       products_new_since: {turn: 5}
       same_kinds_as: {turn: 5}
+
+  - say: now show me some skirts
+    expect: {products_min: 2}
+
+  - say: show me more
+    expect:
+      products_min: 2
+      products_new_since: {turn: 7}
+      same_kinds_as: {turn: 7}

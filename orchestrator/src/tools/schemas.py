@@ -168,10 +168,10 @@ class SearchCatalogToolArguments(BaseModel):
             "a kind already shown in this conversation: every product shown so "
             "far is left out, so this scope returns only new ones. Keep the "
             "earlier scope's taxonomy and constraints unless the shopper "
-            "changes them. When more is "
-            "asked of a showing that held several kinds without naming one, "
-            "send one scope per kind shown, each with this set; when one kind "
-            "is named, send only that one. False for a first search, a new "
+            "changes them. More without a named kind means more of the latest "
+            "showing: send one scope per kind it held, each with this set; "
+            "when one kind is named, send only that one. False for a first "
+            "search, a new "
             "kind, or a request to see earlier products again."
         ),
     )

@@ -161,6 +161,24 @@ class ResolveConversationProductsRequest(_ConversationProductModel):
     )
 
 
+class ResolveConversationProductsToolArguments(ResolveConversationProductsRequest):
+    """What the model sends: the request, and whether to show what it finds.
+
+    Kept off the request itself, which the memory client also builds and
+    which has no use for a display decision.
+    """
+
+    show_again: bool = Field(
+        ...,
+        description=(
+            "True when the shopper asked to see these products again: they "
+            "are shown as product cards and become the latest showing. False "
+            "when the shopper only refers to them -- to add one to the cart, "
+            "compare them or ask about one -- and nothing new is shown."
+        ),
+    )
+
+
 class ConversationProductMatch(_ConversationProductModel):
     """One presented product and its durable presentation coordinates."""
 

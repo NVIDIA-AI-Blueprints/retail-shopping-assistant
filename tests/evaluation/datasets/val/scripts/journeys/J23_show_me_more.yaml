@@ -57,3 +57,9 @@ turns:
       products_min: 1
       tools_used: [resolve_conversation_products_tool]
       tools_not_used: [search_catalog_tool]
+
+  # Never shown, so there is nothing to recall: it has to be a search.
+  - say: and the sweaters you showed me earlier, pull those up too
+    expect:
+      products_min: 1
+      tools_used: [search_catalog_tool]

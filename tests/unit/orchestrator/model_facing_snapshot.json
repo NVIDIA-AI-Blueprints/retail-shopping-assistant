@@ -117,7 +117,7 @@
       "additionalProperties": false,
       "properties": {
        "exclude_shown": {
-        "description": "True when the shopper wants more, other or different products of a kind already shown in this conversation: every product shown so far is left out, so this scope returns only new ones. Keep the earlier scope's taxonomy and constraints unless the shopper changes them. More without a named kind means more of the latest showing: send one scope per kind it held, each with this set; when one kind is named, send only that one. False for a first search or a new kind. Seeing products already shown again is not a search: resolve them with resolve_conversation_products_tool.",
+        "description": "True when the shopper wants more, other or different products of a kind already shown in this conversation: every product shown so far is left out, so this scope returns only new ones. Keep the earlier scope's taxonomy and constraints unless the shopper changes them. More without a named kind means more of the latest showing: send one scope per kind it held, each with this set; when one kind is named, send only that one. False for a first search or a new kind. To see products already shown again, call resolve_conversation_products_tool with show_again set instead of searching.",
         "title": "Exclude Shown",
         "type": "boolean"
        },
@@ -268,7 +268,7 @@
    }
   },
   {
-   "description": "Resolve products the shopper refers to from earlier in this\n            conversation. Use only when a needed product was not established\n            in the current turn. Submit exact descriptors from the historical\n            product index. If a reference is ambiguous, ask one concise\n            clarification and do not guess. If nothing matches at all, the\n            result says what to do next.",
+   "description": "Resolve products the shopper refers to from earlier in this\n            conversation, and show them again when the shopper asks to see\n            products already shown. Use only when a needed product was not\n            established in the current turn. Submit exact descriptors from the\n            historical product index. If a reference is ambiguous, ask one\n            concise clarification and do not guess. If nothing matches at all,\n            the result says what to do next.",
    "handles_validation_error": true,
    "name": "resolve_conversation_products_tool",
    "response_format": "content_and_artifact",
@@ -414,7 +414,7 @@
       "type": "object"
      }
     },
-    "description": "Resolve products the shopper refers to from earlier in this\nconversation. Use only when a needed product was not established\nin the current turn. Submit exact descriptors from the historical\nproduct index. If a reference is ambiguous, ask one concise\nclarification and do not guess. If nothing matches at all, the\nresult says what to do next.",
+    "description": "Resolve products the shopper refers to from earlier in this\nconversation, and show them again when the shopper asks to see\nproducts already shown. Use only when a needed product was not\nestablished in the current turn. Submit exact descriptors from the\nhistorical product index. If a reference is ambiguous, ask one\nconcise clarification and do not guess. If nothing matches at all,\nthe result says what to do next.",
     "properties": {
      "references": {
       "items": {
@@ -424,10 +424,16 @@
       "minItems": 1,
       "title": "References",
       "type": "array"
+     },
+     "show_again": {
+      "description": "True when the shopper asked to see these products again: they are shown as product cards and become the latest showing. False when the shopper only refers to them -- to add one to the cart, compare them or ask about one -- and nothing new is shown.",
+      "title": "Show Again",
+      "type": "boolean"
      }
     },
     "required": [
-     "references"
+     "references",
+     "show_again"
     ],
     "title": "resolve_conversation_products_tool",
     "type": "object"

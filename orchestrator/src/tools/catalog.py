@@ -19,7 +19,7 @@ from ..commerce_tools import get_product_details
 from ..conversation_products import (
     ConversationProductsError,
     ProductReferenceDescriptor,
-    ResolveConversationProductsRequest,
+    ResolveConversationProductsToolArguments,
     format_historical_product_index,
     format_product_resolution,
     near_miss_field,
@@ -540,8 +540,27 @@ def build_catalog_tools(
             sections.append("\n".join(lines))
         return "\n\n".join(section for section in sections if section)
 
+    def _show_again(results: Any) -> None:
+        """Present resolved products as this turn's showing, under their
+        earlier headings, so the shopper sees the cards they asked for."""
+
+        matches = [
+            item.matches[0]
+            for item in results
+            if item.status == "resolved" and item.matches
+        ]
+        _append_product_results(state, [match.product for match in matches])
+        groups: dict[str, list[str]] = {}
+        for match in matches:
+            groups.setdefault(match.group, []).append(str(match.product.product_id))
+        for heading, product_ids in groups.items():
+            state.product_groups.append(
+                {"heading": heading, "product_ids": product_ids}
+            )
+
     def _resolve_conversation_products_impl(
         references: list[ProductReferenceDescriptor],
+        show_again: bool = False,
     ):
         """Resolve products the shopper refers to from earlier in this
         conversation. Use only when a needed product was not established
@@ -607,6 +626,8 @@ def build_catalog_tools(
                 scope.retrieved[product.display_name] = product.image_url
         if any(item.status == "resolved" for item in result.results):
             scope.product_resolution_used = True
+            if show_again:
+                _show_again(result.results)
             return format_product_resolution(result)
         # Nothing resolved. Offer the record of shown products for a near
         # miss only (a blocking field means one field was wrong). A total miss
@@ -631,23 +652,25 @@ def build_catalog_tools(
         )
 
     @tool(
-        args_schema=ResolveConversationProductsRequest,
+        args_schema=ResolveConversationProductsToolArguments,
         return_direct=False,
         response_format="content_and_artifact",
     )
     def resolve_conversation_products_tool(
         references: list[ProductReferenceDescriptor],
+        show_again: bool = False,
     ):
         """Resolve products the shopper refers to from earlier in this
-        conversation. Use only when a needed product was not established
-        in the current turn. Submit exact descriptors from the historical
-        product index. If a reference is ambiguous, ask one concise
-        clarification and do not guess. If nothing matches at all, the
-        result says what to do next.
+        conversation, and show them again when the shopper asks to see
+        products already shown. Use only when a needed product was not
+        established in the current turn. Submit exact descriptors from the
+        historical product index. If a reference is ambiguous, ask one
+        concise clarification and do not guess. If nothing matches at all,
+        the result says what to do next.
         """
 
         return normalize_tool_result(
-            _resolve_conversation_products_impl(references)
+            _resolve_conversation_products_impl(references, show_again)
         )
 
     @tool(args_schema=_DescribeCatalogInput, return_direct=False)

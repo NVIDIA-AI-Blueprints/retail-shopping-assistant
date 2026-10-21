@@ -171,8 +171,9 @@ class SearchCatalogToolArguments(BaseModel):
             "changes them. More without a named kind means more of the latest "
             "showing: send one scope per kind it held, each with this set; "
             "when one kind is named, send only that one. False for a first "
-            "search or a new kind. Seeing products already shown again is not "
-            "a search: resolve them with resolve_conversation_products_tool."
+            "search or a new kind. To see products already shown again, call "
+            "resolve_conversation_products_tool with show_again set instead of "
+            "searching."
         ),
     )
 

@@ -635,7 +635,8 @@ set there; a unit test fails if the two differ, so change both together.
 | `LOCAL_VIDEO_SAFETY_GPU` | GPU id for the local video safety model | Local only | `5` |
 | `LOCAL_VIDEO_SAFETY_HF_MODEL` | Checkpoint the local video safety server loads; the `-BF16` variant needs about twice the memory | Local only | `nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8` |
 | `LOCAL_CONTENT_SAFETY_VLLM_IMAGE` | vLLM image serving the local content safety model | Local only | `vllm/vllm-openai:v0.20.0` |
-| `LOCAL_TOPIC_CONTROL_VLLM_IMAGE` / `LOCAL_VIDEO_SAFETY_VLLM_IMAGE` | vLLM images serving the local topic control and video safety models | Local only | `vllm/vllm-openai:v0.31.0` |
+| `LOCAL_TOPIC_CONTROL_VLLM_IMAGE` | vLLM image serving the local topic control model | Local only | `vllm/vllm-openai:v0.31.0` |
+| `LOCAL_VIDEO_SAFETY_VLLM_IMAGE` | vLLM image serving the local video safety model; it installs `vllm[audio]` at the same version on start | Local only | `vllm/vllm-openai:v0.20.0` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
 | `SHARED_CONFIG_ROOT` | Directory the services read `shared/configs/` from | No | `/app/shared/configs` |

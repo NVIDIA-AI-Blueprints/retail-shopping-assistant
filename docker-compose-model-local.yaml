@@ -215,13 +215,14 @@ services:
     #   https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8
     # The model card requires vLLM 0.20.0, whose image lacks the audio
     # packages use_audio_in_video needs, so they are installed at start.
+    # Keep the image tag and the vllm[audio] pin below on the same version.
     #
     # FP8 weights are ~35 GB, leaving one 80 GB GPU ~32 GB of KV cache. The
     # ~66 GB -BF16 checkpoint, set with LOCAL_VIDEO_SAFETY_HF_MODEL, needs a
     # larger GPU.
     # The guardrail service sends the Omni-specific video request only when
     # the model name contains "nemotron-3-nano-omni".
-    image: ${LOCAL_VIDEO_SAFETY_VLLM_IMAGE:-vllm/vllm-openai:v0.31.0}
+    image: ${LOCAL_VIDEO_SAFETY_VLLM_IMAGE:-vllm/vllm-openai:v0.20.0}
     # vLLM is started without --api-key, so the host port is loopback only.
     ports:
       - "127.0.0.1:8005:8000"

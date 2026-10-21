@@ -51,3 +51,9 @@ turns:
       products_min: 2
       products_new_since: {turn: 7}
       same_kinds_as: {turn: 7}
+
+  - say: can you pull up the first heels you showed me again
+    expect:
+      products_min: 1
+      tools_used: [resolve_conversation_products_tool]
+      tools_not_used: [search_catalog_tool]

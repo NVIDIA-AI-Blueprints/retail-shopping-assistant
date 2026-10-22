@@ -182,6 +182,29 @@ class ResolveConversationProductsToolArguments(ResolveConversationProductsReques
         ),
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_show_again_out_of_references(cls, data: Any) -> Any:
+        """Accept show_again written inside a reference as well as beside it.
+
+        References forbid unknown fields, so the model's copy there would fail
+        the whole call and show nothing.
+        """
+        if not isinstance(data, dict) or not isinstance(data.get("references"), list):
+            return data
+        nested = []
+        references = []
+        for reference in data["references"]:
+            if isinstance(reference, dict) and "show_again" in reference:
+                reference = dict(reference)
+                nested.append(reference.pop("show_again"))
+            references.append(reference)
+        if not nested:
+            return data
+        lifted = {**data, "references": references}
+        lifted.setdefault("show_again", any(value is True for value in nested))
+        return lifted
+
 
 class ConversationProductMatch(_ConversationProductModel):
     """One presented product and its durable presentation coordinates."""

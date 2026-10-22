@@ -196,7 +196,7 @@ suites see [Testing and Evaluation](tests/README.md).
 
 ### Models
 - [Nemotron 3.5 Super VL](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16): Shopping agent, and photo and video perception
-- [Nemotron 3 Embed 1B](https://build.nvidia.com/nvidia/nemotron-3-embed-1b/modelcard): Catalog and query embedding
+- [Nemotron 3.5 Embed 1B](https://build.nvidia.com/nvidia/nemotron-3_5-embed-1b): Catalog and query embedding
 - [Nemotron 3.5 Content Safety](https://huggingface.co/nvidia/Nemotron-3.5-Content-Safety): Optional moderation of shopper input and assistant output
 - [Llama 3.1 NemoGuard 8B Topic Control](https://build.nvidia.com/nvidia/llama-3_1-nemoguard-8b-topic-control): Optional off-topic detection
 
@@ -204,9 +204,9 @@ suites see [Testing and Evaluation](tests/README.md).
 
 GOVERNING TERMS: Use of the blueprint software and materials and NIM containers are governed by the [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) and [Product-specific Terms for AI products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/);  and the use of models is governed by the [NVIDIA Community Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/).
  
-ADDITIONAL INFORMATION: [Llama 3.1 Community License Agreement](https://www.llama.com/llama3_1/license/) for the Llama 3.1 NemoGuard 8B - Topic Control model, built with Llama. [OpenMDW-1.1](https://openmdw.ai/license/1-1/) for the Nemotron 3.5 Super VL 120B A12B BF16 checkpoint downloaded for local deployment.
+ADDITIONAL INFORMATION: [OpenMDW-1.1](https://openmdw.ai/license/1-1/) for the Nemotron 3.5 Super VL 120B A12B, Nemotron 3.5 Embed 1B and Nemotron 3.5 Content Safety models. The [Ministral-3-3B-Instruct-2512-BF16](https://huggingface.co/mistralai/Ministral-3-3B-Instruct-2512-BF16) and [Ministral-3-8B-Instruct-2512-BF16](https://huggingface.co/mistralai/Ministral-3-8B-Instruct-2512-BF16) base models of Nemotron 3.5 Embed 1B are governed by the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0.txt). [NVIDIA Open Model Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-agreement/) for the Nemotron 3 Nano Omni 30B A3B Reasoning model. [Llama 3.1 Community License Agreement](https://www.llama.com/llama3_1/license/) for the Llama 3.1 NemoGuard 8B - Topic Control model, built with Llama, and its Llama 3.1 8B Instruct base model.
  
-This project will download and install additional third-party open source software projects. Review the license terms of these open source projects before use, found in [License-3rd-party.txt](LICENSE-3rd-party.txt).
+This project will download and install additional third-party open source software projects, including vLLM, Milvus, LangChain, LangGraph, Deep Agents, NeMo Guardrails, FastAPI and React. Review the license terms of these open source projects before use, found in [LICENSE-3rd-party.txt](LICENSE-3rd-party.txt).
  
 Use of the product catalog data in the retail shopping assistant is governed by the terms of the [NVIDIA Data License for Retail Shopping Assistant](LICENSE-assets.txt) (15Aug2025).
 

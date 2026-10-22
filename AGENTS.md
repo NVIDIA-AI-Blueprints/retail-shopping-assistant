@@ -131,7 +131,7 @@ python scripts/model_config.py deploy --build
 
 `docker-compose-model-local.yaml` serves every model role with vLLM from
 Hugging Face checkpoints, on six 80 GB GPUs by default: Nemotron 3.5 Super
-(`local-llm`, GPUs 0-3); Nemotron 3 Embed 1B (`local-embedding`), Nemotron 3.5
+(`local-llm`, GPUs 0-3); Nemotron 3.5 Embed 1B (`local-embedding`), Nemotron 3.5
 Content Safety (`local-content-safety`) and Llama 3.1 NemoGuard 8B Topic
 Control as a LoRA on Llama 3.1 8B Instruct (`local-topic-control`) sharing
 GPU 4; and Nemotron 3 Nano Omni for video safety (`local-video-safety`, GPU 5).

@@ -240,7 +240,7 @@ def configure(args: argparse.Namespace) -> None:
                 f'export VLM_BASE_URL="{llm_url}"',
                 'export VLM_MODEL="nemotron-3.5-super"',
                 f'export TEXT_EMBED_BASE_URL="{text_embed_url}"',
-                'export TEXT_EMBED_MODEL="nvidia/Nemotron-3-Embed-1B-BF16"',
+                'export TEXT_EMBED_MODEL="nvidia/Nemotron-3.5-Embed-1B-BF16"',
                 f'export RAILS_CONTENT_BASE_URL="{content_url}"',
                 'export RAILS_CONTENT_MODEL="nvidia/nemotron-3.5-content-safety"',
                 f'export RAILS_TOPIC_BASE_URL="{topic_url}"',

@@ -138,7 +138,7 @@ def test_configure_matches_local_model_compose_services(
     content = captured["content"]
     assert 'LLM_BASE_URL="http://pdx-host:8000/v1"' in content
     assert 'VLM_BASE_URL="http://pdx-host:8000/v1"' in content
-    assert 'TEXT_EMBED_MODEL="nvidia/Nemotron-3-Embed-1B-BF16"' in content
+    assert 'TEXT_EMBED_MODEL="nvidia/Nemotron-3.5-Embed-1B-BF16"' in content
     assert 'RAILS_TOPIC_BASE_URL="http://pdx-host:8004/v1"' in content
     assert 'RAILS_TOPIC_MODEL="llama-3.1-nemoguard-8b-topic-control"' in content
     assert 'MULTIMODAL_SAFETY_BASE_URL="http://pdx-host:8005/v1"' in content

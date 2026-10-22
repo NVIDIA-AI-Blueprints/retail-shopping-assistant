@@ -19,7 +19,7 @@ local_models:
       compose_file: docker-compose-model-local.yaml
       compose_service: local-embedding
       base_url: "http://local-embedding:8000/v1"
-      model: "nvidia/Nemotron-3-Embed-1B-BF16"
+      model: "nvidia/Nemotron-3.5-Embed-1B-BF16"
 
     local-content-safety:
       compose_file: docker-compose-model-local.yaml

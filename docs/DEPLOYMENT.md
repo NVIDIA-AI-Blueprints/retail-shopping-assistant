@@ -162,14 +162,14 @@ guardrails, that is `shared/configs/orchestrator/config.yaml`.
 
 Use this only when this machine will serve the models itself. The local setup
 mirrors the hosted default: Nemotron 3.5 Super answers the shopper and reads
-photo and video uploads, Nemotron 3 Embed 1B embeds the catalog, and three
+photo and video uploads, Nemotron 3.5 Embed 1B embeds the catalog, and three
 guardrail judges check each turn. All are locally deployed models: Hugging
 Face checkpoints served by vLLM from `docker-compose-model-local.yaml`:
 
 | Service | Role | Checkpoint | Weights | GPU memory in use | Default GPU |
 |---------|------|------------|---------|-------------------|-------------|
 | `local-llm` | `app_llm`, `vlm` | [`nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16), BF16, tensor parallel 4 | ~249 GB | ~70 GB on each of 4 GPUs | 0-3, its own |
-| `local-embedding` | `text_embedding` | [`nvidia/Nemotron-3-Embed-1B-BF16`](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16) | ~2 GB | ~4 GB | 4, shared |
+| `local-embedding` | `text_embedding` | [`nvidia/Nemotron-3.5-Embed-1B-BF16`](https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16) | ~3 GB | up to ~6 GB (`--gpu-memory-utilization=0.08`) | 4, shared |
 | `local-content-safety` | `content_safety` | [`nvidia/Nemotron-3.5-Content-Safety`](https://huggingface.co/nvidia/Nemotron-3.5-Content-Safety) | ~9 GB | ~22 GB | 4, shared |
 | `local-topic-control` | `topic_control` | [`nvidia/llama-3.1-nemoguard-8b-topic-control`](https://huggingface.co/nvidia/llama-3.1-nemoguard-8b-topic-control) LoRA on `meta-llama/Llama-3.1-8B-Instruct` | ~16 GB | ~28 GB | 4, shared |
 | `local-video-safety` | `multimodal_safety` | [`nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8`](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8) | ~35 GB | ~72 GB | 5, its own |
@@ -233,8 +233,8 @@ BF16 checkpoint (~66 GB) leaves little room on that card; on a larger GPU, set
   [Software Dependencies](#software-dependencies))
 - **Six 80 GB GPUs** for the default layout, such as H100 80 GB; see
   [GPU Sizing](#gpu-sizing) for the other layouts
-- About 400 GB of disk: ~311 GB of checkpoints, most of it the chat model's
-  BF16 weights, plus the four vLLM images the services pull
+- About 400 GB of disk: ~312 GB of checkpoints, most of it the chat model's
+  BF16 weights, plus the three vLLM images the services pull
 - A Hugging Face token with access to the one gated checkpoint: the base
   checkpoint that the NemoGuard topic control adapter runs on
   (`meta-llama/Llama-3.1-8B-Instruct`, approved by hand). The other four are
@@ -545,8 +545,7 @@ key variables are missing, though it cannot tell whether a present key is the
 right one for its host.
 
 To repoint a role, set its `*_BASE_URL` and `*_MODEL` variables in your
-profile, together: hosts name the same model differently
-(`inference-api.nvidia.com` adds an `nvidia/` prefix).
+profile, together: hosts can name the same model differently.
 
 ### Environment Variables
 
@@ -629,7 +628,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `LOCAL_LLM_TP` | Tensor parallel size for the local LLM | Local only | `4` |
 | `LOCAL_LLM_VLLM_IMAGE` | vLLM image serving the local LLM | Local only | `vllm/vllm-openai:v0.32.0` |
 | `LOCAL_EMBED_GPU` | GPU id for the local embedding model | Local only | `4` |
-| `LOCAL_EMBED_VLLM_IMAGE` | vLLM image serving local embeddings | Local only | `vllm/vllm-openai:v0.24.0` |
+| `LOCAL_EMBED_VLLM_IMAGE` | vLLM image serving local embeddings | Local only | `vllm/vllm-openai:v0.32.0` |
 | `LOCAL_CONTENT_SAFETY_GPU` | GPU id for the local content safety model | Local only | `4` |
 | `LOCAL_TOPIC_CONTROL_GPU` | GPU id for the local topic control model | Local only | `4` |
 | `LOCAL_VIDEO_SAFETY_GPU` | GPU id for the local video safety model | Local only | `5` |

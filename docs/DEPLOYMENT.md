@@ -545,8 +545,7 @@ key variables are missing, though it cannot tell whether a present key is the
 right one for its host.
 
 To repoint a role, set its `*_BASE_URL` and `*_MODEL` variables in your
-profile, together: hosts name the same model differently
-(`inference-api.nvidia.com` adds an `nvidia/` prefix).
+profile, together: hosts can name the same model differently.
 
 ### Environment Variables
 

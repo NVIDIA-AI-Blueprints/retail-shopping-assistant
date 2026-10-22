@@ -28,7 +28,7 @@ def _write_models(root: Path, app_llm: dict | None = None) -> Path:
                             "compose_file": "docker-compose-model-local.yaml",
                             "compose_service": "local-embedding",
                             "base_url": "http://local-embedding:8000/v1",
-                            "model": "nvidia/Nemotron-3-Embed-1B-BF16",
+                            "model": "nvidia/Nemotron-3.5-Embed-1B-BF16",
                         }
                     },
                 },
@@ -88,7 +88,7 @@ def test_a_local_role_is_not_redirected_by_the_hosted_env(
     embedding = config.require("text_embedding")
     assert (embedding.base_url, embedding.model) == (
         "http://local-embedding:8000/v1",
-        "nvidia/Nemotron-3-Embed-1B-BF16",
+        "nvidia/Nemotron-3.5-Embed-1B-BF16",
     )
 
 

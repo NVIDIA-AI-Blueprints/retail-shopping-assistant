@@ -726,7 +726,7 @@ turns are not cut off before the SSE response is emitted.
     },
     "text_embedding": {
       "label": "Text embedding",
-      "model": "nvidia/nemotron-3-embed-1b",
+      "model": "nvidia/nemotron-3.5-embed-1b",
       "source": "endpoint",
       "enabled": true
     }

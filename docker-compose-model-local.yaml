@@ -82,12 +82,12 @@ services:
       start_period: 3600s
 
   local-embedding:
-    # Nemotron 3 Embed 1B from Hugging Face, served by vLLM:
-    #   https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16
-    # The model card validates `vllm serve` on vllm-openai v0.20.0 to v0.24.0.
+    # Nemotron 3.5 Embed 1B from Hugging Face, served by vLLM with the release
+    # and flags its model card names:
+    #   https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16
     # Its /v1/embeddings ignores input_type, so texts arrive without the
-    # model's "query: " and "passage: " prefixes.
-    image: ${LOCAL_EMBED_VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
+    # model's "query:" and "passage:" prefixes.
+    image: ${LOCAL_EMBED_VLLM_IMAGE:-vllm/vllm-openai:v0.32.0}
     # vLLM is started without --api-key, so the host port is loopback only.
     ports:
       - "127.0.0.1:8001:8000"
@@ -95,10 +95,14 @@ services:
       # Optional: the model is public. Set, it raises Hugging Face rate limits.
       - HF_TOKEN
     command:
-      - --model=nvidia/Nemotron-3-Embed-1B-BF16
+      - --model=nvidia/Nemotron-3.5-Embed-1B-BF16
       - --host=0.0.0.0
       - --port=8000
-      # Shares a GPU with content safety and topic control; it needs ~4 GB.
+      - --dtype=bfloat16
+      - --max-model-len=32768
+      - '--compilation-config={"compile_mm_encoder":true}'
+      - --chat-template-content-format=openai
+      # Shares a GPU with content safety and topic control: ~3 GB of weights.
       - --gpu-memory-utilization=0.08
     volumes:
       - ${HF_CACHE}:/root/.cache/huggingface

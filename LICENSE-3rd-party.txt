@@ -245,7 +245,7 @@ Packages under the Apache License, Version 2.0 with their respective copyright h
    SeaweedFS 4.48 (container image)
    Copyright (c) The SeaweedFS Authors
 
-   vLLM v0.32.0, v0.31.0, v0.24.0 and v0.20.0 (container images, optional local-model deployment)
+   vLLM v0.32.0, v0.31.0 and v0.20.0 (container images, optional local-model deployment)
    Copyright (c) The vLLM Authors
 
 

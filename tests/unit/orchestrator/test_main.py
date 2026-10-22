@@ -6959,12 +6959,16 @@ class TestDeepAgentsRuntimeRefs:
             assert shown == []
             assert state.product_groups == []
 
-    @pytest.mark.parametrize("show_again", [True, False])
+    @pytest.mark.parametrize(
+        ("show_again", "asked_for"),
+        [(True, "tote bags"), (False, "tote bags"), (True, "sweaters")],
+    )
     def test_a_whole_earlier_showing_is_shown_again_not_queried(
         self,
         base_config,
         monkeypatch: pytest.MonkeyPatch,
         show_again: bool,
+        asked_for: str,
     ) -> None:
         """'Those totes again' names a set, which matches several products."""
 
@@ -7056,7 +7060,7 @@ class TestDeepAgentsRuntimeRefs:
                     {
                         "reference_id": "those totes",
                         "candidate_set_id": "totes-set",
-                        "group": "tote bags",
+                        "group": asked_for,
                     }
                 ],
                 show_again=show_again,
@@ -7064,7 +7068,11 @@ class TestDeepAgentsRuntimeRefs:
         )
 
         shown = [product["product_id"] for product in state.product_results]
-        if show_again:
+        if asked_for == "sweaters":
+            # The fallback to the showing's first group is not what was asked.
+            assert shown == []
+            assert "NOT SHOWN EARLIER" in text
+        elif show_again:
             assert shown == ["prod_tote_1", "prod_tote_2", "prod_tote_3"]
             assert state.product_groups == [
                 {"heading": "tote bags", "product_ids": shown}

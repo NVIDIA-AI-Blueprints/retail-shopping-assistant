@@ -176,7 +176,9 @@ class ResolveConversationProductsToolArguments(ResolveConversationProductsReques
             "they become the latest showing. False when the shopper only "
             "refers to them -- to add one to the cart, compare them or ask "
             "about one -- and nothing new is shown. Set once for the call, "
-            "beside references, not inside a reference."
+            "beside references, not inside a reference. When what the shopper "
+            "asks to see again was never shown, there is nothing to resolve: "
+            "say so and offer to search for it."
         ),
     )
 

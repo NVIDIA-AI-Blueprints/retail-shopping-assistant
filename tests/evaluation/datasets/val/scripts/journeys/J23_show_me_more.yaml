@@ -58,8 +58,8 @@ turns:
       tools_used: [resolve_conversation_products_tool]
       tools_not_used: [search_catalog_tool]
 
-  # Never shown, so there is nothing to recall: it has to be a search.
+  # Never shown, so there is nothing to recall: offering to search and
+  # searching are both right, but nothing other than sweaters may show.
   - say: and the sweaters you showed me earlier, pull those up too
     expect:
-      products_min: 1
-      tools_used: [search_catalog_tool]
+      products_within: [sweaters]

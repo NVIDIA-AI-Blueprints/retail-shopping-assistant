@@ -540,6 +540,32 @@ def build_catalog_tools(
             sections.append("\n".join(lines))
         return "\n\n".join(section for section in sections if section)
 
+    def _what_was_shown(result: Any, references: Any) -> Any:
+        """The resolutions that really are what the shopper asked to see.
+
+        A heading the showing does not hold falls back to its first group, so
+        a clarifying question can still be asked; shown as cards, that would
+        present skirts as the sweaters the shopper asked for.
+        """
+
+        headings = {
+            str(_descriptor_field(descriptor, "reference_id")): " ".join(
+                str(_descriptor_field(descriptor, "group") or "").casefold().split()
+            )
+            for descriptor in references or []
+        }
+        kept = []
+        for item in result.results:
+            heading = headings.get(item.reference_id, "")
+            matches = [
+                match
+                for match in item.matches
+                if not heading or " ".join(match.group.casefold().split()) == heading
+            ]
+            if matches:
+                kept.append(item.model_copy(update={"matches": matches}))
+        return result.model_copy(update={"results": kept})
+
     def _show_again(results: Any) -> None:
         """Present every matched product as this turn's showing, under its
         earlier heading, so the shopper sees the cards they asked for."""
@@ -622,10 +648,17 @@ def build_catalog_tools(
             product = resolution.matches[0].product
             if product.image_url:
                 scope.retrieved[product.display_name] = product.image_url
-        if show_again and any(item.matches for item in result.results):
-            scope.product_resolution_used = True
-            _show_again(result.results)
-            return format_product_resolution(result, show_again=True)
+        if show_again:
+            shown = _what_was_shown(result, references)
+            if shown.results:
+                scope.product_resolution_used = True
+                _show_again(shown.results)
+                return format_product_resolution(shown, show_again=True)
+            return (
+                "NOT SHOWN EARLIER: nothing the shopper asked to see again was "
+                "shown in this conversation. Say so plainly and offer to "
+                "search for it."
+            )
         if any(item.status == "resolved" for item in result.results):
             scope.product_resolution_used = True
             return format_product_resolution(result)

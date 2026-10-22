@@ -173,8 +173,7 @@ class SearchCatalogToolArguments(BaseModel):
             "when one kind is named, send only that one. False for a first "
             "search or a new kind. To see products already shown again, call "
             "resolve_conversation_products_tool with show_again set instead of "
-            "searching; when they were never shown, say so and offer to "
-            "search."
+            "searching."
         ),
     )
 

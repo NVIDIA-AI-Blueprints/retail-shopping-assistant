@@ -7,9 +7,9 @@ published contract, and [API Reference](API.md) covers the wire format.
 
 ## At a glance
 
-![Assistant architecture](images/shopper-agent-architecture.svg)
+![Assistant architecture](images/retail-diagram-shopping-assistant-blueprint-202610.jpg)
 
-[Open the full-size SVG](images/shopper-agent-architecture.svg).
+[Open the architecture diagram at full size](images/retail-diagram-shopping-assistant-blueprint-202610.jpg).
 
 ## Who owns what
 

@@ -572,6 +572,9 @@ def build_catalog_tools(
 
         matches = [match for item in results for match in item.matches]
         _append_product_results(state, [match.product for match in matches])
+        for match in matches:
+            if match.product.image_url:
+                scope.retrieved[match.product.display_name] = match.product.image_url
         groups: dict[str, list[str]] = {}
         for match in matches:
             group = groups.setdefault(match.group, [])

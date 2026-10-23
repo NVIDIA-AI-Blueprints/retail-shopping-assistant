@@ -7025,6 +7025,7 @@ class TestDeepAgentsRuntimeRefs:
                 product_id=f"prod_tote_{index}",
                 display_name=f"Tote {index}",
                 price=Money(amount=49.99),
+                image_url=f"/images/tote_{index}.jpg",
             )
             for index in (1, 2, 3)
         ]
@@ -7077,6 +7078,10 @@ class TestDeepAgentsRuntimeRefs:
             assert state.product_groups == [
                 {"heading": "tote bags", "product_ids": shown}
             ]
+            # The card row is drawn from the images; products alone draw nothing.
+            assert state.retrieved == {
+                f"Tote {index}": f"/images/tote_{index}.jpg" for index in (1, 2, 3)
+            }
             assert "SHOWN AGAIN" in text
             assert "CLARIFICATION REQUIRED" not in text
         else:

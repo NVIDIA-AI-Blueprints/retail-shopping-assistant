@@ -206,6 +206,8 @@ def index_is_ready() -> bool:
 
 #: Milvus's own ceiling on a search's top-k.
 MAX_CANDIDATE_K = 16384
+#: Products a search may be asked to leave out.
+MAX_EXCLUDE_IDS = 200
 
 class TextQueryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -215,6 +217,7 @@ class TextQueryRequest(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
     k: int = Field(default=4, ge=1, le=50)
     candidate_k: int | None = Field(default=None, ge=1, le=MAX_CANDIDATE_K)
+    exclude_ids: list[str] = Field(default_factory=list, max_length=MAX_EXCLUDE_IDS)
 
 class ImageQueryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -225,6 +228,7 @@ class ImageQueryRequest(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
     k: int = Field(default=4, ge=1, le=50)
     candidate_k: int | None = Field(default=None, ge=1, le=MAX_CANDIDATE_K)
+    exclude_ids: list[str] = Field(default_factory=list, max_length=MAX_EXCLUDE_IDS)
 
     @field_validator("image_base64")
     @classmethod
@@ -245,7 +249,8 @@ async def query_text(req: TextQueryRequest):
             k=req.k,
             candidate_k=req.candidate_k,
             image_bool=False,
-            verbose=True
+            verbose=True,
+            exclude_ids=req.exclude_ids,
         )
     except CatalogFilterError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -274,7 +279,8 @@ async def query_image(req: ImageQueryRequest):
             k=req.k,
             candidate_k=req.candidate_k,
             image_bool=True,
-            verbose=True
+            verbose=True,
+            exclude_ids=req.exclude_ids,
         )
     except CatalogFilterError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

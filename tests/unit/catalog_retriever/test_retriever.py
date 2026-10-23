@@ -1139,6 +1139,67 @@ class TestRetrieve:
         assert output.diagnostics["after_filter_count"] == 1
         assert output.products[0]["display_name"] == "Under Budget"
 
+    async def test_excluded_products_give_way_to_the_next_ranked(
+        self, retriever: Retriever
+    ) -> None:
+        retriever.text_db.similarity_search_with_relevance_scores = MagicMock(
+            return_value=[
+                (_doc("First", product_id="p1"), 0.95),
+                (_doc("Second", product_id="p2"), 0.9),
+                (_doc("Third", product_id="p3"), 0.85),
+            ]
+        )
+
+        output = await retriever.retrieve(
+            query=["dress"],
+            categories=[],
+            k=1,
+            image_bool=False,
+            verbose=False,
+            exclude_ids=["p1"],
+        )
+
+        assert output.ids == ["p2"]
+        assert output.diagnostics["excluded_count"] == 1
+        assert output.diagnostics["after_filter_count"] == 3
+
+    async def test_every_match_excluded_says_so(
+        self, retriever: Retriever
+    ) -> None:
+        retriever.text_db.similarity_search_with_relevance_scores = MagicMock(
+            return_value=[(_doc("Only", product_id="p1"), 0.95)]
+        )
+
+        output = await retriever.retrieve(
+            query=["dress"],
+            categories=[],
+            k=4,
+            image_bool=False,
+            verbose=False,
+            exclude_ids=["p1"],
+        )
+
+        assert output.products == []
+        assert output.no_result_reason == "all_matches_excluded"
+
+    async def test_no_exclusion_leaves_results_and_diagnostics_unchanged(
+        self, retriever: Retriever
+    ) -> None:
+        retriever.text_db.similarity_search_with_relevance_scores = MagicMock(
+            return_value=[(_doc("Only", product_id="p1"), 0.95)]
+        )
+
+        output = await retriever.retrieve(
+            query=["dress"],
+            categories=[],
+            k=4,
+            image_bool=False,
+            verbose=False,
+        )
+
+        assert output.ids == ["p1"]
+        assert "excluded_count" not in output.diagnostics
+
     async def test_blank_query_replaced_with_dummy(
         self, retriever: Retriever
     ) -> None:

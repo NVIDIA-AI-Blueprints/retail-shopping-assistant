@@ -34,6 +34,7 @@ from shared.commerce_contracts import (
 
 from .agenttypes import State
 from .catalog_format import (
+    _SEARCH_ALL_SHOWN_NOTE,
     _SEARCH_BUDGET_EXHAUSTED_NOTE,
     _SEARCH_NO_MATCH_GROUNDING_NOTE,
     _SEARCH_NO_MATCH_NEXT_STEP,
@@ -247,6 +248,9 @@ class _Attempt:
     repair: Any = None
     scope_complete: bool = True
     search_mode: str | None = None
+    #: The shopper asked for more of a kind already shown, so the search
+    #: leaves out every product this conversation has shown.
+    exclude_shown: bool = False
     advertised_choices: Any = None
     candidate_scope_key: Any = None
     #: The taxonomy and constraints this scope searched on, kept so a reworded
@@ -366,6 +370,7 @@ def _scope_as_sent(attempt: _Attempt) -> str:
             "required_constraints": attempt.required_constraints,
             "scope_complete": attempt.scope_complete,
             "search_mode": attempt.search_mode,
+            "exclude_shown": attempt.exclude_shown,
         },
         sort_keys=True,
         default=str,
@@ -670,6 +675,7 @@ def _validated_request(ctx: SearchContext, attempt: _Attempt) -> StepResult:
                 "required_constraints": constraint_payload,
                 "scope_complete": scope_complete,
                 "search_mode": search_mode,
+                "exclude_shown": attempt.exclude_shown,
             }
         )
     except ValidationError as exc:
@@ -1046,6 +1052,7 @@ def _role_key(ctx: SearchContext, attempt: _Attempt) -> StepResult:
     # below when nothing came back.
     shopper_scope_key = (
         (_normalize_product_text(ctx.state.query), candidate_scope_key)
+        + (("exclude_shown",) if attempt.exclude_shown else ())
         if candidate_scope_key
         else None
     )
@@ -1362,6 +1369,9 @@ def _reserved_search_slot(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             taxonomy_constraints,
             normalized_constraints,
         )
+        if attempt.exclude_shown:
+            # Leaving shown products out is a different search, not a repeat.
+            search_scope["exclude_shown"] = True
         attempt.catalog_scope = search_scope
         # Judged against earlier calls only, never a sibling in this call:
         # sibling roles are not retries of each other. An identical sibling is
@@ -1642,6 +1652,24 @@ def _rendered_evidence(ctx: SearchContext, attempt: _Attempt) -> StepResult:
             else ""
         )
     )
+    if not result.products and result.no_result_reason == "all_matches_excluded":
+        # Matches exist and every one has been shown: not a miss to relax.
+        evidence = SearchEvidence(
+            outcome="all_shown",
+            taxonomy=taxonomy_constraints,
+            confirmed_filters=confirmed_filters,
+            requested_product_type=request.requested_product_type,
+            advertised_category=advertised_category,
+            scope_complete=bool(request.scope_complete),
+            budget_exhausted=bool(search_budget_exhausted),
+        )
+        lines = [
+            _SEARCH_ALL_SHOWN_NOTE,
+            _format_search_taxonomy_evidence(evidence.taxonomy),
+        ]
+        if evidence.confirmed_filters:
+            lines.append(_format_search_filter_evidence(evidence.confirmed_filters))
+        return "\n\n".join(lines), evidence.as_artifact()
     if not result.products:
         # An empty scope is not an answered one: let a relaxed retry through,
         # while the exact taxonomy-and-filters check below still refuses a
@@ -2031,6 +2059,30 @@ def _the_filter_removed(near_miss: Any) -> dict[str, Any]:
     return removed
 
 
+#: The retriever's ceiling on products a search may leave out.
+_MAX_EXCLUDED_PRODUCTS = 200
+
+
+def _shown_product_ids(ctx: SearchContext) -> list[str]:
+    """Every product this conversation has shown, newest first.
+
+    This turn's own products come first, then earlier showings from the most
+    recent back, so a long conversation drops its oldest showings first when
+    the list reaches the retriever's ceiling.
+    """
+
+    ids: list[str] = []
+    for product in ctx.scope.product_evidence.values():
+        ids.append(str(product.product_id))
+    for entry in reversed(list(ctx.state.historical_product_sets or [])):
+        if not isinstance(entry, dict):
+            continue
+        for product in entry.get("products") or []:
+            if isinstance(product, dict) and product.get("ref"):
+                ids.append(str(product["ref"]).strip())
+    return list(dict.fromkeys(i for i in ids if i))[:_MAX_EXCLUDED_PRODUCTS]
+
+
 def _more_matched_than_are_shown(diagnostics: Any, shown: int) -> int:
     """How many matched, when top-k returned fewer than that, else 0.
 
@@ -2295,6 +2347,7 @@ def search_catalog(
             shopper_guidance=fields.get("shopper_guidance", ""),
             scope_complete=bool(fields.get("scope_complete", scope_complete)),
             search_mode=fields.get("search_mode", search_mode),
+            exclude_shown=bool(fields.get("exclude_shown", False)),
         )
         # Repair state belongs to the product scope, not the call, so a repair
         # spans tool calls. Several scopes each plan against a snapshot, so one
@@ -2337,6 +2390,13 @@ def search_catalog(
             if plan is not None and getattr(plan, "top_k", None):
                 attempts[index].plan = plan.model_copy(
                     update={"top_k": min(plan.top_k, share)}
+                )
+        shown = _shown_product_ids(ctx)
+        for index in runnable:
+            plan = attempts[index].plan
+            if attempts[index].exclude_shown and plan is not None and shown:
+                attempts[index].plan = plan.model_copy(
+                    update={"exclude_ids": shown}
                 )
 
     # Reserving is sequential and lock-guarded; only retrieval fans out.

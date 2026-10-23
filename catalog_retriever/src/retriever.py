@@ -770,10 +770,14 @@ class Retriever:
         k: int = 4,
         candidate_k: int | None = None,
         image_bool: bool = False,
-        verbose: bool = True
+        verbose: bool = True,
+        exclude_ids: list[str] | None = None,
     ) -> RetrievalOutput:
         """
         Asynchronously retrieve relevant items from both text and image databases.
+
+        ``exclude_ids`` leaves those products out after ranking, so the next
+        best fill the response instead of the same ones again.
         """
         candidate_limit = max(k, candidate_k or self.catalog_size or (k * 5))
         if self.catalog_size:
@@ -982,6 +986,17 @@ class Retriever:
             key=lambda item: item[1],
             reverse=True,
         )
+        if exclude_ids:
+            excluded = set(exclude_ids)
+            unseen = [res for res in ranked_results if self._result_id(res) not in excluded]
+            diagnostics["excluded_count"] = len(ranked_results) - len(unseen)
+            if not unseen:
+                diagnostics["returned_count"] = 0
+                return RetrievalOutput(
+                    diagnostics=diagnostics,
+                    no_result_reason="all_matches_excluded",
+                )
+            ranked_results = unseen
         ranked_results = ranked_results[:k]
         diagnostics["returned_count"] = len(ranked_results)
 

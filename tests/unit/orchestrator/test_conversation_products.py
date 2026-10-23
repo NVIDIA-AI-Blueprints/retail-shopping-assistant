@@ -16,6 +16,7 @@ from orchestrator.src.conversation_products import (
     ProductReferenceResolution,
     ResolveConversationProductsRequest,
     ResolveConversationProductsResult,
+    ResolveConversationProductsToolArguments,
     format_historical_product_index,
     format_product_resolution,
 )
@@ -516,3 +517,26 @@ def test_a_size_the_product_is_not_sold_in_stops_the_add() -> None:
 
     assert "Do not add it" in _resolved(["attributes.sizes"])
     assert "Do not add it" not in _resolved(["attributes.primary_color"])
+
+
+@pytest.mark.parametrize(
+    ("beside", "inside", "expected"),
+    [(True, True, True), (None, True, True), (None, False, False), (False, True, False)],
+)
+def test_show_again_written_inside_a_reference_is_not_a_failed_call(
+    beside: bool | None, inside: bool, expected: bool
+) -> None:
+    """The flag is read from beside the references, or lifted from inside one."""
+
+    payload: dict[str, Any] = {
+        "references": [
+            {"reference_id": "totes", "group": "tote bags", "show_again": inside}
+        ]
+    }
+    if beside is not None:
+        payload["show_again"] = beside
+
+    arguments = ResolveConversationProductsToolArguments.model_validate(payload)
+
+    assert arguments.show_again is expected
+    assert arguments.references[0].group == "tote bags"

@@ -137,7 +137,7 @@ into a turn-five purchase. Nothing shorter would have caught either.
 | J20 | `menswear_pivot` | 6 | 5 | media, honesty, discovery, cart-management |
 | J21 | `demo_ten_turns` | 10 | 10 | weather, media, references, discovery, filters, sizes, cart-management, honesty |
 | J22 | `counting_what_was_shown` | 5 | 5 | discovery, references, cart |
-| J23 | `show_me_more` | 4 | 4 | discovery, references |
+| J23 | `show_me_more` | 10 | 10 | discovery, references |
 | J24 | `no_product_type` | 4 | 2 | product-discovery, typeless-scope, colour, honesty |
 | J25 | `a_size_before_a_product` | 2 | 2 | product-discovery, sizes, filters, honesty |
 

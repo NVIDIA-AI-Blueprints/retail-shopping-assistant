@@ -32,7 +32,7 @@ DETAIL_EVIDENCE_KEY = "product_detail_evidence"
 class SearchEvidence:
     """Everything a search established, as data rather than prose."""
 
-    outcome: str  # "results" | "zero_results"
+    outcome: str  # "results" | "zero_results" | "all_shown"
     taxonomy: dict[str, Any] = field(default_factory=dict)
     confirmed_filters: dict[str, Any] = field(default_factory=dict)
     semantic_query: str = ""

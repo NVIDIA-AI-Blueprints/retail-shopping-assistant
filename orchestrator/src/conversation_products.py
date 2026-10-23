@@ -161,6 +161,49 @@ class ResolveConversationProductsRequest(_ConversationProductModel):
     )
 
 
+class ResolveConversationProductsToolArguments(ResolveConversationProductsRequest):
+    """What the model sends: the request, and whether to show what it finds.
+
+    Kept off the request itself, which the memory client also builds and
+    which has no use for a display decision.
+    """
+
+    show_again: bool = Field(
+        ...,
+        description=(
+            "True when the shopper asked to see these products again: every "
+            "product the references match is shown as a product card, and "
+            "they become the latest showing. False when the shopper only "
+            "refers to them -- to add one to the cart, compare them or ask "
+            "about one -- and nothing new is shown. Set once for the call, "
+            "beside references, not inside a reference."
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_show_again_out_of_references(cls, data: Any) -> Any:
+        """Accept show_again written inside a reference as well as beside it.
+
+        References forbid unknown fields, so the model's copy there would fail
+        the whole call and show nothing.
+        """
+        if not isinstance(data, dict) or not isinstance(data.get("references"), list):
+            return data
+        nested = []
+        references = []
+        for reference in data["references"]:
+            if isinstance(reference, dict) and "show_again" in reference:
+                reference = dict(reference)
+                nested.append(reference.pop("show_again"))
+            references.append(reference)
+        if not nested:
+            return data
+        lifted = {**data, "references": references}
+        lifted.setdefault("show_again", any(value is True for value in nested))
+        return lifted
+
+
 class ConversationProductMatch(_ConversationProductModel):
     """One presented product and its durable presentation coordinates."""
 
@@ -447,8 +490,16 @@ def near_miss_field(resolution: Any) -> str | None:
     return None if field == "display_name" else field
 
 
-def format_product_resolution(result: ResolveConversationProductsResult) -> str:
-    """Render resolution outcomes without authorizing a guessed product."""
+def format_product_resolution(
+    result: ResolveConversationProductsResult,
+    *,
+    show_again: bool = False,
+) -> str:
+    """Render resolution outcomes without authorizing a guessed product.
+
+    With ``show_again`` every match of a reference is shown, so several of
+    them answer the request instead of needing a clarification.
+    """
 
     lines: list[str] = []
     for resolution in result.results:
@@ -511,9 +562,13 @@ def format_product_resolution(result: ResolveConversationProductsResult) -> str:
             # List each candidate with its confirmed attributes: names alone
             # cannot answer "the black one", and the record already holds them.
             lines.append(
-                f"REFERENCE {resolution.reference_id}: CLARIFICATION REQUIRED. "
-                "These were shown; tell them apart on the facts below and ask "
-                "the shopper which one. Do not guess."
+                f"REFERENCE {resolution.reference_id}: SHOWN AGAIN. These "
+                "were shown earlier and are on screen again now, in this "
+                "order; present them as the products the shopper asked to see."
+                if show_again
+                else f"REFERENCE {resolution.reference_id}: CLARIFICATION "
+                "REQUIRED. These were shown; tell them apart on the facts "
+                "below and ask the shopper which one. Do not guess."
             )
             for match in resolution.matches:
                 product = match.product

@@ -89,6 +89,7 @@ def _scope(
         "required_constraints": {},
         "scope_complete": True,
         "search_mode": "text",
+        "exclude_shown": False,
     }
     if colors is not None:
         scope["required_constraints"] = {"primary_color": colors}

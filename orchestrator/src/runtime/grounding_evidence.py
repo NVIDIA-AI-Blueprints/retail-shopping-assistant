@@ -85,6 +85,23 @@ def _customer_safe_search_evidence(payload: dict[str, Any]) -> str:
 
     taxonomy = payload.get("taxonomy") or {}
     confirmed_filters = payload.get("confirmed_filters") or {}
+    if payload.get("outcome") == "all_shown":
+        lines = [
+            "CUSTOMER_SAFE_ALL_SHOWN_EVIDENCE: every product matching the search "
+            "scope below was already shown in this conversation, so none are "
+            "new. This is not a missing product: do not say the shop has none, "
+            "and do not present earlier products as new."
+        ]
+        if taxonomy:
+            lines.append(
+                "ADVERTISED_SEARCH_TAXONOMY: " + json.dumps(taxonomy, sort_keys=True)
+            )
+        if confirmed_filters:
+            lines.append(
+                "CONFIRMED_SEARCH_FILTERS: "
+                + json.dumps(confirmed_filters, sort_keys=True)
+            )
+        return "\n".join(lines)
     if payload.get("outcome") == "zero_results":
         lines = [
             (

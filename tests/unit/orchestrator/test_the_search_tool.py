@@ -153,6 +153,10 @@ class _Turn:
     def searches(self) -> int:
         return self._executed.get("calls", 0)
 
+    @property
+    def plans(self) -> list[Any]:
+        return self._executed.get("plans", [])
+
 
 @pytest.fixture
 def a_turn(base_config, monkeypatch: pytest.MonkeyPatch):
@@ -181,7 +185,16 @@ def a_turn(base_config, monkeypatch: pytest.MonkeyPatch):
 
     def execute(plan, *_args, **_kwargs):
         executed["plan"] = plan
+        executed.setdefault("plans", []).append(plan)
         executed["calls"] = executed.get("calls", 0) + 1
+        if plan.semantic_queries == ["seen every bag"]:
+            return SimpleNamespace(
+                result=SearchCatalogResult(
+                    ok=True, products=[], no_result_reason="all_matches_excluded"
+                ),
+                fallback_attempted=False,
+                fallback_used=False,
+            )
         # One query stands for "the catalog holds nothing like this", so a
         # case can ask for the empty-result reply without a second stub.
         products = (
@@ -250,6 +263,7 @@ def a_turn(base_config, monkeypatch: pytest.MonkeyPatch):
         if skills:
             tools["activate_shopper_skills_tool"](skill_names=list(skills))
         executed["calls"] = 0
+        executed["plans"] = []
         return _Turn(tools, state, executed)
 
     return build
@@ -1000,3 +1014,92 @@ class TestAnImageSearch:
         assert turn.searches == 1
         assert turn.state.model_usage["text_embedding"]["calls"] == 1
         assert turn.state.model_usage["image_embedding"]["calls"] == 1
+
+
+_JUDGE = _Judge({"tote bags": ["tote_bags"], "heels": ["heels"]})
+
+
+class TestMoreOfWhatWasShown:
+    """`exclude_shown` leaves out what the conversation has shown, by id."""
+
+    @staticmethod
+    def _earlier_showings(turn: _Turn) -> None:
+        turn.state.historical_product_sets = [
+            {"turn_seq": 1, "products": [{"ref": "old_bag", "position": 1}]},
+            {"turn_seq": 2, "products": [{"ref": "newer_bag", "position": 1}]},
+        ]
+
+    @staticmethod
+    def _bags(**extra: Any) -> dict[str, Any]:
+        return {
+            "semantic_query": "tote bags",
+            "shopper_guidance": "Finding more for this request.",
+            "requested_product_type": "tote bags",
+            "taxonomy": {"category": ["bags"], "subcategory": ["tote_bags"]},
+            "required_constraints": {},
+            **extra,
+        }
+
+    def test_more_leaves_out_every_product_shown_newest_first(self, a_turn) -> None:
+        turn = a_turn("show me more tote bags", judge=_JUDGE)
+        self._earlier_showings(turn)
+
+        answer = turn.search(**self._bags(exclude_shown=True))
+
+        assert FOUND_SOMETHING in answer
+        assert turn.plan.exclude_ids == ["newer_bag", "old_bag"]
+
+    def test_an_ordinary_search_leaves_nothing_out(self, a_turn) -> None:
+        turn = a_turn("show me tote bags", judge=_JUDGE)
+        self._earlier_showings(turn)
+
+        turn.search(**self._bags())
+
+        assert turn.plan.exclude_ids == []
+
+    def test_more_of_several_kinds_leaves_the_shown_out_of_each(self, a_turn) -> None:
+        turn = a_turn("show me more", judge=_JUDGE)
+        self._earlier_showings(turn)
+
+        tool_text(
+            turn.tool("search_catalog_tool")(
+                scopes=[
+                    self._bags(exclude_shown=True),
+                    {
+                        "semantic_query": "heels",
+                        "shopper_guidance": "Finding more for this request.",
+                        "requested_product_type": "heels",
+                        "taxonomy": {"category": ["footwear"], "subcategory": ["heels"]},
+                        "required_constraints": {},
+                        "exclude_shown": True,
+                    },
+                ]
+            )
+        )
+
+        assert len(turn.plans) == 2
+        assert all(
+            plan.exclude_ids == ["newer_bag", "old_bag"] for plan in turn.plans
+        )
+
+    def test_more_after_an_ordinary_search_in_the_same_turn_still_searches(
+        self, a_turn
+    ) -> None:
+        turn = a_turn("show me more tote bags", judge=_JUDGE)
+        self._earlier_showings(turn)
+
+        turn.search(**self._bags())
+        turn.search(**self._bags(exclude_shown=True))
+
+        assert turn.searches == 2
+        assert "prod_1" in turn.plan.exclude_ids
+
+    def test_nothing_new_left_is_said_and_not_read_as_a_miss(self, a_turn) -> None:
+        turn = a_turn("show me more tote bags", judge=_JUDGE)
+        self._earlier_showings(turn)
+
+        answer = turn.search(**self._bags(semantic_query="seen every bag", exclude_shown=True))
+
+        assert "SEARCH_ALL_SHOWN" in answer
+        assert FOUND_NOTHING not in answer
+        assert "NEXT STEP" not in answer

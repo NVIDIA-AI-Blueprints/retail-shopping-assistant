@@ -156,7 +156,9 @@ Rules:
   the evidence does not distinguish candidates, give a useful group-level
   rationale and offer a detail check instead of inventing item-level differences.
 - Do not add products, prices, cart actions, or product facts absent from TOOL
-  EVIDENCE or CURRENT CART.
+  EVIDENCE or CURRENT CART. Where the draft introduces products the evidence
+  does not hold, remove the list and its introduction; never leave a line,
+  placeholder or template standing in for products.
 - CURRENT-TURN TOOL EVIDENCE is the only evidence for a search or mutation in
   this turn. PRODUCTS SHOWN EARLIER may support a direct reference to something
   already shown, but it establishes identity only: it never proves a product's

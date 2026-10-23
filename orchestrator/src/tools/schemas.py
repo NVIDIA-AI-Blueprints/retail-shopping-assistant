@@ -161,6 +161,21 @@ class SearchCatalogToolArguments(BaseModel):
         default=None,
         description="Optional search mode from Catalog capabilities.",
     )
+    exclude_shown: bool = Field(
+        ...,
+        description=(
+            "True when the shopper wants more, other or different products of "
+            "a kind already shown in this conversation: every product shown so "
+            "far is left out, so this scope returns only new ones. Keep the "
+            "earlier scope's taxonomy and constraints unless the shopper "
+            "changes them. More without a named kind means more of the latest "
+            "showing: send one scope per kind it held, each with this set; "
+            "when one kind is named, send only that one. False for a first "
+            "search or a new kind. To see products already shown again, call "
+            "resolve_conversation_products_tool with show_again set instead of "
+            "searching."
+        ),
+    )
 
 
 

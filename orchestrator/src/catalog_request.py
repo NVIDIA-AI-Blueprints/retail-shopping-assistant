@@ -96,6 +96,7 @@ def _request_from_plan(
         categories=[],
         filters=hard_filters,
         top_k=plan.top_k,
+        exclude_ids=list(plan.exclude_ids),
     )
 
 
@@ -123,6 +124,7 @@ class CatalogSearchPlan(BaseModel):
     hard_filters: dict[str, Any] = Field(default_factory=dict)
     search_mode: SearchMode = "text"
     top_k: int = 4
+    exclude_ids: list[str] = Field(default_factory=list)
     no_search_reason: str | None = None
     constraint_issues: list[str] = Field(default_factory=list)
     #: Enum requirements honoured in part: the advertised values filtered,

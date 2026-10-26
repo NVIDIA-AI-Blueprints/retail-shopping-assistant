@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """What a turn did to the cart is computed, not inferred.
 
 The grounding editor was already told not to claim a cart action absent from

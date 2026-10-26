@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """A list the model encoded as a string is read, not rejected.
 
 The model sometimes sends a list argument JSON-encoded inside a string:

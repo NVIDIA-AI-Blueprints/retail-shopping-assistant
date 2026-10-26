@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """The size a scope does not come in, and the sentence that owes the shopper.
 
 J01 t11, "do you have a tote bag in a size 8". The size reached the query, no

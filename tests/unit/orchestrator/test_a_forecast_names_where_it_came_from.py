@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """A forecast call has to quote the words that named the place.
 
 "It's going to snow when we get back, what should I wear" fetched the forecast

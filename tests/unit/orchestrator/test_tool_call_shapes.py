@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """A malformed shape must not cost the shopper a turn.
 
 Two turns were lost to JSON punctuation, not to anything the shopper asked:

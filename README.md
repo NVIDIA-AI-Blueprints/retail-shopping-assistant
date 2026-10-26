@@ -202,6 +202,8 @@ suites see [Testing and Evaluation](tests/README.md).
 
 ## License
 
+The source code in this repository is licensed under the Apache License 2.0; see [LICENSE](LICENSE).
+
 GOVERNING TERMS: Use of the blueprint software and materials and NIM containers are governed by the [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) and [Product-specific Terms for AI products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/);  and the use of models is governed by the [NVIDIA Community Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/).
  
 ADDITIONAL INFORMATION: [OpenMDW-1.1](https://openmdw.ai/license/1-1/) for the Nemotron 3.5 Super VL 120B A12B, Nemotron 3.5 Embed 1B and Nemotron 3.5 Content Safety models. The [Ministral-3-3B-Instruct-2512-BF16](https://huggingface.co/mistralai/Ministral-3-3B-Instruct-2512-BF16) and [Ministral-3-8B-Instruct-2512-BF16](https://huggingface.co/mistralai/Ministral-3-8B-Instruct-2512-BF16) base models of Nemotron 3.5 Embed 1B are governed by the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0.txt). [NVIDIA Open Model Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-agreement/) for the Nemotron 3 Nano Omni 30B A3B Reasoning model. [Llama 3.1 Community License Agreement](https://www.llama.com/llama3_1/license/) for the Llama 3.1 NemoGuard 8B - Topic Control model, built with Llama, and its Llama 3.1 8B Instruct base model.

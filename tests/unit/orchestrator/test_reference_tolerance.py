@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """A ref names a product; how the model wrote it is not the point.
 
 J07 turn 4 and turn 9: shown `generated:92a114b74aaa39ea` one turn earlier, the

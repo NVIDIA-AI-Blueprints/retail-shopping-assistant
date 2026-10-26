@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """A reference the shopper described resolves from what they were shown.
 
 "Add the black one in a 2" could be asked of the reference index and never

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """An unbounded numeric filter asks for what no filter asks for.
 
 "I have a wedding to go to and I need something to wear" sent every advertised

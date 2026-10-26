@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """A turn that found things must not answer with an apology.
 
 J01 turn 2 fetched a Cancun forecast, had one search refused, had its retry

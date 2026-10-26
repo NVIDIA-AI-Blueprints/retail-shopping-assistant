@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Naming a product by the catalog's own name for it is choosing it.
 
 "add the Southwest Bracelet" -- a real product, never shown in that

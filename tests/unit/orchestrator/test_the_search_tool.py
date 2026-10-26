@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """What `search_catalog_tool` does with the scope the model sends it.
 
 These were one 1,116-line test with 127 assertions and a search counter carried

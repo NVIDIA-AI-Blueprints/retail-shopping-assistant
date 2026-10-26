@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """A showing made under a size filter is size-qualified.
 
 "ok, just show me sandals in a 7" then "add the first one" asked which size --

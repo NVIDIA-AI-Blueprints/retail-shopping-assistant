@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """One stalled model request must not cost the whole turn.
 
 J03 turn 5 -- "add the Southwest Bracelet", a turn that normally costs ten

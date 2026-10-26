@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Replay frozen shopper conversations and check what the assistant did.
 
 The challenger writes the shopper's words fresh every run, which is what makes

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """scan_components.py — Scan repo for NVIDIA and third-party components.
 Generates COMPONENTS.md with links and license information.
 """
@@ -755,8 +758,8 @@ def generate_markdown(nvidia, third_party, internal):
         nvidia.append({
             'name': comp['name'],
             'url': url,
-            'license': 'NVIDIA Proprietary',
-            'license_url': None,
+            'license': 'Apache-2.0',
+            'license_url': 'https://spdx.org/licenses/Apache-2.0.html',
             'ecosystem': 'Source',
         })
 

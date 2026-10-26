@@ -6,18 +6,19 @@
 
 ### Source
 
-- [Catalog Indexer](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/catalog_retriever) (NVIDIA Proprietary)
-- [Catalog Retriever](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/catalog_retriever) (NVIDIA Proprietary)
-- [Orchestrator](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/orchestrator) (NVIDIA Proprietary)
-- [Guardrails Service](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/guardrails) (NVIDIA Proprietary)
-- [Memory Retriever](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/memory_retriever) (NVIDIA Proprietary)
-- [shopping-frontend](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/ui) (NVIDIA Proprietary)
+- [Catalog Indexer](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/catalog_retriever) ([Apache-2.0](https://spdx.org/licenses/Apache-2.0.html))
+- [Catalog Retriever](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/catalog_retriever) ([Apache-2.0](https://spdx.org/licenses/Apache-2.0.html))
+- [Guardrails Service](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/guardrails) ([Apache-2.0](https://spdx.org/licenses/Apache-2.0.html))
+- [Memory Retriever](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/memory_retriever) ([Apache-2.0](https://spdx.org/licenses/Apache-2.0.html))
+- [Orchestrator](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/orchestrator) ([Apache-2.0](https://spdx.org/licenses/Apache-2.0.html))
+- [shopping-frontend](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/tree/main/ui) ([Apache-2.0](https://spdx.org/licenses/Apache-2.0.html))
 
 ### Models
 
-- [Nemotron 3 Embed 1B](https://build.nvidia.com/nvidia/nemotron-3-embed-1b) ([NVIDIA Community Models License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/))
 - [Nemotron 3 Nano Omni 30B A3B Reasoning](https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning) ([NVIDIA Community Models License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/))
 - [Nemotron 3.5 Content Safety](https://huggingface.co/nvidia/Nemotron-3.5-Content-Safety) ([NVIDIA Community Models License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/))
+- [Nemotron 3.5 Embed 1B](https://build.nvidia.com/nvidia/nemotron-3_5-embed-1b) ([OpenMDW-1.1](https://openmdw.ai/license/1-1/))
+- [Nemotron 3.5 Embed 1B BF16](https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16) ([OpenMDW-1.1](https://openmdw.ai/license/1-1/))
 - [Nemotron 3.5 Super VL 120B A12B](https://build.nvidia.com/nvidia/nemotron-3.5-super-vl-120b-a12b) ([OpenMDW-1.1](https://openmdw.ai/license/1-1/))
 - [Nemotron 3.5 Super VL 120B A12B BF16](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16) ([OpenMDW-1.1](https://openmdw.ai/license/1-1/))
 
@@ -74,7 +75,7 @@
 - [h11](https://pypi.org/project/h11/) ([MIT](https://spdx.org/licenses/MIT.html))
 - [idna](https://pypi.org/project/idna/) ([BSD-3-Clause](https://spdx.org/licenses/BSD-3-Clause.html))
 - [jiter](https://pypi.org/project/jiter/) ([MIT](https://spdx.org/licenses/MIT.html))
-- [jsonpatch](https://pypi.org/project/jsonpatch/) ([Modified BSD License](https://spdx.org/licenses/ModifiedBSDLicense.html))
+- [jsonpatch](https://pypi.org/project/jsonpatch/) ([BSD-3-Clause](https://spdx.org/licenses/BSD-3-Clause.html))
 - [jsonpointer](https://pypi.org/project/jsonpointer/) ([Modified BSD License](https://spdx.org/licenses/ModifiedBSDLicense.html))
 - [kiwisolver](https://pypi.org/project/kiwisolver/) ([BSD-3-Clause](https://spdx.org/licenses/BSD-3-Clause.html))
 - [langchain](https://pypi.org/project/langchain/) ([MIT](https://spdx.org/licenses/MIT.html))
@@ -88,7 +89,7 @@
 - [langsmith](https://pypi.org/project/langsmith/) ([MIT](https://spdx.org/licenses/MIT.html))
 - [matplotlib](https://pypi.org/project/matplotlib/) ([PSF-2.0](https://spdx.org/licenses/PSF-2.0.html))
 - [milvus-lite](https://pypi.org/project/milvus-lite/) ([Apache-2.0](https://spdx.org/licenses/Apache-2.0.html))
-- [multidict](https://pypi.org/project/multidict/) ([Apache License 2.0](https://spdx.org/licenses/ApacheLicense2.0.html))
+- [multidict](https://pypi.org/project/multidict/) ([Apache-2.0](https://spdx.org/licenses/Apache-2.0.html))
 - [nemoguardrails](https://pypi.org/project/nemoguardrails/) ([Apache-2.0](https://spdx.org/licenses/Apache-2.0.html))
 - [numpy](https://pypi.org/project/numpy/) ([BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0](https://spdx.org/licenses/BSD-3-Clause.html))
 - [openai](https://pypi.org/project/openai/) ([Apache-2.0](https://spdx.org/licenses/Apache-2.0.html))

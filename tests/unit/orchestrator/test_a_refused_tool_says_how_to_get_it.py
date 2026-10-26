@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """A tool refused for its grant says which skill grants it.
 
 J11 turn 7, "add the Ombre Canvas Tote Bag":

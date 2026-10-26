@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Deciding whether the shopper said a thing, by matching strings. To be removed.
 
 This is the one piece of lexical matching left in the search path, and it is

@@ -65,9 +65,9 @@ Run it on NVIDIA-hosted endpoints with no local GPU, or serve the models yoursel
 
 ## Architecture
 
-![Assistant architecture](docs/images/shopper-agent-architecture.svg)
+![Assistant architecture](docs/images/retail-diagram-shopping-assistant-blueprint-202610.jpg)
 
-[Open the architecture diagram at full size](docs/images/shopper-agent-architecture.svg).
+[Open the architecture diagram at full size](docs/images/retail-diagram-shopping-assistant-blueprint-202610.jpg).
 
 Five services, each owning one concern:
 

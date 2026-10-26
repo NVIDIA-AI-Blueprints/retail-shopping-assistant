@@ -32,7 +32,7 @@ openai>=2.26
 # Needed by memory_retriever, catalog_retriever, and orchestrator imports.
 SQLAlchemy>=2.0
 numpy>=1.26
-Pillow>=12.2
+Pillow>=13.0
 
 # Needed by orchestrator.graph / orchestrator.chatter on import.
 deepagents==0.7.28

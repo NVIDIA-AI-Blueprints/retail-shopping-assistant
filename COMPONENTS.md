@@ -15,8 +15,8 @@
 
 ### Models
 
-- [Nemotron 3 Nano Omni 30B A3B Reasoning](https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning) ([NVIDIA Community Models License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/))
-- [Nemotron 3.5 Content Safety](https://huggingface.co/nvidia/Nemotron-3.5-Content-Safety) ([NVIDIA Community Models License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/))
+- [Nemotron 3 Nano Omni 30B A3B Reasoning](https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning) ([NVIDIA Open Model Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-agreement/))
+- [Nemotron 3.5 Content Safety](https://huggingface.co/nvidia/Nemotron-3.5-Content-Safety) ([OpenMDW-1.1](https://openmdw.ai/license/1-1/))
 - [Nemotron 3.5 Embed 1B](https://build.nvidia.com/nvidia/nemotron-3_5-embed-1b) ([OpenMDW-1.1](https://openmdw.ai/license/1-1/))
 - [Nemotron 3.5 Embed 1B BF16](https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16) ([OpenMDW-1.1](https://openmdw.ai/license/1-1/))
 - [Nemotron 3.5 Super VL 120B A12B](https://build.nvidia.com/nvidia/nemotron-3.5-super-vl-120b-a12b) ([OpenMDW-1.1](https://openmdw.ai/license/1-1/))

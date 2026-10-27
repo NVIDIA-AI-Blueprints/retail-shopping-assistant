@@ -99,8 +99,8 @@ MODEL_ID_CATALOG = {
     'nvidia/nvidia-nemotron-3.5-super-vl-120b-a12b-bf16': {'name': 'Nemotron 3.5 Super VL 120B A12B BF16', 'url': 'https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16', 'license': 'OpenMDW-1.1', 'license_url': 'https://openmdw.ai/license/1-1/'},
     'nvidia/nemotron-3.5-embed-1b': {'name': 'Nemotron 3.5 Embed 1B', 'url': 'https://build.nvidia.com/nvidia/nemotron-3_5-embed-1b', 'license': 'OpenMDW-1.1', 'license_url': 'https://openmdw.ai/license/1-1/'},
     'nvidia/nemotron-3.5-embed-1b-bf16': {'name': 'Nemotron 3.5 Embed 1B BF16', 'url': 'https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16', 'license': 'OpenMDW-1.1', 'license_url': 'https://openmdw.ai/license/1-1/'},
-    'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning': {'name': 'Nemotron 3 Nano Omni 30B A3B Reasoning', 'url': 'https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', 'license': 'NVIDIA Community Models License', 'license_url': 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/'},
-    'nvidia/nemotron-3.5-content-safety': {'name': 'Nemotron 3.5 Content Safety', 'url': 'https://huggingface.co/nvidia/Nemotron-3.5-Content-Safety', 'license': 'NVIDIA Community Models License', 'license_url': 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/'},
+    'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning': {'name': 'Nemotron 3 Nano Omni 30B A3B Reasoning', 'url': 'https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', 'license': 'NVIDIA Open Model Agreement', 'license_url': 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-agreement/'},
+    'nvidia/nemotron-3.5-content-safety': {'name': 'Nemotron 3.5 Content Safety', 'url': 'https://huggingface.co/nvidia/Nemotron-3.5-Content-Safety', 'license': 'OpenMDW-1.1', 'license_url': 'https://openmdw.ai/license/1-1/'},
     'nvidia/llama-3.1-nemoguard-8b-topic-control': {
         'name': 'Llama 3.1 NemoGuard 8B Topic Control',
         'url': 'https://build.nvidia.com/nvidia/llama-3_1-nemoguard-8b-topic-control',

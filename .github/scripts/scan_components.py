@@ -85,7 +85,7 @@ THIRD_PARTY_SERVICE_CATALOG = [
         'name': 'Visual Crossing Weather API',
         'url': 'https://www.visualcrossing.com/',
         'license': 'Visual Crossing Terms of Service',
-        'license_url': 'https://www.visualcrossing.com/weather-services-terms/',
+        'license_url': 'https://www.visualcrossing.com/weather-service-terms/',
     },
 ]
 

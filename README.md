@@ -232,6 +232,12 @@ GOVERNING DOWNLOAD TERMS: Use of this blueprint software is governed by the [Apa
 | [Llama 3.1 NemoGuard 8B Topic Control](https://huggingface.co/nvidia/llama-3.1-nemoguard-8b-topic-control) | Optional topic control | [Llama 3.1 Community License Agreement](https://www.llama.com/llama3_1/license/), for the model, built with Llama, and its [Llama 3.1 8B Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct) base model |
 | [Nemotron 3 Nano Omni 30B A3B Reasoning](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8) | Optional video safety | [NVIDIA Open Model Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-agreement/) |
 
+**Services**
+
+| Service | When it is used | Terms |
+|---|---|---|
+| [Visual Crossing Weather API](https://www.visualcrossing.com/) | Optional weather tool, off by default | [Visual Crossing Terms of Service](https://www.visualcrossing.com/weather-service-terms/) |
+
 **Datasets**
 
 | Dataset | Location | License |

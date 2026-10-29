@@ -38,7 +38,7 @@
 
 ### Services
 
-- [Visual Crossing Weather API](https://www.visualcrossing.com/) ([Visual Crossing Terms of Service](https://www.visualcrossing.com/weather-services-terms/))
+- [Visual Crossing Weather API](https://www.visualcrossing.com/) ([Visual Crossing Terms of Service](https://www.visualcrossing.com/weather-service-terms/))
 
 ### Containers
 

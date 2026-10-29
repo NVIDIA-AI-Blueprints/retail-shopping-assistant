@@ -202,17 +202,47 @@ suites see [Testing and Evaluation](tests/README.md).
 
 ## License
 
-The source code in this repository is licensed under the Apache License 2.0; see [LICENSE](LICENSE).
+GOVERNING DOWNLOAD TERMS: Use of this blueprint software is governed by the [Apache 2.0 License](LICENSE), and enables use of separate open source and proprietary software, models, data and services governed by their respective accompanying licenses.
 
-GOVERNING TERMS: Use of the blueprint software and materials and NIM containers are governed by the [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) and [Product-specific Terms for AI products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/);  and the use of models is governed by the [NVIDIA Community Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-community-models-license/).
- 
-ADDITIONAL INFORMATION: [OpenMDW-1.1](https://openmdw.ai/license/1-1/) for the Nemotron 3.5 Super VL 120B A12B, Nemotron 3.5 Embed 1B and Nemotron 3.5 Content Safety models. The [Ministral-3-3B-Instruct-2512-BF16](https://huggingface.co/mistralai/Ministral-3-3B-Instruct-2512-BF16) and [Ministral-3-8B-Instruct-2512-BF16](https://huggingface.co/mistralai/Ministral-3-8B-Instruct-2512-BF16) base models of Nemotron 3.5 Embed 1B are governed by the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0.txt). [NVIDIA Open Model Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-agreement/) for the Nemotron 3 Nano Omni 30B A3B Reasoning model. [Llama 3.1 Community License Agreement](https://www.llama.com/llama3_1/license/) for the Llama 3.1 NemoGuard 8B - Topic Control model, built with Llama, and its Llama 3.1 8B Instruct base model.
- 
+### Main Components and Their Terms
+
+**Containers**
+
+| Component | Version | When it runs | License |
+|---|---|---|---|
+| Blueprint services: orchestrator, catalog indexer and retriever, memory retriever, guardrails, UI (built from this repository) | This release | Default deployment | [Apache 2.0](LICENSE). Built on [python:3.11-slim](https://hub.docker.com/_/python) and [NVIDIA Base Ubuntu](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/base) ([NVIDIA Deep Learning Container License](https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license)) |
+| [Milvus](https://github.com/milvus-io/milvus) | v3.0.3 | Default deployment | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
+| [etcd](https://github.com/etcd-io/etcd) | v3.7.2 | Default deployment | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
+| [SeaweedFS](https://github.com/seaweedfs/seaweedfs) | 4.48 | Default deployment | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
+| [nginx](https://nginx.org/) | 1.31.7-alpine | Default deployment | [BSD-2-Clause](https://nginx.org/LICENSE) |
+| [OpenTelemetry Collector Contrib](https://github.com/open-telemetry/opentelemetry-collector-contrib) | 0.163.1 | Default deployment | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
+| [Arize Phoenix](https://github.com/Arize-ai/phoenix) | 20.23.0 | Default deployment; runs only in your own environment and is not offered as a hosted service | [Elastic License 2.0](https://github.com/Arize-ai/phoenix?tab=License-1-ov-file) |
+| [vLLM](https://github.com/vllm-project/vllm) | v0.32.0, v0.31.0, v0.20.0 | Optional local model deployment | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
+| [Prometheus](https://github.com/prometheus/prometheus) | v3.15.0 | Optional GPU monitoring | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
+| [Grafana](https://github.com/grafana/grafana) | 13.2.4 | Optional GPU monitoring | [AGPL-3.0](https://github.com/grafana/grafana/blob/main/LICENSE) |
+| [NVIDIA DCGM Exporter](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/k8s/containers/dcgm-exporter) | 3.3.5-3.4.0 | Optional GPU monitoring | As published on its NGC page |
+
+**Models**
+
+| Model | Used for | License |
+|---|---|---|
+| [Nemotron 3.5 Super VL 120B A12B](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16) | Shopping assistant LLM | [OpenMDW-1.1](https://openmdw.ai/license/1-1/) |
+| [Nemotron 3.5 Embed 1B](https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16) | Catalog text and image embeddings | [OpenMDW-1.1](https://openmdw.ai/license/1-1/). Its [Ministral-3-3B-Instruct-2512-BF16](https://huggingface.co/mistralai/Ministral-3-3B-Instruct-2512-BF16) and [Ministral-3-8B-Instruct-2512-BF16](https://huggingface.co/mistralai/Ministral-3-8B-Instruct-2512-BF16) base models: [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
+| [Nemotron 3.5 Content Safety](https://huggingface.co/nvidia/Nemotron-3.5-Content-Safety) | Optional content moderation | [OpenMDW-1.1](https://openmdw.ai/license/1-1/) |
+| [Llama 3.1 NemoGuard 8B Topic Control](https://huggingface.co/nvidia/llama-3.1-nemoguard-8b-topic-control) | Optional topic control | [Llama 3.1 Community License Agreement](https://www.llama.com/llama3_1/license/), for the model, built with Llama, and its [Llama 3.1 8B Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct) base model |
+| [Nemotron 3 Nano Omni 30B A3B Reasoning](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8) | Optional video safety | [NVIDIA Open Model Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-agreement/) |
+
+**Datasets**
+
+| Dataset | Location | License |
+|---|---|---|
+| Product catalog and product images | `shared/data/`, `shared/images/` | [NVIDIA Asset License (v. August 15, 2025)](LICENSE-assets.txt). Adobe images are also subject to the Adobe Generative AI User Guidelines, the Adobe Generative AI Product Specific Terms and the Adobe General Terms of Use, as listed in that license |
+
+### Notices and Disclaimers
+
 This project will download and install additional third-party open source software projects, including vLLM, Milvus, LangChain, LangGraph, Deep Agents, NeMo Guardrails, FastAPI and React. Review the license terms of these open source projects before use, found in [LICENSE-3rd-party.txt](LICENSE-3rd-party.txt).
 
 NOTICE AND DISCLAIMER: This software automatically retrieves, accesses or interacts with external materials. Those retrieved materials are not distributed with this software and are governed solely by separate terms, conditions and licenses. You are solely responsible for finding, reviewing and complying with all applicable terms, conditions, and licenses, and for verifying the security, integrity and suitability of any retrieved materials for your specific use case. This software is provided "AS IS", without warranty of any kind. The author makes no representations or warranties regarding any retrieved materials, and assumes no liability for any losses, damages, liabilities or legal consequences from your use or inability to use this software or any retrieved materials. Use this software and the retrieved materials at your own risk.
- 
-Use of the product catalog data in the retail shopping assistant is governed by the terms of the [NVIDIA Data License for Retail Shopping Assistant](LICENSE-assets.txt) (15Aug2025).
 
 ---
 

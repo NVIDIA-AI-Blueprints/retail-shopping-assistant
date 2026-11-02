@@ -20,24 +20,15 @@
  */
 
 import React from "react";
-import { Marked } from "marked";
+import Showdown from "showdown";
 import SafeHTML from "./SafeHTML";
 import Loader from "./Loader";
-import MediaAnalysisCard from "./MediaAnalysisCard";
-import GuardrailDetails from "./GuardrailDetails";
-import ProductResultGrid from "./ProductResultGrid";
-import {
-  ChatMessageProps,
-  ImageRowContent,
-  MediaAnalysis,
-} from "../../types";
+import { ChatMessageProps, MessageRole, ImageContent, ImageRowContent } from "../../types";
+import { isFashionMode } from "../../config/config";
 import nvinfo from "../../assets/nvinfo.jpg";
 
-// Single line breaks become <br>, as the replies are written line by line.
-const markdown = new Marked({ async: false, breaks: true });
-
 const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
-  ({ role, content, productName, selectedProductName, onProductSelect, guardrailReport, progressLabel }, ref) => {
+  ({ role, content, productName }, ref) => {
     
     // CSS class mapping for markdown elements
     const classMap: Record<string, string> = {
@@ -49,12 +40,17 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
       p: `messages__item--${role}--p`,
     };
 
-    const withClasses = (html: string) =>
-      Object.keys(classMap).reduce(
-        (out, tag) =>
-          out.replace(new RegExp(`<${tag}(?=[\\s>])`, "g"), `<${tag} class="${classMap[tag]}"`),
-        html
-      );
+    // Create Showdown converter with custom extensions
+    const bindings = Object.keys(classMap).map((key) => ({
+      type: "output" as const,
+      regex: new RegExp(`<${key}(.*)>`, "g"),
+      replace: `<${key} class="${classMap[key]}" $1>`,
+    }));
+
+    const converter = new Showdown.Converter({
+      extensions: [...bindings],
+      simpleLineBreaks: true,  // This will convert single line breaks to <br>
+    });
 
     // Don't render system messages
     if (role === "system") {
@@ -76,16 +72,8 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
         return (
           <div ref={ref} style={{ display: "inline-flex", alignItems: "flex-start", gap: 8, marginTop: 10 }}>
             <img src={nvinfo} alt="Assistant" style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover" }} />
-            <div
-              className={`messages__item messages__item--${role}`}
-              style={{ display: "inline-flex", alignItems: "center", gap: 10 }}
-            >
+            <div className={`messages__item messages__item--${role}`}>
               <Loader />
-              {progressLabel && (
-                <span className="messages__progress" aria-live="polite">
-                  {progressLabel}…
-                </span>
-              )}
             </div>
           </div>
         );
@@ -100,14 +88,13 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
         });
       
       // Then use the Markdown converter to handle all formatting including bold
-      const processedContent = withClasses(markdown.parse(preprocessedContent) as string);
+      const processedContent = converter.makeHtml(preprocessedContent);
 
       return (
         <div ref={ref} style={{ display: "inline-flex", alignItems: "flex-start", gap: 8, marginTop: 10 }}>
           <img src={nvinfo} alt="Assistant" style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover" }} />
           <div className={`messages__item messages__item--${role}`}>
             <SafeHTML html={processedContent} />
-            <GuardrailDetails report={guardrailReport} />
           </div>
         </div>
       );
@@ -115,46 +102,53 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
 
     // Image message (single product)
     if (role === "image") {
-      const [imagePath, url, imageProductName, productRating] = (content as string).split("|");
+      const [imagePath, url, productName, productRating] = (content as string).split("|");
       
-      if (imagePath && url && imageProductName && productRating) {
-        const product = {
-          productName: imageProductName,
-          productUrl: imagePath,
-        };
-
+      if (imagePath && url && productName && productRating) {
         return (
           <div className={`messages__item messages__item--${role}`} ref={ref}>
-            <button
-              type="button"
-              className="product-result-card"
-              onClick={() => onProductSelect?.(product)}
-            >
-              <img className="product-result-card__image" src={imagePath} alt={imageProductName} />
-              <span className="product-result-card__name">{imageProductName}</span>
-            </button>
+            <img className="messages__item--image-img" src={imagePath} alt={productName} />
+            <div className="messages__item--image-box">
+              <div className="messages__item--image-stars">
+                {productName}
+              </div>
+            </div>
           </div>
         );
       }
     }
 
-    if (role === "media_analysis") {
-      return (
-        <div className="messages__item messages__item--media-analysis" ref={ref}>
-          <MediaAnalysisCard analysis={content as MediaAnalysis} />
-        </div>
-      );
-    }
-
     // Image row message (multiple products)
     if (role === "image_row") {
+      const images = content as ImageRowContent;
+      
       return (
-        <ProductResultGrid
-          ref={ref}
-          images={content as ImageRowContent}
-          selectedProductName={selectedProductName}
-          onProductSelect={onProductSelect}
-        />
+        <div style={{ 
+          width: "100%", 
+          height: "auto", 
+          display: "inline-flex", 
+          flexFlow: "row wrap" 
+        }}>
+          {images.map((image: ImageContent, index: number) => (
+            <div key={index} className={`messages__item messages__item--image`} ref={ref}>
+              <img 
+                className="messages__item--image-img-rowitem" 
+                src={image.productUrl} 
+                alt={image.productName}
+              />
+              <div className="messages__item--image-box">
+                <div 
+                  className="messages__item--image-stars" 
+                  style={{
+                    maxWidth: isFashionMode() ? "200px" : "none"
+                  }}
+                >
+                  {image.productName}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       );
     }
 
@@ -167,19 +161,6 @@ const ChatMessage = React.forwardRef<HTMLDivElement, ChatMessageProps>(
             src={content as string} 
             alt="User upload"
             style={{ borderRadius: "20px" }} 
-          />
-        </div>
-      );
-    }
-
-    if (role === "user_video" && content) {
-      return (
-        <div className={`messages__item messages__item--${role}`} ref={ref}>
-          <video
-            src={content as string}
-            controls
-            muted
-            style={{ width: "180px", maxHeight: "140px", borderRadius: "20px" }}
           />
         </div>
       );

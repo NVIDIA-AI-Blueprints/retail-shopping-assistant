@@ -16,7 +16,4 @@ COPY ./src ./app
 EXPOSE 8010
 
 # Run FastAPI
-# Searches are short, so this window only has to clear one in-flight request.
-# `exec` so SIGTERM reaches uvicorn rather than stopping at the shell.
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8010 \
-  --timeout-graceful-shutdown ${SHUTDOWN_GRACE_SECONDS:-30}"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8010"]

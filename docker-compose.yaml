@@ -2,63 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 services:
-  # Orchestrator
-  orchestrator:
+  # Chain Server - internal only; nginx is the application entrypoint
+  chain-server:
     build:
-      context: ./orchestrator
-      args:
-        # false by default: Relay reads prompts, completions and cart
-        # contents, so the shipped image does not carry a library that can
-        # export them. Installing it is a deliberate act.
-        INSTALL_RELAY: ${INSTALL_RELAY:-false}
-    container_name: orchestrator
-    ports:
-      - "127.0.0.1:8009:8009"
+      context: ./chain_server
     environment:
-      - LLM_API_KEY=${LLM_API_KEY:-}
-      - LLM_BASE_URL=${LLM_BASE_URL:-}
-      - LLM_MODEL=${LLM_MODEL:-}
-      # The agent's sampling; docs/DEPLOYMENT.md, Model Sampling and Output
-      # Limits. Pass-through, no default here: empty means unset, so
-      # shared/configs/orchestrator/config.yaml wins.
-      - APP_LLM_TEMPERATURE=${APP_LLM_TEMPERATURE:-}
-      - APP_LLM_FREQUENCY_PENALTY=${APP_LLM_FREQUENCY_PENALTY:-}
-      - LLM_MAX_OUTPUT_TOKENS=${LLM_MAX_OUTPUT_TOKENS:-}
-      - GROUNDING_EDITOR_MAX_OUTPUT_TOKENS=${GROUNDING_EDITOR_MAX_OUTPUT_TOKENS:-}
-      - VLM_API_KEY=${VLM_API_KEY:-${NVIDIA_API_KEY:-}}
-      - VLM_BASE_URL=${VLM_BASE_URL:-}
-      - VLM_MODEL=${VLM_MODEL:-}
-      # Pass-through, no defaults here: shared/configs/orchestrator/config.yaml
-      # holds them (relay_enabled's is in orchestrator/src/config.py), and the
-      # service URLs there already name the Compose hosts. Empty means unset,
-      # so config wins.
-      - CATALOG_RETRIEVER_URL=${CATALOG_RETRIEVER_URL:-}
-      - MEMORY_RETRIEVER_URL=${MEMORY_RETRIEVER_URL:-}
-      - GUARDRAILS_AVAILABLE=${GUARDRAILS_AVAILABLE:-}
-      - GUARDRAILS_ENABLED=${GUARDRAILS_ENABLED:-}
-      - GUARDRAILS_CLIENT_CAN_DISABLE=${GUARDRAILS_CLIENT_CAN_DISABLE:-}
-      - GUARDRAILS_FAILURE_MODE=${GUARDRAILS_FAILURE_MODE:-}
-      - GUARDRAILS_TIMEOUT_SECONDS=${GUARDRAILS_TIMEOUT_SECONDS:-}
-      - GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED=${GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED:-}
-      - GUARDRAILS_SUPPORTED_MODALITIES=${GUARDRAILS_SUPPORTED_MODALITIES:-}
-      - DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS=${DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS:-}
-      - EXPOSE_AGENT_DIAGNOSTICS=${EXPOSE_AGENT_DIAGNOSTICS:-}
-      - RELAY_ENABLED=${RELAY_ENABLED:-}
-      - WEATHER_ENABLED=${WEATHER_ENABLED:-}
-      - WEATHER_API_KEY=${WEATHER_API_KEY:-}
-      # An empty value fails at startup on purpose, so this one keeps its
-      # default; memory is the only store.
-      - CHECKPOINT_STORE=${CHECKPOINT_STORE-memory}
-      # Pass-through: orchestrator/Dockerfile holds these defaults.
-      - ORCHESTRATOR_RELOAD=${ORCHESTRATOR_RELOAD:-}
-      - SHUTDOWN_GRACE_SECONDS=${SHUTDOWN_GRACE_SECONDS:-}
-      # Unset by default: no endpoint means no exporter and no instrumentation.
-      # Set it to http://otel-collector:4318 to trace.
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-}
-      # Relay sends plain HTTP only to loopback, so it goes to relay-collector,
-      # which shares this container's network. See relay-collector below.
-      - RELAY_OTLP_ENDPOINT=${RELAY_OTLP_ENDPOINT:-http://127.0.0.1:4318}
+      - LLM_API_KEY=${LLM_API_KEY:-${NVIDIA_API_KEY}}
+      - CATALOG_RETRIEVER_URL=http://catalog-retriever:8010
+      - MEMORY_RETRIEVER_URL=http://memory-retriever:8011
+      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
     volumes:
       - ./shared:/app/shared
     depends_on:
@@ -68,81 +20,20 @@ services:
     networks:
       - shopping-network
 
-  # Catalog Indexer - builds the vector index, then exits.
-  #
-  # Indexing is deliberately not done by the serving container: rebuilding
-  # starts by dropping the collection, so exactly one process may do it at a
-  # time. This one-shot service is the Compose equivalent of the
-  # `parallelism: 1` Job that docs/DEPLOYMENT.md prescribes for Kubernetes, and
-  # it is what makes `docker compose up` sufficient on its own.
-  #
-  # Two things keep it to a single run, which is the whole contract:
-  #
-  #  - `container_name` pins it to one container. Compose refuses to scale a
-  #    service that has one, so `--scale catalog-indexer=N` cannot start a
-  #    second indexer; it warns and leaves the single container alone.
-  #  - The fingerprint check makes repeat runs free. Bringing the stack up
-  #    again re-runs this service, which compares the catalog fingerprint and
-  #    exits without touching Milvus when the index is already current.
-  #
-  # Neither of those is a distributed lock, and this process cannot provide one
-  # -- a lock across replicas needs somewhere to live. Scaling out horizontally
-  # means Kubernetes, where the indexing Job's `parallelism: 1` is the
-  # guarantee and the serving replicas stay unready until it succeeds.
-  catalog-indexer:
-    build:
-      context: ./catalog_retriever
-    container_name: catalog-indexer
-    command: ["python", "-m", "app.index_catalog"]
-    restart: "no"
-    environment:
-      - EMBED_API_KEY=${EMBED_API_KEY:-}
-      - TEXT_EMBED_BASE_URL=${TEXT_EMBED_BASE_URL:-}
-      - TEXT_EMBED_MODEL=${TEXT_EMBED_MODEL:-}
-      - CATALOG_DATA_SOURCE=${CATALOG_DATA_SOURCE:-}
-      - CATALOG_SCHEMA_SOURCE=${CATALOG_SCHEMA_SOURCE:-}
-      # Pass-through, no defaults here: shared/configs/catalog_retriever/config.yaml
-      # declares them. Empty means unset, so config wins.
-      - CATALOG_IMAGE_EMBEDDING_ENABLED=${CATALOG_IMAGE_EMBEDDING_ENABLED:-}
-      - CATALOG_VECTOR_INDEX_TYPE=${CATALOG_VECTOR_INDEX_TYPE:-}
-      - CATALOG_GPU_SEARCH=${CATALOG_GPU_SEARCH:-}
-    volumes:
-      - ./shared:/app/shared
-    depends_on:
-      milvus:
-        condition: service_healthy
-    networks:
-      - shopping-network
-
   # Catalog Retriever
   catalog-retriever:
     build:
       context: ./catalog_retriever
-    container_name: catalog-retriever
-    ports:
-      - "127.0.0.1:8010:8010"
     environment:
-      - EMBED_API_KEY=${EMBED_API_KEY:-}
-      - TEXT_EMBED_BASE_URL=${TEXT_EMBED_BASE_URL:-}
-      - TEXT_EMBED_MODEL=${TEXT_EMBED_MODEL:-}
-      - CATALOG_DATA_SOURCE=${CATALOG_DATA_SOURCE:-}
-      - CATALOG_SCHEMA_SOURCE=${CATALOG_SCHEMA_SOURCE:-}
-      # Pass-through, no defaults here: shared/configs/catalog_retriever/config.yaml
-      # declares them. Empty means unset, so config wins.
-      - CATALOG_IMAGE_EMBEDDING_ENABLED=${CATALOG_IMAGE_EMBEDDING_ENABLED:-}
-      - CATALOG_VECTOR_INDEX_TYPE=${CATALOG_VECTOR_INDEX_TYPE:-}
-      - CATALOG_GPU_SEARCH=${CATALOG_GPU_SEARCH:-}
+      - EMBED_API_KEY=${EMBED_API_KEY:-${NVIDIA_API_KEY}}
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
     volumes:
       - ./shared:/app/shared
     depends_on:
       milvus:
         condition: service_healthy
-      # Waiting for a successful exit is what keeps this container from serving
-      # empty searches against a missing index. It also means the server binds
-      # its Milvus collections after they exist, rather than holding a handle
-      # from before the indexer created them.
-      catalog-indexer:
-        condition: service_completed_successfully
     networks:
       - shopping-network
 
@@ -150,23 +41,11 @@ services:
   memory-retriever:
     build:
       context: ./memory_retriever
-    container_name: memory-retriever
-    ports:
-      - "127.0.0.1:8011:8011"
     environment:
-      # The database lives on the memory-data volume below, so this default
-      # belongs to Compose.
-      - MEMORY_DATABASE_URL=${MEMORY_DATABASE_URL:-sqlite:////data/context.db}
-      # Pass-through, no defaults here: memory_retriever/src and
-      # memory_retriever/Dockerfile hold them. Empty means unset.
-      - MEMORY_SQLITE_BUSY_TIMEOUT_MS=${MEMORY_SQLITE_BUSY_TIMEOUT_MS:-}
-      - MEMORY_MAX_CONCURRENT_REQUESTS=${MEMORY_MAX_CONCURRENT_REQUESTS:-}
-      - SHUTDOWN_GRACE_SECONDS=${SHUTDOWN_GRACE_SECONDS:-}
-      - MEMORY_TURN_ABANDON_SECONDS=${MEMORY_TURN_ABANDON_SECONDS:-}
-      - MEMORY_RECENT_TURNS=${MEMORY_RECENT_TURNS:-}
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
     volumes:
       - ./shared:/app/shared
-      - memory-data:/data
     depends_on:
       milvus:
         condition: service_healthy
@@ -178,31 +57,8 @@ services:
     build:
       context: ./guardrails
     environment:
-      - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
-      - RAIL_API_KEY=${RAIL_API_KEY:-}
-      - LLM_API_KEY=${LLM_API_KEY:-}
-      - LLM_BASE_URL=${LLM_BASE_URL:-}
-      - LLM_MODEL=${LLM_MODEL:-}
-      - RAILS_BASE_URL=${RAILS_BASE_URL:-}
-      - RAILS_CONTENT_BASE_URL=${RAILS_CONTENT_BASE_URL:-}
-      - RAILS_CONTENT_MODEL=${RAILS_CONTENT_MODEL:-}
-      - RAILS_TOPIC_BASE_URL=${RAILS_TOPIC_BASE_URL:-}
-      - RAILS_TOPIC_MODEL=${RAILS_TOPIC_MODEL:-}
-      - MULTIMODAL_SAFETY_API_KEY=${MULTIMODAL_SAFETY_API_KEY:-${RAIL_API_KEY:-}}
-      - MULTIMODAL_SAFETY_BASE_URL=${MULTIMODAL_SAFETY_BASE_URL:-${VLM_BASE_URL:-}}
-      - MULTIMODAL_SAFETY_MODEL=${MULTIMODAL_SAFETY_MODEL:-${VLM_MODEL:-}}
-      # Pass-through, no defaults here: guardrails/src/rails.py holds them, and
-      # it reads an empty value as unset. Restating them would give each one two
-      # sources that can drift apart unnoticed.
-      - GUARDRAILS_AVAILABLE=${GUARDRAILS_AVAILABLE:-}
-      - GUARDRAILS_SUPPORTED_MODALITIES=${GUARDRAILS_SUPPORTED_MODALITIES:-}
-      - MULTIMODAL_SAFETY_VIDEO_FPS=${MULTIMODAL_SAFETY_VIDEO_FPS:-}
-      - MULTIMODAL_SAFETY_USE_AUDIO=${MULTIMODAL_SAFETY_USE_AUDIO:-}
-      - GUARDRAILS_INPUT_EXECUTION_MODE=${GUARDRAILS_INPUT_EXECUTION_MODE:-}
-      - GUARDRAILS_TIMEOUT_SECONDS=${GUARDRAILS_TIMEOUT_SECONDS:-}
-    container_name: rails
-    ports:
-      - "127.0.0.1:8012:8012"
+      - NVIDIA_API_KEY=${RAIL_API_KEY:-${NVIDIA_API_KEY}}
+      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE}
     volumes:
       - ./shared:/app/shared
     networks:
@@ -212,24 +68,16 @@ services:
   frontend:
     build:
       context: ./ui
-    container_name: shopping-frontend
-    # No published port: nginx serves the UI on 3000.
     volumes:
       - ./shared:/app/shared
     depends_on:
-      - orchestrator
+      - chain-server
     networks:
       - shopping-network
 
-  # etcd
+  # etcd - using bridge networking
   etcd:
-    container_name: milvus-etcd
-    image: quay.io/coreos/etcd:v3.7.2
-    # Deliberately not published to the host. milvus-standalone reaches this
-    # over the shopping-network as http://etcd:2379, so nothing outside the
-    # network needs it -- and 2379 is etcd's well-known port, so publishing it
-    # fails to start on any host already running one (a Kubernetes control
-    # plane, most commonly).
+    image: quay.io/coreos/etcd:v3.5.5
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
@@ -251,37 +99,26 @@ services:
     networks:
       - shopping-network
 
-  # SeaweedFS - Milvus's S3-compatible object store, holding its segments and
-  # index files. Not published to the host: only Milvus talks to it, over the
-  # shopping-network. Credentials live in seaweedfs-s3.json and must match
-  # MINIO_ACCESS_KEY_ID / MINIO_SECRET_ACCESS_KEY on milvus.
-  seaweedfs:
-    container_name: milvus-seaweedfs
-    image: chrislusf/seaweedfs:4.48
+  # Minio - using bridge networking
+  minio:
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     volumes:
-      - ./catalog_retriever/volumes/seaweedfs:/data
-      - ./seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
-    command:
-      - server
-      - -dir=/data
-      - -s3
-      - -s3.port=9010
-      - -s3.config=/etc/seaweedfs/s3.json
-      - -master.volumeSizeLimitMB=1024
+      - ./catalog_retriever/volumes/minio:/minio_data
+    command: minio server /minio_data --console-address ":9001"
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 9010"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
     networks:
       - shopping-network
 
-  # Milvus - bridge mode, talking to etcd and seaweedfs via service names.
-  # CPU image by default. GPU indexing and search need the -gpu image and a
-  # GPU reservation; see docs/VECTOR_SEARCH.md.
+  # Milvus - bridge mode, talking to etcd and minio via service names
   milvus:
-    container_name: milvus-standalone
-    image: milvusdb/milvus:${MILVUS_VERSION:-v3.0.3}
+    image: milvusdb/milvus:v2.4.13-hotfix
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
@@ -289,90 +126,38 @@ services:
       - "127.0.0.1:19530:19530"
       - "127.0.0.1:9091:9091"
     environment:
-      ETCD_ENDPOINTS: etcd:2379
-      MINIO_ADDRESS: seaweedfs:9010
-      MINIO_ACCESS_KEY_ID: seaweedfsadmin
-      MINIO_SECRET_ACCESS_KEY: seaweedfsadmin
+      ETCD_ENDPOINTS: http://etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      COMMON_STORAGETYPE: local
     volumes:
-      # A named volume, not a bind mount: the image runs as uid 999 and
-      # Docker creates bind-mount directories as root.
-      - milvus-data:/var/lib/milvus
+      - ./catalog_retriever/volumes/milvus:/var/lib/milvus
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 10s
-      start_period: 90s
       timeout: 10s
       retries: 10
     depends_on:
       etcd:
         condition: service_healthy
-      seaweedfs:
+      minio:
         condition: service_healthy
     networks:
       - shopping-network
 
   # Nginx Proxy
   nginx:
-    image: nginx:1.31.7-alpine
-    container_name: nginx-proxy
+    image: nginx:1.25.3-alpine
     ports:
-      - "3000:80"
+      # The reference deployment is local-only. Use an authenticated ingress
+      # before changing this binding for remote access.
+      - "127.0.0.1:3000:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf
     depends_on:
       - frontend
-      - orchestrator
-    networks:
-      - shopping-network
-
-  # OpenTelemetry Collector - the seam between the app and any trace backend.
-  # The orchestrator exports OTLP here and knows nothing else; changing where
-  # traces land is a change to otel-collector-config.yaml, not to any service.
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.163.1
-    container_name: otel-collector
-    command: ["--config=/etc/otel-collector-config.yaml"]
-    # Published on loopback so an orchestrator run as a local process -- which is
-    # how the local runner starts it -- can reach the collector. Inside compose
-    # the service name resolves without this.
-    ports:
-      - "127.0.0.1:4318:4318"
-    volumes:
-      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
-    depends_on:
-      - phoenix
-    networks:
-      - shopping-network
-
-  # NeMo Relay's loopback hop. Relay sends plain HTTP only to localhost or a
-  # loopback address, and otel-collector is neither from inside orchestrator.
-  # This shares orchestrator's network namespace, listens on 127.0.0.1 there,
-  # and forwards to otel-collector. Recreating orchestrator orphans it, so
-  # restart both together: `docker compose up -d orchestrator relay-collector`.
-  relay-collector:
-    image: otel/opentelemetry-collector-contrib:0.163.1
-    container_name: relay-collector
-    command: ["--config=/etc/relay-collector-config.yaml"]
-    network_mode: "service:orchestrator"
-    volumes:
-      - ./relay-collector-config.yaml:/etc/relay-collector-config.yaml
-    depends_on:
-      - orchestrator
-      - otel-collector
-
-  # Arize Phoenix - trace viewer.
-  phoenix:
-    image: arizephoenix/phoenix:version-20.23.0
-    container_name: phoenix
-    ports:
-      # All interfaces, matching the UI, so a tunnel can reach it. Phoenix holds
-      # conversation content, so on anything but a dev box this wants to go back
-      # to loopback with access through the tunnel only.
-      - "6006:6006"
-    volumes:
-      - phoenix-data:/mnt/data
-    environment:
-      - PHOENIX_WORKING_DIR=/mnt/data
+      - chain-server
     networks:
       - shopping-network
 
@@ -381,8 +166,3 @@ networks:
     driver: bridge
     name: retail-shopping-assistant_shopping-network
     external: false
-
-volumes:
-  memory-data:
-  milvus-data:
-  phoenix-data:

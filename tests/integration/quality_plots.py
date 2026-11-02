@@ -1,23 +1,16 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
 import os
-
-import matplotlib.pyplot as plt
 import yaml
+import matplotlib.pyplot as plt
 
 NVIDIA_GREEN = '#76B900'
 MUTED_RED = '#b97a7a'
 
 # Path to directory with judged YAML files
 CONVERSATION = os.environ["TEST_PATH"]
-RESULT_DIRECTORY = os.environ.get("RESULT_DIRECTORY", "results")
-JUDGE_DIR = f'conversations/{CONVERSATION}/quality/{RESULT_DIRECTORY}'
+JUDGE_DIR = f'conversations/{CONVERSATION}/judge'
 
 # Load all YAML files
 yaml_files = sorted([f for f in os.listdir(JUDGE_DIR) if f.endswith('.yaml')])
-if not yaml_files:
-    raise SystemExit(f"No judged YAML files found in {JUDGE_DIR}")
 
 # Configure subplots (1 row, N columns or N//cols x cols grid)
 n_files = len(yaml_files)
@@ -62,4 +55,5 @@ plt.tight_layout()
 plt.savefig(f"{JUDGE_DIR}/response_quality.png", dpi=300)
 #plt.show()
 plt.close()
+
 

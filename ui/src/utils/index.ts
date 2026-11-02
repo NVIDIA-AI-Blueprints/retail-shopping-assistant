@@ -5,18 +5,8 @@
  * Utility functions for the Shopping Assistant UI
  */
 
-import {
-  ApiRequest,
-  FileUploadResult,
-  MediaAttachment,
-  StreamingChunk,
-  UserSession,
-} from '../types';
+import { FileUploadResult, UserSession, StreamingChunk, ApiRequest } from '../types';
 import { config } from '../config/config';
-
-const SESSION_STORAGE_KEY = 'shopping_session_identity';
-const LEGACY_USER_ID_KEY = 'shopping_user_id';
-const PENDING_TURN_KEY = 'shopping_pending_turn';
 
 /**
  * Convert a file to base64 string
@@ -46,39 +36,26 @@ export const base64ToBlob = (base64: string): Blob => {
 };
 
 /**
- * Get or create a user ID from session storage.
+ * Get or create a user ID from session storage
  */
 export const getOrCreateUserId = (): number => {
-  return getOrCreateUserSession().userId;
-};
+  const storedId = sessionStorage.getItem('shopping_user_id');
+  if (storedId) return parseInt(storedId, 10);
 
-/**
- * Get or create the browser-scoped assistant identity sent to the API.
- */
-export const getOrCreateUserSession = (): UserSession => {
-  const storedSession = readStoredUserSession();
-  if (storedSession) return storedSession;
-
-  const userId = getStoredUserId() || createUserId();
-  const session = {
-    userId,
-    sessionId: createScopedId('session'),
-    conversationId: createScopedId('conversation'),
-    cartId: createScopedId('cart'),
-    isActive: true,
-    createdAt: new Date(),
-  };
-  storeUserSession(session);
-  return session;
+  // This ID separates local demo sessions; it is not an authentication token.
+  // Use the browser CSPRNG so another session's identifier is not predictable.
+  const words = new Uint32Array(2);
+  crypto.getRandomValues(words);
+  const newId = (words[0] & 0x001fffff) * 0x100000000 + words[1];
+  sessionStorage.setItem('shopping_user_id', String(newId));
+  return newId;
 };
 
 /**
  * Clear user session data
  */
 export const clearUserSession = (): void => {
-  sessionStorage.removeItem(SESSION_STORAGE_KEY);
-  sessionStorage.removeItem(LEGACY_USER_ID_KEY);
-  sessionStorage.removeItem(PENDING_TURN_KEY);
+  sessionStorage.removeItem('shopping_user_id');
 };
 
 /**
@@ -130,163 +107,18 @@ export const parseStreamingChunk = (rawData: string): StreamingChunk | null => {
  * Create API request payload
  */
 export const createApiRequest = (
-  userSession: UserSession,
+  userId: number,
   query: string,
   image: string = '',
-  guardrails?: boolean,
-  media: MediaAttachment[] = [],
-  requestId: string | null = null
+  guardrails: boolean = true
 ): ApiRequest => {
-  const payload: ApiRequest = {
-    user_id: userSession.userId,
-    session_id: userSession.sessionId,
-    conversation_id: userSession.conversationId,
-    cart_id: userSession.cartId,
+  return {
+    user_id: userId,
     query,
+    guardrails,
     image,
-    media,
     image_bool: !!image,
   };
-  if (guardrails !== undefined) {
-    payload.guardrails = guardrails;
-  }
-  if (requestId !== null) {
-    payload.request_id = requestId;
-  }
-  return payload;
-};
-
-const getStoredUserId = (): number | null => {
-  const storedId = sessionStorage.getItem(LEGACY_USER_ID_KEY);
-  if (!storedId) return null;
-
-  const parsed = parseInt(storedId, 10);
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-const createUserId = (): number => {
-  const userId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
-  sessionStorage.setItem(LEGACY_USER_ID_KEY, String(userId));
-  return userId;
-};
-
-const createScopedId = (prefix: string): string => {
-  const browserCrypto =
-    typeof crypto !== 'undefined'
-      ? (crypto as Crypto & { randomUUID?: () => string })
-      : undefined;
-  const randomId =
-    browserCrypto && typeof browserCrypto.randomUUID === 'function'
-      ? browserCrypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  return `${prefix}-${randomId}`;
-};
-
-export const createRequestId = (): string => createScopedId('request');
-
-/**
- * The fields the server's replay digest covers, plus the conversation. Sending
- * the same message again with a different ID would apply its cart changes
- * twice; reusing an ID for a different message is a server-side conflict.
- */
-export const turnFingerprint = (payload: ApiRequest): string =>
-  hashString(
-    JSON.stringify([
-      payload.conversation_id ?? '',
-      payload.query,
-      payload.image,
-      (payload.media ?? []).map((item) => [item.type, item.mime_type ?? '', item.data]),
-      payload.guardrails ?? null,
-    ])
-  );
-
-const readPendingTurn = (): { fingerprint: string; requestId: string } | null => {
-  try {
-    const parsed = JSON.parse(sessionStorage.getItem(PENDING_TURN_KEY) ?? 'null');
-    return typeof parsed?.fingerprint === 'string' && typeof parsed?.requestId === 'string'
-      ? parsed
-      : null;
-  } catch {
-    return null;
-  }
-};
-
-/**
- * The request ID for a message: the pending one when this is a resend of a
- * turn that never finished, otherwise a new one that stays pending until
- * settleTurn. A new session clears it with the rest of the identity.
- */
-export const requestIdForTurn = (fingerprint: string): string => {
-  const pending = readPendingTurn();
-  if (pending?.fingerprint === fingerprint) {
-    return pending.requestId;
-  }
-  const requestId = createRequestId();
-  sessionStorage.setItem(PENDING_TURN_KEY, JSON.stringify({ fingerprint, requestId }));
-  return requestId;
-};
-
-/** The turn reached an outcome the server recorded; a resend is a new turn. */
-export const settleTurn = (requestId: string): void => {
-  if (readPendingTurn()?.requestId === requestId) {
-    sessionStorage.removeItem(PENDING_TURN_KEY);
-  }
-};
-
-// cyrb53: a fast 53-bit string hash, so image data never goes into storage.
-const hashString = (value: string): string => {
-  let h1 = 0xdeadbeef;
-  let h2 = 0x41c6ce57;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    h1 = Math.imul(h1 ^ code, 2654435761);
-    h2 = Math.imul(h2 ^ code, 1597334677);
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
-};
-
-const readStoredUserSession = (): UserSession | null => {
-  const storedSession = sessionStorage.getItem(SESSION_STORAGE_KEY);
-  if (!storedSession) return null;
-
-  try {
-    const parsed = JSON.parse(storedSession);
-    if (
-      typeof parsed.userId === 'number' &&
-      typeof parsed.sessionId === 'string' &&
-      typeof parsed.conversationId === 'string' &&
-      typeof parsed.cartId === 'string'
-    ) {
-      return {
-        userId: parsed.userId,
-        sessionId: parsed.sessionId,
-        conversationId: parsed.conversationId,
-        cartId: parsed.cartId,
-        isActive: true,
-        createdAt: parsed.createdAt ? new Date(parsed.createdAt) : new Date(),
-      };
-    }
-  } catch (error) {
-    sessionStorage.removeItem(SESSION_STORAGE_KEY);
-  }
-
-  return null;
-};
-
-const storeUserSession = (session: UserSession): void => {
-  sessionStorage.setItem(LEGACY_USER_ID_KEY, String(session.userId));
-  sessionStorage.setItem(
-    SESSION_STORAGE_KEY,
-    JSON.stringify({
-      userId: session.userId,
-      sessionId: session.sessionId,
-      conversationId: session.conversationId,
-      cartId: session.cartId,
-      createdAt: session.createdAt.toISOString(),
-    })
-  );
 };
 
 /**
@@ -304,7 +136,7 @@ export const downloadMessages = (messages: any[], filename?: string): void => {
   const blob = new Blob([jsonStr], { type: 'application/json' });
   
   const date = new Date();
-  const timestamp = date.toISOString().replace(/[:-]|\.\d{3}/g, '');
+  const timestamp = date.toISOString().replace(/[:\-]|\.\d{3}/g, '');
   const defaultFilename = `messages_${timestamp}.json`;
   
   const url = URL.createObjectURL(blob);
@@ -348,4 +180,105 @@ export const formatFileSize = (bytes: number): string => {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
+export interface CartOperation {
+  type: 'add' | 'remove';
+  item: string;
+}
+
+/**
+ * Clean item name by removing markdown formatting and extra whitespace
+ */
+const cleanItemName = (item: string): string => {
+  return item
+    .replace(/\*\*/g, '') // Remove markdown bold markers
+    .trim(); // Remove extra whitespace
+};
+
+/**
+ * Heuristic: ignore second-person narrations (e.g., "you've added", "you added")
+ * to avoid false-positive toasts when the model is just describing prior state.
+ * Keep it intentionally narrow to minimize side effects.
+ */
+const isSecondPersonCartNarration = (message: string): boolean => {
+  const lower = message.toLowerCase();
+  return (
+    /\byou(?:'ve| have)?\s+added\b/.test(lower) ||
+    /\byou\s+added\b/.test(lower) ||
+    /\byou(?:'ve| have)?\s+removed\b/.test(lower) ||
+    /\byou\s+removed\b/.test(lower)
+  );
+};
+
+/**
+ * Detect cart operations from response messages - simplified to focus only on product names
+ */
+export const detectCartOperation = (message: string): CartOperation | null => {
+  // Early exit on second-person narration to reduce false positives
+  if (isSecondPersonCartNarration(message)) {
+    return null;
+  }
+
+  // Pattern for add operations - captures item name from either format
+  const addPattern = /(?:added.*?(?:of\s+)?['"]?([^'"]+?)['"]?\s+to.*cart|added.*?\*\*([^*]+)\*\*.*to.*cart)/i;
+  
+  // Pattern for remove operations - captures item name from either format  
+  const removePattern = /(?:removed.*?(?:of\s+)?['"]?([^'"]+?)['"]?\s+from.*cart|removed.*?\*\*([^*]+)\*\*.*from.*cart)/i;
+  
+  // Check for add operations
+  let match = message.match(addPattern);
+  if (match) {
+    const item = match[1] || match[2]; // Get whichever group matched
+    if (item) {
+      return {
+        type: 'add',
+        item: cleanItemName(item)
+      };
+    }
+  }
+  
+  // Check for remove operations
+  match = message.match(removePattern);
+  if (match) {
+    const item = match[1] || match[2]; // Get whichever group matched
+    if (item) {
+      return {
+        type: 'remove',
+        item: cleanItemName(item)
+      };
+    }
+  }
+  
+  return null;
+};
+
+/**
+ * Show cart operation notification using the existing toast system
+ */
+export const showCartNotification = (
+  fullResponse: string, 
+  shownOperations: Set<string>,
+  toast: any
+): void => {
+  const cartOperation = detectCartOperation(fullResponse);
+  
+  if (cartOperation) {
+    const operationKey = `${cartOperation.type}-${cartOperation.item}`;
+    
+    if (!shownOperations.has(operationKey)) {
+      shownOperations.add(operationKey);
+      
+      const message = cartOperation.type === 'add'
+        ? `Added ${cartOperation.item} to cart`
+        : `🗑️ Removed ${cartOperation.item} from cart`;
+      
+      // Use the same simple approach as file upload notifications
+      if (cartOperation.type === 'add') {
+        toast.success(message);
+      } else {
+        toast.info(message);
+      }
+    }
+  }
 };

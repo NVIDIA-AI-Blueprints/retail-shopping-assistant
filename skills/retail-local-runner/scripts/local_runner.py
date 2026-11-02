@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
 """Local runner for Retail Shopping Assistant.
 
 This script keeps the app services outside containers while using Docker only for
@@ -19,12 +16,13 @@ import socket
 import subprocess
 import sys
 import time
-from collections.abc import Iterable, Mapping
 from http.client import HTTPException
 from pathlib import Path
+from typing import Iterable
 from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import urlopen
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RUN_DIR = REPO_ROOT / ".local-run"
@@ -32,13 +30,13 @@ PID_DIR = RUN_DIR / "pids"
 LOG_DIR = RUN_DIR / "logs"
 STAMP_DIR = RUN_DIR / "install-stamps"
 DEV_VENV_DIR = RUN_DIR / "dev-venv"
-MODEL_ENV = RUN_DIR / "model-endpoints.env"
+CONFIG_NAME = "config-local.yaml"
 DEV_REQUIREMENTS = REPO_ROOT / "tests" / "requirements-dev.txt"
 INTEGRATION_REQUIREMENTS = REPO_ROOT / "tests" / "requirements.txt"
 UI_PUBLIC_IMAGES = REPO_ROOT / "ui" / "public" / "images"
 SHARED_IMAGES = REPO_ROOT / "shared" / "images"
 
-INFRA_SERVICES = ("etcd", "seaweedfs", "milvus")
+INFRA_SERVICES = ("etcd", "minio", "milvus")
 MILVUS_GRPC_PORT = 19530
 MILVUS_HEALTH_URL = "http://localhost:9091/healthz"
 
@@ -56,7 +54,7 @@ PYTHON_SERVICES = {
         "requirements": REPO_ROOT / "guardrails" / "src" / "requirements.txt",
         "module": "src.main:app",
         "port": 8012,
-        "health_url": "http://localhost:8012/health",
+        "health_url": None,
         "pythonpath": [REPO_ROOT / "guardrails" / "src", REPO_ROOT / "guardrails"],
     },
     "catalog-retriever": {
@@ -67,24 +65,18 @@ PYTHON_SERVICES = {
         "health_url": "http://localhost:8010/health",
         "pythonpath": [REPO_ROOT / "catalog_retriever"],
     },
-    "orchestrator": {
-        "service_dir": REPO_ROOT / "orchestrator",
-        "requirements": REPO_ROOT / "orchestrator" / "requirements.txt",
+    "chain-server": {
+        "service_dir": REPO_ROOT / "chain_server",
+        "requirements": REPO_ROOT / "chain_server" / "requirements.txt",
         "module": "src.main:app",
         "port": 8009,
         "health_url": "http://localhost:8009/health",
-        "pythonpath": [REPO_ROOT / "orchestrator"],
+        "pythonpath": [REPO_ROOT / "chain_server"],
     },
 }
 
 UI_SERVICE = "ui"
 ALL_LOCAL_SERVICES = (*PYTHON_SERVICES.keys(), UI_SERVICE)
-ORCHESTRATOR_ONLY_ENV_KEYS = frozenset(
-    {
-        "WEATHER_ENABLED",
-        "WEATHER_API_KEY",
-    }
-)
 
 
 def ensure_dirs() -> None:
@@ -178,16 +170,16 @@ def ensure_ui_image_assets() -> None:
     print(f"linked {UI_PUBLIC_IMAGES.relative_to(REPO_ROOT)} -> {SHARED_IMAGES.relative_to(REPO_ROOT)}")
 
 
-def parse_model_host(raw_host: str) -> tuple[str, str]:
+def parse_nim_host(raw_host: str) -> tuple[str, str]:
     host = raw_host.strip().rstrip("/")
     if not host:
-        raise SystemExit("Model host cannot be empty.")
+        raise SystemExit("NIM host cannot be empty.")
     if "://" not in host:
         host = f"http://{host}"
 
     parsed = urlparse(host)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise SystemExit(f"Invalid model host URL: {raw_host}")
+        raise SystemExit(f"Invalid NIM host URL: {raw_host}")
 
     hostname = parsed.hostname
     if ":" in hostname and not hostname.startswith("["):
@@ -195,26 +187,38 @@ def parse_model_host(raw_host: str) -> tuple[str, str]:
     return parsed.scheme, hostname
 
 
-def model_endpoint(raw_host: str, port: int) -> str:
-    scheme, host = parse_model_host(raw_host)
+def nim_endpoint(raw_host: str, port: int) -> str:
+    scheme, host = parse_nim_host(raw_host)
     return f"{scheme}://{host}:{port}/v1"
 
 
-def get_model_host(args: argparse.Namespace, *, required: bool) -> str | None:
-    if getattr(args, "model_host", None):
-        return args.model_host
+def get_nim_host(args: argparse.Namespace, *, required: bool) -> str | None:
+    if getattr(args, "nim_host", None):
+        return args.nim_host
     if sys.stdin.isatty():
-        prompt = "Remote model host, without per-model port (example: http://MODEL_HOST): "
+        prompt = "Remote NIM host, without per-model port (example: http://NIM_HOST): "
         value = input(prompt).strip()
         if value:
             return value
     if required:
         raise SystemExit(
-            "Missing model host. Ask the user: What is the remote model host URL? "
-            "Use the base host without per-model ports, for example http://MODEL_HOST. "
-            "Then re-run with --model-host http://HOST."
+            "Missing NIM host. Ask the user: What is the remote NIM host URL? "
+            "Use the base host without per-model ports, for example http://NIM_HOST. "
+            "Then re-run with --nim-host http://HOST."
         )
     return None
+
+
+def config_paths() -> list[Path]:
+    return [
+        REPO_ROOT / "shared" / "configs" / "chain_server" / CONFIG_NAME,
+        REPO_ROOT / "shared" / "configs" / "catalog_retriever" / CONFIG_NAME,
+        REPO_ROOT / "shared" / "configs" / "rails" / CONFIG_NAME,
+    ]
+
+
+def local_configs_exist() -> bool:
+    return all(path.exists() for path in config_paths())
 
 
 def write_text(path: Path, content: str) -> None:
@@ -224,32 +228,57 @@ def write_text(path: Path, content: str) -> None:
 
 
 def configure(args: argparse.Namespace) -> None:
-    model_host = get_model_host(args, required=True)
-    assert model_host is not None
+    nim_host = get_nim_host(args, required=True)
+    assert nim_host is not None
 
-    # Ports and served model names match docker-compose-model-local.yaml.
-    llm_url = model_endpoint(model_host, 8000)
-    text_embed_url = model_endpoint(model_host, 8001)
-    content_url = model_endpoint(model_host, 8003)
-    topic_url = model_endpoint(model_host, 8004)
-    video_safety_url = model_endpoint(model_host, 8005)
+    llm_url = nim_endpoint(nim_host, 8000)
+    text_embed_url = nim_endpoint(nim_host, 8001)
+    image_embed_url = nim_endpoint(nim_host, 8002)
+    content_url = nim_endpoint(nim_host, 8003)
+    topic_url = nim_endpoint(nim_host, 8004)
+    data_source = REPO_ROOT / "shared" / "data" / "products_extended.csv"
+
     write_text(
-        MODEL_ENV,
+        REPO_ROOT / "shared" / "configs" / "chain_server" / CONFIG_NAME,
         "\n".join(
             [
                 "# Generated by skills/retail-local-runner/scripts/local_runner.py",
-                f'export LLM_BASE_URL="{llm_url}"',
-                'export LLM_MODEL="nemotron-3.5-super"',
-                f'export VLM_BASE_URL="{llm_url}"',
-                'export VLM_MODEL="nemotron-3.5-super"',
-                f'export TEXT_EMBED_BASE_URL="{text_embed_url}"',
-                'export TEXT_EMBED_MODEL="nvidia/Nemotron-3.5-Embed-1B-BF16"',
-                f'export RAILS_CONTENT_BASE_URL="{content_url}"',
-                'export RAILS_CONTENT_MODEL="nvidia/nemotron-3.5-content-safety"',
-                f'export RAILS_TOPIC_BASE_URL="{topic_url}"',
-                'export RAILS_TOPIC_MODEL="llama-3.1-nemoguard-8b-topic-control"',
-                f'export MULTIMODAL_SAFETY_BASE_URL="{video_safety_url}"',
-                'export MULTIMODAL_SAFETY_MODEL="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"',
+                f'llm_port: "{llm_url}"',
+                'llm_name: "nvidia/nemotron-3-super-120b-a12b"',
+                'retriever_port: "http://localhost:8010"',
+                'memory_port: "http://localhost:8011"',
+                'rails_port: "http://localhost:8012"',
+                "",
+            ]
+        ),
+    )
+    write_text(
+        REPO_ROOT / "shared" / "configs" / "catalog_retriever" / CONFIG_NAME,
+        "\n".join(
+            [
+                "# Generated by skills/retail-local-runner/scripts/local_runner.py",
+                f'text_embed_port: "{text_embed_url}"',
+                'text_model_name: "nvidia/nemotron-3-embed-1b"',
+                f'image_embed_port: "{image_embed_url}"',
+                'image_model_name: "nvidia/nvclip"',
+                'db_port: "http://localhost:19530"',
+                f'data_source: "{data_source}"',
+                "",
+            ]
+        ),
+    )
+    write_text(
+        REPO_ROOT / "shared" / "configs" / "rails" / CONFIG_NAME,
+        "\n".join(
+            [
+                "# Generated by skills/retail-local-runner/scripts/local_runner.py",
+                "models:",
+                "  - type: content_safety",
+                "    parameters:",
+                f'      base_url: "{content_url}"',
+                "  - type: topic_control",
+                "    parameters:",
+                f'      base_url: "{topic_url}"',
                 "",
             ]
         ),
@@ -258,78 +287,16 @@ def configure(args: argparse.Namespace) -> None:
 
 def base_env() -> dict[str, str]:
     env = os.environ.copy()
-    model_env_loaded = load_model_env(env)
-    default_key = env.get("NVIDIA_API_KEY", "").strip()
-    if model_env_loaded and not default_key:
-        default_key = "local"
-    if default_key:
-        set_if_empty(env, "LLM_API_KEY", default_key)
-        set_if_empty(env, "EMBED_API_KEY", default_key)
-        set_if_empty(env, "RAIL_API_KEY", default_key)
-        set_if_empty(env, "VLM_API_KEY", default_key)
-        set_if_empty(env, "MULTIMODAL_SAFETY_API_KEY", default_key)
-        set_if_empty(env, "NVIDIA_API_KEY", default_key)
-    if env.get("RAIL_API_KEY") and not env.get("NVIDIA_API_KEY"):
-        env["NVIDIA_API_KEY"] = env["RAIL_API_KEY"]
+    local_key = env.get("NGC_API_KEY", "local-nim")
+    env.setdefault("LLM_API_KEY", local_key)
+    env.setdefault("EMBED_API_KEY", local_key)
+    env.setdefault("RAIL_API_KEY", local_key)
+    env.setdefault("NVIDIA_API_KEY", env.get("RAIL_API_KEY", local_key))
+    env["CONFIG_OVERRIDE"] = CONFIG_NAME
     env["SHARED_ROOT"] = str(REPO_ROOT / "shared")
     env["SHARED_CONFIG_ROOT"] = str(REPO_ROOT / "shared" / "configs")
-    env["CATALOG_RETRIEVER_URL"] = "http://localhost:8010"
-    env["MEMORY_RETRIEVER_URL"] = "http://localhost:8011"
-    env["GUARDRAILS_URL"] = "http://localhost:8012"
-    env["CATALOG_DB_PORT"] = "http://localhost:19530"
-    set_if_empty(
-        env,
-        "CATALOG_DATA_SOURCE",
-        str(REPO_ROOT / "shared" / "data" / "enriched_products.jsonl"),
-    )
-    set_if_empty(
-        env,
-        "CATALOG_SCHEMA_SOURCE",
-        str(REPO_ROOT / "shared" / "data" / "enriched_products.schema.yaml"),
-    )
     env["PYTHONUNBUFFERED"] = "1"
-    env["PYTHONPATH"] = str(REPO_ROOT) + (
-        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
-    )
     return env
-
-
-def scope_service_env(
-    service: str,
-    environment: Mapping[str, str],
-) -> dict[str, str]:
-    """Keep orchestrator-only credentials out of sibling local processes."""
-
-    scoped = dict(environment)
-    if service != "orchestrator":
-        for key in ORCHESTRATOR_ONLY_ENV_KEYS:
-            scoped.pop(key, None)
-    return scoped
-
-
-def set_if_empty(env: dict[str, str], key: str, value: str) -> None:
-    if not env.get(key, "").strip():
-        env[key] = value
-
-
-def load_model_env(env: dict[str, str]) -> bool:
-    if not MODEL_ENV.exists():
-        return False
-    for raw_line in MODEL_ENV.read_text().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[len("export ") :].strip()
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        env[key] = value
-    return True
 
 
 def with_pythonpath(env: dict[str, str], paths: list[Path]) -> dict[str, str]:
@@ -513,7 +480,7 @@ def start_infra() -> None:
 
 
 def stop_infra() -> None:
-    run(["docker", "compose", "-f", "docker-compose.yaml", "stop", "milvus", "seaweedfs", "etcd"])
+    run(["docker", "compose", "-f", "docker-compose.yaml", "stop", "milvus", "minio", "etcd"])
 
 
 def install_dev(args: argparse.Namespace) -> None:
@@ -533,14 +500,14 @@ def start_python_service(name: str, spec: dict[str, object], *, skip_install: bo
     if not skip_install:
         ensure_python_deps(name, spec)
 
-    env = with_pythonpath(scope_service_env(name, base_env()), pythonpath)
+    env = with_pythonpath(base_env(), pythonpath)
     command = [
         str(venv_python(service_dir)),
         "-m",
         "uvicorn",
         module,
         "--host",
-        "0.0.0.0",
+        "127.0.0.1",
         "--port",
         str(port),
     ]
@@ -551,21 +518,22 @@ def start_ui(*, skip_install: bool) -> None:
     ensure_ui_image_assets()
     if not skip_install:
         ensure_ui_deps()
-    env = scope_service_env(UI_SERVICE, os.environ)
+    env = os.environ.copy()
     env["PORT"] = "3000"
-    # Relative, and proxied to the orchestrator by ui/vite.config.ts. An
-    # absolute http://localhost:8009 is resolved by the *browser*, so it only
-    # works when the browser shares a machine with the services: reaching the
-    # app through a forwarded port forwards 3000 and not 8009, and every
-    # request dies with "Failed to fetch" before it leaves the page.
-    env["VITE_API_BASE_URL"] = "/api"
+    env["HOST"] = "127.0.0.1"
+    env["BROWSER"] = "none"
+    env["REACT_APP_API_BASE_URL"] = "http://localhost:8009"
+    env.setdefault("CI", "true")
     start_process(UI_SERVICE, ["npm", "start"], cwd=REPO_ROOT / "ui", env=env, port=3000)
 
 
 def start(args: argparse.Namespace) -> None:
     ensure_dirs()
-    if args.model_host:
+    if args.nim_host or not local_configs_exist():
         configure(args)
+
+    if not local_configs_exist():
+        raise SystemExit("Local config files are missing. Run configure first.")
 
     preflight_ports_available()
     start_infra()
@@ -575,16 +543,16 @@ def start(args: argparse.Namespace) -> None:
         raise SystemExit(f"memory-retriever did not become healthy.\n{last_log_lines('memory-retriever')}")
 
     start_python_service("guardrails", PYTHON_SERVICES["guardrails"], skip_install=args.skip_install)
-    if not wait_http("guardrails", "http://localhost:8012/health", 120):
-        raise SystemExit(f"guardrails did not become healthy.\n{last_log_lines('guardrails')}")
+    if not wait_port("guardrails", 8012, 120):
+        raise SystemExit(f"guardrails did not open port 8012.\n{last_log_lines('guardrails')}")
 
     start_python_service("catalog-retriever", PYTHON_SERVICES["catalog-retriever"], skip_install=args.skip_install)
     if not wait_http("catalog-retriever", "http://localhost:8010/health", args.catalog_timeout):
         raise SystemExit(f"catalog-retriever did not become healthy.\n{last_log_lines('catalog-retriever')}")
 
-    start_python_service("orchestrator", PYTHON_SERVICES["orchestrator"], skip_install=args.skip_install)
-    if not wait_http("orchestrator", "http://localhost:8009/health", 60):
-        raise SystemExit(f"orchestrator did not become healthy.\n{last_log_lines('orchestrator')}")
+    start_python_service("chain-server", PYTHON_SERVICES["chain-server"], skip_install=args.skip_install)
+    if not wait_http("chain-server", "http://localhost:8009/health", 60):
+        raise SystemExit(f"chain-server did not become healthy.\n{last_log_lines('chain-server')}")
 
     start_ui(skip_install=args.skip_install)
     if not wait_http(UI_SERVICE, "http://localhost:3000", 90):
@@ -601,11 +569,6 @@ def stop(_args: argparse.Namespace) -> None:
 
 def status(_args: argparse.Namespace) -> None:
     ensure_dirs()
-    if MODEL_ENV.exists():
-        print(f"model endpoint env: {MODEL_ENV.relative_to(REPO_ROOT)}")
-    else:
-        print("model endpoint env: not configured; using the shell env (source .env.example first)")
-    print()
     print("Local processes:")
     for service in ALL_LOCAL_SERVICES:
         pid = read_pid(service)
@@ -638,8 +601,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run Retail Shopping Assistant locally.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    configure_parser = subparsers.add_parser("configure", help="Write local model endpoint env for a remote model host.")
-    configure_parser.add_argument("--model-host", help="Remote model host URL, for example http://MODEL_HOST")
+    configure_parser = subparsers.add_parser("configure", help="Write local config overrides for remote NIMs.")
+    configure_parser.add_argument("--nim-host", help="Remote NIM host URL, for example http://NIM_HOST")
     configure_parser.set_defaults(func=configure)
 
     install_dev_parser = subparsers.add_parser("install-dev", help="Create a repo-local Python dev venv and install test/dev packages.")
@@ -651,7 +614,7 @@ def build_parser() -> argparse.ArgumentParser:
     install_dev_parser.set_defaults(func=install_dev)
 
     start_parser = subparsers.add_parser("start", help="Start local app services plus local Milvus infra.")
-    start_parser.add_argument("--model-host", help="Remote model host URL. Rewrites local model endpoint env before starting.")
+    start_parser.add_argument("--nim-host", help="Remote NIM host URL. Rewrites local config before starting.")
     start_parser.add_argument("--skip-install", action="store_true", help="Do not install Python or UI dependencies.")
     start_parser.add_argument("--catalog-timeout", type=int, default=600, help="Seconds to wait for catalog startup.")
     start_parser.set_defaults(func=start)

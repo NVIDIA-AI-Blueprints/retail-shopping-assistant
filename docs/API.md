@@ -15,110 +15,36 @@
 
 ## 🎯 Overview
 
-The Retail Shopping Assistant API provides a comprehensive interface for an AI-powered retail shopping advisor. The API is built on a microservices architecture and currently uses the Deep Agents SDK as the orchestrator assistant harness.
+The Retail Shopping Assistant API provides a comprehensive interface for an AI-powered retail shopping advisor. The API is built on a microservices architecture using LangGraph for agent orchestration and supports both streaming and non-streaming responses.
 
 ### Key Features
 
 - **Real-time Streaming**: Server-Sent Events (SSE) for live responses
-- **Multi-modal Input**: Text queries, image uploads, and optional VLM-backed video/image understanding
+- **Multi-modal Input**: Text queries and image uploads
 - **Shopping Cart Management**: Add, remove, and view cart items
-- **Content Safety**: Optional guardrails for safe interactions, on by default
+- **Content Safety**: Built-in guardrails for safe interactions
 - **Performance Monitoring**: Detailed timing information
 
 ## 🌐 Base URL
 
 ```
-http://localhost:3000/api   # normal UI/nginx entrypoint
-http://localhost:8009       # direct orchestrator development endpoint
+http://localhost:3000/api
 ```
-
-The catalog retriever is an internal service at `http://localhost:8010`. See
-[Catalog Architecture](CATALOG_ARCHITECTURE.md) for the ingest, capability,
-agent-discovery, and validation flow.
-
-The memory retriever is an internal single-replica service at
-`http://localhost:8011`. Standard Compose binds that host port to loopback only;
-containers use `http://memory-retriever:8011` on the private network. Its
-durable-turn endpoints are documented below for operators and service
-integrations; they are not browser-facing APIs and do not provide service
-authentication.
 
 ## 🔐 Authentication
 
-Currently, the API does not require authentication for local deployments. For production deployments, consider implementing API key authentication or OAuth2.
+The reference API does not implement end-user authentication or authorization.
+It is available through the loopback-bound nginx entrypoint for local,
+single-operator evaluation only; internal service APIs are not published to the
+host. The client-provided `user_id` separates demo state but is not an
+authenticated identity.
+
+Do not expose this API to untrusted or multiple users. A broader deployment must
+place authenticated TLS ingress in front of nginx and derive user identity and
+authorization server-side. See [SECURITY.md](../SECURITY.md) for the supported
+deployment boundary.
 
 ## 📊 Data Models
-
-### Catalog Capabilities
-
-The catalog retriever owns its filter and metadata capability contract. Chain
-server request-building code should consume this contract instead of inferring
-filterability from product text or hard-coded category lists.
-
-Field roles come from `shared/data/enriched_products.schema.yaml`. Enum/list
-values, numeric ranges, taxonomy nodes, and field coverage are discovered from
-the configured JSONL. See
-[Catalog Architecture](CATALOG_ARCHITECTURE.md#the-sidecar).
-
-The orchestrator caches the first successfully fetched full contract for its
-process lifetime and uses that object for deterministic request validation.
-The LLM receives only a compact projection of the fields, values, taxonomy
-keys/scopes, and semantic/filter roles it needs; the full response below is not
-copied into every prompt.
-
-```typescript
-interface CatalogCapabilities {
-  catalog_id: string;
-  product_count: number;
-  retrieval_modes: Array<'text' | 'image' | 'hybrid'>;
-  image_search_enabled: boolean;
-  fields: Record<string, {
-    type: 'enum' | 'enum_list' | 'number' | 'text' | 'unclassified';
-    observed_type?: string;
-    filterable: boolean;
-    searchable: boolean;
-    detail: boolean;
-    taxonomy: boolean;
-    operators: string[];
-    source_fields: string[];
-    coverage: {present: number; total: number};
-    values: Array<{value: string; count: number}>;
-    min_value?: number;
-    max_value?: number;
-  }>;
-  taxonomy: {
-    category_field?: string;
-    subcategory_field?: string;
-    categories: Record<string, {
-      product_count: number;
-      filters: Record<string, unknown>;
-      semantic_fields: Record<string, unknown>;
-      subcategories: Record<string, {
-        product_count: number;
-        filters: Record<string, unknown>;
-        semantic_fields: Record<string, unknown>;
-      }>;
-    }>;
-  };
-  // Flat compatibility projection of fields where filterable=true.
-  filters: Record<string, {
-    type: 'enum' | 'enum_list' | 'number' | 'text';
-    operators: string[];
-    source_fields: string[];
-    values?: string[];
-    min_value?: number;
-    max_value?: number;
-    request_aliases?: Record<string, string>;
-  }>;
-}
-```
-
-`fields` and nested `taxonomy` are authoritative. `filters` remains for
-compatibility and is generated from the same field roles. Do not add static
-catalog values to orchestrator config, UI code, prompts, or the sidecar.
-Catalog ingestion requires each ordered taxonomy field to be a scalar `enum`
-with `filter` use so the agent's generic taxonomy envelope can always be
-enforced; the field names and observed values remain catalog-owned.
 
 ### QueryRequest
 
@@ -128,24 +54,12 @@ The main request model for all shopping queries.
 interface QueryRequest {
   user_id: number;                    // Unique user identifier
   query: string;                      // User's text query
-  image?: string;                     // Legacy base64/data-URL image (optional)
-  media?: MediaAttachment[];          // Image/video attachments (optional)
-  session_id?: string;                // Optional website/browser session identifier
-  conversation_id: string;            // Chat thread identifier (required)
-  cart_id: string;                    // Cart identifier (required)
-  request_id?: string;                // Optional stable ID for exact whole-turn replay
+  image?: string;                     // Base64 encoded image (optional)
   context?: string;                   // Previous conversation context
   cart?: Cart;                        // Current shopping cart state
   retrieved?: Record<string, string>; // Previously retrieved products
-  guardrails?: boolean;               // Per-request override; omitted uses server default. false is ignored when GUARDRAILS_CLIENT_CAN_DISABLE=false
+  guardrails?: boolean;               // Enable content safety (default: true)
   image_bool?: boolean;               // Indicate if image is provided (default: false)
-}
-
-interface MediaAttachment {
-  type: 'image' | 'video';
-  data: string;                       // Base64 data URL, or raw base64 with mime_type
-  mime_type: string;                  // image/jpeg, image/png, or video/mp4 by default
-  filename?: string;
 }
 ```
 
@@ -155,11 +69,6 @@ interface MediaAttachment {
   "user_id": 123,
   "query": "Show me red dresses under $100",
   "image": "",
-  "media": [],
-  "session_id": "session_abc",
-  "conversation_id": "conversation_abc",
-  "cart_id": "cart_abc",
-  "request_id": "request_abc",
   "context": "Previous conversation about summer clothing",
   "cart": {
     "contents": [
@@ -177,107 +86,6 @@ interface MediaAttachment {
 }
 ```
 
-`conversation_id` and `cart_id` are required; a turn without either is
-refused with `422` and `"conversation_id and cart_id are required"`. Generate
-them on the client as unguessable random strings: anyone holding a `cart_id`
-can read and change that cart. `user_id` does not select the cart or the
-conversation. `session_id` and `request_id` are optional. When `request_id` is
-omitted, the server generates a new UUID for the turn. A caller retrying the
-same exact turn should reuse its request ID: an identical finalized retry
-replays the stored response, products, retrieved images, and diagnostics
-without model/tool work or another finalize call. Reusing the request ID with
-different shopper text or media is a conflict. The same request ID also derives
-stable cart-mutation idempotency keys.
-
-The bundled UI creates browser-session identifiers and sends them on every
-turn. `conversation_id` scopes durable raw turns, presented-
-product evidence, and historical resolution; `cart_id` scopes cart reads/writes.
-The Deep Agents working graph is request-scoped under a collision-safe pair of
-conversation ID and request ID, not used as durable shopper memory, and deleted
-after successful turn finalization. Production website integrations should move these IDs to a
-server-owned session/thread service before broad rollout so customer context
-and cart state cannot bleed across sessions.
-
-Durable ordered shopper/assistant turns live in the single-replica
-memory-service SQLite database. At turn start the runtime consumes a bounded set
-of model-context-eligible recent turns and a compact product-reference
-projection in place of the legacy rolling context blob. Blocked turns remain
-durable and exactly replayable but are excluded from both the service projection
-and chain prompt formatter. Products enter durable reference evidence
-only when they appear in the finalized ordered `product_results` sent as product
-cards. The selected discovery, styling, or cart skill may conditionally resolve
-typed references against those events. Exactly one match becomes request-local
-evidence; zero or multiple matches require clarification and do not authorize a
-detail, availability, or cart tool. The deterministic resolver adds no separate
-model or catalog call.
-
-`MemorySaver` remains process-local and is not shared across workers or
-replicas, but its graph thread now exists only for one request. It is deleted
-after successful durable finalization and preserved if finalization fails. The
-durable resolver is same-conversation only and does not implement fuzzy or
-embedding matching, preferences, sentiment, active anchors, cross-conversation
-lookup, or stale-catalog-revision handling.
-
-`image` remains supported for backward compatibility and is normalized into the
-same internal media list as `media[]`. New clients should use `media[]` for
-video uploads. The bundled UI calls `/capabilities` on load and enforces the
-configured media counts, MIME types, byte limits, and video duration limit. That
-same endpoint also exposes non-secret model names and catalog filter metadata
-for future UI controls.
-
-When `guardrails` is enabled, the orchestrator sends the original shopper text
-and every normalized attachment to the isolated guardrails service after the
-durable turn starts. By default, this completes before media perception, Deep
-Agents, models, or tools. An operator may enable
-`GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` to overlap the first Deep Agents
-model step on text-only turns. Every tool, including shopper-skill activation,
-still waits for the input allow decision, so no catalog or cart operation can
-run speculatively. If input is blocked, the model task is discarded and
-cancelled; its in-flight request may still be billed. Media turns always retain
-the sequential order.
-Text and each image are checked with `nvidia/nemotron-3.5-content-safety`.
-Retail topic control prefers the dedicated
-`nvidia/llama-3.1-nemoguard-8b-topic-control` model. A deployment can instead
-route the topic role to Nemotron Content Safety, in which case the same retail
-policy is supplied through `chat_template_kwargs.custom_policy`. Videos are
-submitted as complete video objects, including embedded audio, to the separately
-configured `multimodal_safety` role because Content Safety accepts text and images,
-not video. Nemotron Omni evaluates frames at the explicit
-`MULTIMODAL_SAFETY_VIDEO_FPS` rate. Unsupported video returns a typed error. The
-final grounded text is checked before durable finalization or any SSE result
-event.
-
-`guardrails=true` and `guardrails=false` are authoritative even when they differ
-from `GUARDRAILS_ENABLED`; the environment variable is only the default for an
-omitted field. A deployment with `GUARDRAILS_AVAILABLE=false` has no guardrails:
-`/capabilities` reports `guardrails.available: false`, and `guardrails=true`
-gets a 400. Provider errors follow `GUARDRAILS_FAILURE_MODE` (`closed` by
-default). Closed output errors suppress unvalidated response text and product
-media, while the fallback tells the shopper to verify their cart because a
-commerce effect may already have committed.
-
-### Multi-modal Input
-
-Uploaded images and video go through VLM media perception when the `vlm` model
-role is enabled in `shared/configs/models.yaml`; the catalog search then runs
-on text.
-
-Uploaded videos require VLM media perception. If VLM is disabled, video
-understanding is unavailable and the assistant should not invent visual
-details. The VLM analysis is passed to the Deep Agents runtime as concise text
-context; raw media is not persisted into conversation memory.
-
-If VLM media perception is unavailable and the user request depends on the
-attached media, for example "shoes she is wearing in this video", the assistant
-returns a direct explanation and asks for a text description instead of running
-a long catalog or LLM turn with unsupported visual assumptions.
-
-Descriptive media requests such as "what's in this look" or "describe this
-outfit" are answered from VLM media analysis and should not trigger catalog
-retrieval or product image cards. Catalog retrieval is reserved for explicit
-shopping intent, such as finding similar items, checking availability or price,
-asking for recommendations, or adding an item to the cart.
-
 ### QueryResponse
 
 The response model for non-streaming queries.
@@ -286,198 +94,23 @@ The response model for non-streaming queries.
 interface QueryResponse {
   response: string;                   // Generated response text
   images: Record<string, string>;     // Product images
-  cart: Cart;                         // Authoritative cart snapshot after the turn
   timings: Record<string, number>;    // Performance timing data
-  token_usage?: TokenUsage;           // LLM token usage summary
-  model_usage?: ModelUsage;           // Per-role model usage summary
-  guardrail_report?: GuardrailReport; // What the safety checks decided this turn
-  agent_diagnostics?: AgentDiagnostics; // Empty unless operator exposure is enabled
 }
 ```
-
-`GuardrailReport` reports what the safety checks did on this turn. It is present
-on every query response, streaming or not, and needs no operator flag, because
-it carries only the provider's sanitized decision metadata and never the
-shopper's text or attachments. When guardrails are disabled the report is still
-returned, with `enabled: false` and an empty `checks` list.
-
-```typescript
-interface GuardrailReport {
-  enabled: boolean;                   // Whether checks ran on this turn
-  failure_mode: 'closed' | 'open';    // Deployment policy for provider errors
-  checks: Array<{
-    stage: 'input' | 'output';
-    status: 'allow' | 'block' | 'error';
-    violated_categories: string[];    // Empty unless status is 'block'
-    latency_ms: number;
-    model_calls: Record<string, number>; // Guard role -> number of calls
-  }>;
-}
-```
-
-A turn runs an `input` check and, if the turn was not stopped, an `output`
-check, so `checks` normally holds one or two entries in the order they ran.
-
-`status: "error"` means a guard model could not be reached or did not answer. It
-is reported distinctly from `"block"` so a client can tell a genuine policy
-refusal from an unavailable checker. Whether an error stops the turn depends on
-`failure_mode`: `closed` (the default) stops it, `open` lets the turn proceed.
-A `"block"` always stops the turn regardless of the mode.
-
-When a turn is stopped by a guardrail, `agent_diagnostics.final_termination_reason`
-is one of `input_guardrail_blocked`, `input_guardrail_error`,
-`output_guardrail_blocked`, or `output_guardrail_error`. The shopper-facing text
-comes from `unsafe_message` or `guardrails_unavailable_message` in
-`shared/configs/orchestrator/config.yaml`.
-
-`AgentDiagnostics` is operator-facing turn metadata. Internal collection is
-always available to the runtime, but public query responses return `{}` by
-default. Set `EXPOSE_AGENT_DIAGNOSTICS=true` only on a trusted operator or
-evaluation deployment. It is additive and must not be rendered as assistant
-prose.
-
-```typescript
-interface AgentDiagnostics {
-  skill_files_read: string[];
-  tool_calls: Array<{
-    sequence: number;
-    tool_name: string;
-    arguments: Record<string, unknown>;
-    status: 'completed' | 'rejected' | 'error' | 'pending';
-    rejection_reason?: string;
-    duplicate?: boolean;
-    restored_fields?: string[];       // Structural fields restored by middleware
-  }>;
-  rejected_tool_calls: number[];       // Sequence numbers in tool_calls
-  duplicate_tool_calls: number[];      // Rejected duplicate-call subset
-  product_evidence: Array<{
-    product_ref: string;
-    product_name: string;
-    source_tool: 'search_catalog_tool' | 'get_product_details_tool';
-    evidence_type: 'search_result' | 'product_detail';
-    facts: Record<string, unknown>;
-    search_scope?: {
-      taxonomy: Record<string, unknown>;
-      confirmed_filters: Record<string, unknown>;
-    };
-  }>;
-  product_evidence_truncated: boolean;
-  catalog_scope_outcomes: Array<{
-    outcome: 'zero_results';
-    requested_product_type?: string | null;
-    taxonomy?: Record<string, unknown>;
-    confirmed_filters?: Record<string, unknown>;
-  }>;
-  final_termination_reason: string;
-  partial_graph_messages: Array<{
-    type: string;
-    content: string;
-    name?: string;
-    tool_call_id?: string;
-    tool_calls?: Array<Record<string, unknown>>;
-    truncated?: boolean;
-  }>;
-  partial_graph_messages_truncated?: boolean;
-  partial_graph_capture_error?: string;
-  diagnostic_collection_error?: string;
-  memory_finalize_error?: string;
-}
-```
-
-`final_termination_reason: "memory_start_failed"` means the required durable
-start failed before guardrail/model/tool work. A generic finalize transport or
-service failure does not replace grounded shopper text; it sets
-`memory_finalize_error` and preserves the request checkpoint for recovery.
-A superseded attempt is the deliberate exception: its stale response is replaced
-with the safe attempt-fencing response described below.
-
-`final_termination_reason: "agent_timeout"` means the Deep Agents graph exceeded
-`DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS`. The response contains no unsent products
-or images, the durable turn is finalized as failed, and partial graph messages
-are captured on a bounded best-effort basis before checkpoint cleanup. An
-already-started synchronous tool operation may finish while cancellation is
-propagating; clients should follow the response's cart-check guidance before
-retrying a mutation.
-
-`final_termination_reason: "grounding_timeout"` means the graph completed but
-the grounding editor exhausted the remaining shared execution budget. The
-durable turn is finalized as failed. Search-only evidence uses deterministic
-catalog rendering; all other turns return a fixed retry/cart-check response
-instead of the unverified draft.
-
-`final_termination_reason: "grounding_error"` uses the same failed-turn and
-fail-closed response behavior when the grounding editor raises an error or
-returns empty or whitespace-only output rather than a usable response.
-
-Successful turns leave `partial_graph_messages` empty. Before a failed graph
-checkpoint is deleted, the runtime reads its latest state and preserves up to
-the final 24 current-turn assistant/tool messages, with each content field
-bounded to 2,000 characters. Tool calls remain in model-issued order even when
-parallel tool results finish in another order. `skill_files_read` contains only
-successfully activated/injected `/shopper/.../SKILL.md` paths and successful
-explicit reads of those files; other reference-file reads remain visible in
-`tool_calls`. Every Deep Agents turn starts with an internal
-`activate_shopper_skills_tool` call. A pre-activation or same-batch shopping
-call is rejected with `rejection_reason: "skill_activation_required"`.
-For a one-shot catalog repair, middleware may restore only the independently
-valid structural `scope_complete` field. It never restores or rewrites taxonomy,
-constraints, requested type, or search mode. `restored_fields` therefore
-contains only bounded structural field names, never a second copy of values.
-
-`product_evidence` contains only structured records derived from successful
-current-turn `search_catalog_tool` and `get_product_details_tool` result
-messages. It is limited to 24 records and 32,000 serialized characters;
-`product_evidence_truncated` is `true` when either bound omits evidence. Search
-records keep their taxonomy and confirmed filters in `search_scope`, attached
-only to products returned by that search. The list excludes semantic queries,
-raw tool messages, model reasoning, and other diagnostic fields.
-`catalog_scope_outcomes` contains at most eight server-authored, product-free
-outcomes. Its only accepted outcome is `zero_results`; records may include only
-`requested_product_type`, `taxonomy`, and `confirmed_filters` in addition to
-`outcome`. Evaluation consumers default
-missing legacy list fields to `[]` and `product_evidence_truncated` to `false`.
-
-Successful internal search-tool results carry `SEARCH_DIRECTION_EVIDENCE`, the
-model-authored semantic query used as an independent private ranking preference,
-and required pre-retrieval `shopper_guidance` authored under the active skill.
-For completed search-only turns, the runtime runs one tools-disabled synthesis
-under the active skill and grounds the draft against tool-role evidence. Static
-skill `response_guidance` and pre-retrieval guidance support deterministic
-fallback, which separately renders every returned candidate
-with its name, price, category, and the confirmed-filter group from its own
-search. A partial successful result set receives a neutral continuation. A zero-result tool response
-carries its exact advertised taxonomy and confirmed filters; that scoped miss
-cannot prove absence for a different type or the whole catalog.
-
-Final-response extraction skips tool messages, assistant messages that still
-contain tool calls, and internal skill-activation markers. If a completed graph
-contains no shopper-facing response, the API emits
-`"I could not complete that shopping request. Please try again."` and reports
-`final_termination_reason: "incomplete_agent_response"` in diagnostics.
 
 **Example:**
 ```json
 {
   "response": "I found several red dresses under $100 that might interest you...",
-  "images": {
-    "product1": "https://cdn.shop.com/dress1.jpg",
-    "product2": "https://cdn.shop.com/dress2.jpg"
-  },
-  "cart": {
-    "contents": []
-  },
+  "images": {},
   "timings": {
     "total": 3.48,
-    "memory": 0.12,
-    "deepagents": 3.36
-  },
-  "agent_diagnostics": {}
+    "planner": 0.12,
+    "retriever": 1.23,
+    "chatter": 2.13
+  }
 }
 ```
-
-Detailed diagnostics are returned only when
-`EXPOSE_AGENT_DIAGNOSTICS=true` is deliberately enabled on a trusted operator
-or evaluation deployment.
 
 ### Cart
 
@@ -489,84 +122,28 @@ interface Cart {
 }
 
 interface CartItem {
-  cart_line_id?: string;              // Opaque, non-reusable line ID on authoritative reads
-  product_id?: string;                // Catalog product ref when available
-  item: string;                       // Product display name
+  item: string;                       // Product identifier
   amount: number;                     // Quantity
-  price?: number;                     // Cached unit price
 }
 ```
 
 ### Streaming Response
 
-For streaming endpoints, responses are sent as Server-Sent Events (SSE) with the following format; the stream ends with a literal `data: [DONE]` line:
+For streaming endpoints, responses are sent as Server-Sent Events (SSE) with the following format:
 
 ```typescript
 interface StreamingChunk {
-  type: 'progress' | 'media_analysis' | 'content' | 'images' | 'products' | 'metrics' | 'error';
-  payload:
-    | string
-    | Record<string, string>
-    | ProductSummary[]
-    | {
-        timings: Record<string, number>;
-        total_seconds: number;
-        token_usage: {
-          input_tokens: number;
-          output_tokens: number;
-          total_tokens: number;
-          model_calls: number;
-        };
-        model_usage: Record<string, {
-          status: 'used' | 'failed' | 'disabled' | 'not_used';
-          calls: number;
-          detail?: string;
-        }>;
-        guardrail_report: GuardrailReport;
-        agent_diagnostics?: AgentDiagnostics;
-      };
+  type: 'content' | 'images' | 'error' | 'done';
+  payload: string | Record<string, string>;
   timestamp: number;
 }
 ```
 
 ## 🔄 Endpoints
 
-### Weather boundary (no HTTP route)
-
-There is no weather endpoint on the application, orchestrator, or memory
-service, and no weather field in the query request or response schemas. When
-weather is enabled (`WEATHER_ENABLED=true`), the agent itself may call its
-forecast tool during `/query/stream` or `/query/timing` for a place and dates
-the shopper named, and the forecast reaches the client only as part of the
-reply text. When weather is disabled, no query makes a weather request.
-
 ### POST `/query/stream`
 
-Returns a Server-Sent Events (SSE) response stream for shopping assistant
-responses. In the current Deep Agents harness migration slice, the stream is
-SSE-framed but does not yet emit token-level model chunks while the agent is
-running. The endpoint currently emits product metadata, image payloads,
-completed turn response text, and timing/token-usage metrics after the Deep
-Agents turn finishes. The metrics frame contains `agent_diagnostics: {}` by
-default; trusted operator/evaluation deployments may explicitly enable the
-detailed trace.
-
-Before guardrails or agent work, the orchestrator starts a durable conversation
-turn and receives bounded model-context-eligible recent turns plus the
-authoritative cart. Blocked turns remain durable and exactly replayable but do
-not enter a later model prompt.
-It finalizes that turn as `completed`, `blocked`, or `failed` before emitting the
-terminal SSE frames. An exact finalized retry replays the stored output without
-another model/tool turn. The public SSE frame shapes are unchanged.
-
-Every unblocked Deep Agents turn includes one bounded activation model step
-before normal shopping-tool selection. That step selects registered shopper
-skills; the runtime injects their complete instructions before exposing the
-shopping tools their grants allow. It is included in `token_usage.model_calls` and
-`agent_diagnostics`.
-
-Token-level Deep Agents streaming is a known limitation for this PR and is
-planned as a follow-up after the harness migration is stable.
+Streams real-time responses back to the client as the shopping assistant generates them.
 
 **Request Body:** `QueryRequest`
 
@@ -580,39 +157,29 @@ Accept: text/event-stream
 
 **Example Request:**
 ```bash
-curl -X POST "http://localhost:8009/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -d '{
     "user_id": 123,
-    "conversation_id": "conversation_abc",
-    "cart_id": "cart_abc",
     "query": "Show me red dresses under $100"
   }'
 ```
 
 **Example Response:**
 ```
-data: {"type": "products", "payload": [{"product_id": "dress-1", "display_name": "Red Wrap Dress", "price": {"amount": 89.0, "currency": "USD"}, "image_url": "https://..."}], "timestamp": 1716400001.1}
-
-data: {"type": "images", "payload": {"Red Wrap Dress": "https://..."}, "timestamp": 1716400001.2}
-
 data: {"type": "content", "payload": "I found several red dresses...", "timestamp": 1716400001.2}
 
-data: {"type": "metrics", "payload": {"timings": {"memory": 0.03, "catalog_search": 0.41, "deepagents": 1.92}, "total_seconds": 2.36, "token_usage": {"input_tokens": 1260, "output_tokens": 180, "total_tokens": 1440, "model_calls": 3}, "model_usage": {"text_embedding": {"status": "used", "calls": 1, "detail": "Catalog text/vector retrieval"}, "content_safety": {"status": "used", "calls": 2, "detail": "Input and output safety checks"}, "topic_control": {"status": "used", "calls": 1, "detail": "Input topic check"}}, "guardrail_report": {"enabled": true, "failure_mode": "closed", "checks": [{"stage": "input", "status": "allow", "violated_categories": [], "latency_ms": 118.4, "model_calls": {"content_safety": 1, "topic_control": 1}}, {"stage": "output", "status": "allow", "violated_categories": [], "latency_ms": 96.2, "model_calls": {"content_safety": 1}}]}, "agent_diagnostics": {}}, "timestamp": 1716400001.8}
+data: {"type": "images", "payload": {"product1": "https://..."}, "timestamp": 1716400001.5}
+
+data: {"type": "content", "payload": " that might interest you...", "timestamp": 1716400001.8}
 
 data: [DONE]
 ```
 
-`model_usage.text_embedding.calls` counts embedding attempts made for the
-agent's semantic queries.
-
 ### POST `/query/timing`
 
-Processes a query and returns detailed timing information for performance
-analysis. It uses the same durable start, terminal finalize, and exact finalized
-replay lifecycle as `/query/stream`; the public `QueryResponse` shape is
-unchanged.
+Processes a query and returns detailed timing information for performance analysis.
 
 **Request Body:** `QueryRequest`
 
@@ -620,12 +187,10 @@ unchanged.
 
 **Example Request:**
 ```bash
-curl -X POST "http://localhost:8009/query/timing" \
+curl -X POST "http://localhost:3000/api/query/timing" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
-    "conversation_id": "conversation_abc",
-    "cart_id": "cart_abc",
     "query": "Show me red dresses under $100"
   }'
 ```
@@ -634,664 +199,14 @@ curl -X POST "http://localhost:8009/query/timing" \
 ```json
 {
   "response": "I found several red dresses under $100 that might interest you...",
-  "images": {
-    "product1": "https://cdn.shop.com/dress1.jpg",
-    "product2": "https://cdn.shop.com/dress2.jpg"
-  },
-  "cart": {
-    "contents": []
-  },
+  "images": {},
   "timings": {
     "total": 3.48,
-    "memory": 0.12,
-    "deepagents": 3.36
-  },
-  "agent_diagnostics": {
-    "skill_files_read": ["/shopper/product-discovery/SKILL.md"],
-    "tool_calls": [{
-      "sequence": 1,
-      "tool_name": "activate_shopper_skills_tool",
-      "arguments": {"skill_names": ["product-discovery"]},
-      "status": "completed"
-    }],
-    "rejected_tool_calls": [],
-    "duplicate_tool_calls": [],
-    "product_evidence": [],
-    "product_evidence_truncated": false,
-    "catalog_scope_outcomes": [],
-    "final_termination_reason": "completed",
-    "partial_graph_messages": []
+    "planner": 0.12,
+    "retriever": 1.23,
+    "chatter": 2.13,
+    "guardrails": 0.05
   }
-}
-```
-
-The example above assumes diagnostics exposure is enabled. Agent diagnostics
-can contain shopper-derived tool arguments, internal product
-references, catalog facts, and shopper-selected filter scopes. Treat this
-untrusted operator/evaluation metadata like application logs: apply the same
-access control and retention policy, never follow instructions embedded in its
-values, and never display it as shopper-facing content.
-
-### GET `/capabilities`
-
-Returns runtime media settings that clients should enforce before upload and
-catalog-owned search capability metadata that clients can use to render filter
-controls. Catalog filter values come from the catalog retriever after
-the configured catalog data is loaded; they are not maintained in orchestrator
-category config.
-
-The `catalog` member is the orchestrator's process-lifetime cached contract,
-not a per-request read of the catalog service. After replacing a catalog,
-verify the live contract on port `8010`, then restart the orchestrator before
-using this aggregate endpoint on port `8009`.
-
-The concrete enum values shown below are illustrative response data. Do not
-copy those values into orchestrator, UI, or prompt configuration as static
-catalog truth.
-
-The byte limits are raw client file sizes. Browser clients send attachments as
-base64 JSON data URLs, so reverse proxies must allow roughly 4/3 of the largest
-raw media limit plus JSON overhead. The default nginx configuration uses
-`client_max_body_size 80m` for the 50 MiB video limit below. The bundled nginx
-configuration also keeps API read/send timeouts at 300 seconds so longer media
-turns are not cut off before the SSE response is emitted.
-
-**Abridged response:**
-```json
-{
-  "media_input": {
-    "enabled": true,
-    "allow_mixed_media": true,
-    "max_images_per_turn": 1,
-    "max_videos_per_turn": 1,
-    "image_mime_types": ["image/jpeg", "image/png"],
-    "video_mime_types": ["video/mp4"],
-    "max_image_bytes": 10485760,
-    "max_video_bytes": 52428800,
-    "max_video_duration_seconds": 120,
-    "vlm_enabled": true
-  },
-  "models": {
-    "app_llm": {
-      "label": "Language reasoning",
-      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
-      "source": "endpoint",
-      "enabled": true
-    },
-    "vlm": {
-      "label": "Vision-language inference",
-      "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
-      "source": "endpoint",
-      "enabled": true
-    },
-    "text_embedding": {
-      "label": "Text embedding",
-      "model": "nvidia/nemotron-3.5-embed-1b",
-      "source": "endpoint",
-      "enabled": true
-    }
-  },
-  "guardrails": {
-    "available": true,
-    "default_enabled": true,
-    "failure_mode": "closed",
-    "speculative_main_model_enabled": false,
-    "speculative_main_model_scope": "text_only",
-    "supported_modalities": ["text", "image", "video"],
-    "request_override_supported": true,
-    "client_can_disable": true
-  },
-  "catalog": {
-    "catalog_id": "fashion_products",
-    "product_count": 215,
-    "retrieval_modes": ["text"],
-    "image_search_enabled": false,
-    "filters": {
-      "category": {
-        "type": "enum",
-        "operators": ["in"],
-        "source_fields": ["category"],
-        "values": ["apparel", "bags", "eyewear", "footwear", "jewelry"]
-      },
-      "price": {
-        "type": "number",
-        "operators": ["gte", "lte"],
-        "source_fields": ["price"],
-        "min_value": 39.9,
-        "max_value": 269.99,
-        "request_aliases": {"min": "min_price", "max": "max_price"}
-      }
-    },
-    "fields": {
-      "care": {
-        "type": "text",
-        "observed_type": null,
-        "filterable": false,
-        "searchable": true,
-        "detail": true,
-        "taxonomy": false,
-        "operators": [],
-        "source_fields": ["care"],
-        "coverage": {"present": 24, "total": 215},
-        "values": [],
-        "min_value": null,
-        "max_value": null
-      }
-    },
-    "taxonomy": {"category_field": "category", "subcategory_field": "subcategory", "categories": {}}
-  }
-}
-```
-
-### Catalog Retriever GET `/capabilities`
-
-Catalog retriever exposes a separate capability endpoint on the catalog service
-port, usually `http://localhost:8010/capabilities`. This endpoint describes
-which fields are searchable, filterable, or available as details, including
-their observed taxonomy scopes. It is the live contract for the catalog
-snapshot loaded by that catalog-service process; the orchestrator aggregate on
-port `8009` is its cached copy.
-
-**Response:** `CatalogCapabilities`
-
-**Example Response:**
-The concrete values shown below are abridged observed response data. The
-catalog retriever derives them from the loaded JSONL.
-
-```json
-{
-  "catalog_id": "fashion_products",
-  "product_count": 215,
-  "retrieval_modes": ["text"],
-  "image_search_enabled": false,
-  "filters": {
-    "category": {
-      "type": "enum",
-      "operators": ["in"],
-      "source_fields": ["category"],
-      "values": ["apparel", "bags", "eyewear", "footwear", "jewelry"]
-    },
-    "price": {
-      "type": "number",
-      "operators": ["gte", "lte"],
-      "source_fields": ["price"],
-      "min_value": 39.9,
-      "max_value": 269.99,
-      "request_aliases": {"min": "min_price", "max": "max_price"}
-    }
-  },
-  "fields": {
-    "care": {
-      "type": "text",
-      "filterable": false,
-      "searchable": true,
-      "detail": true,
-      "taxonomy": false,
-      "operators": [],
-      "source_fields": ["care"],
-      "coverage": {"present": 24, "total": 215},
-      "values": []
-    }
-  },
-  "taxonomy": {
-    "category_field": "category",
-    "subcategory_field": "subcategory",
-    "categories": {
-      "apparel": {
-        "product_count": 96,
-        "filters": {},
-        "semantic_fields": {},
-        "subcategories": {
-          "dresses": {
-            "product_count": 32,
-            "filters": {"neckline": {"values": [{"value": "v_neck", "count": 19}]}},
-            "semantic_fields": {}
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-### Catalog Retriever POST `/query/text`
-
-Executes a structured text catalog search on the catalog service port, usually
-`http://localhost:8010/query/text`.
-
-The model-facing `search_catalog_tool` takes a list of `scopes`, one per
-advertised category (up to `max_search_scopes_per_call`), and an optional
-`not_covered`. Each scope carries `semantic_query`, pre-retrieval product-agnostic `shopper_guidance`,
-`requested_product_type`, capability-derived `taxonomy` and
-`required_constraints`, `scope_complete`, and optional `search_mode`. It
-contains no model-authored taxonomy relationship or catalog-absence field. The
-schema is generated from Catalog capabilities with exact taxonomy values,
-hard-filter properties and enum values, typed numeric range shape, and
-search-mode values while deliberately omitting cross-field validators. The
-handler translates it into the existing strict semantic search model.
-`requested_product_type` is the shortest product noun or true
-umbrella from the shopper's current turn or direct antecedent. It excludes
-color, material, fit, occasion, weather, and style modifiers. For a genuinely
-open role, it is the one advertised subcategory selected for that role. It is
-`null` for image-only search and for a request that names no product type. The semantic query supplies soft ranking direction
-independently of taxonomy; it need not repeat the selected taxonomy noun.
-Taxonomy and hard constraints are enforced through their structured fields.
-`shopper_guidance` is authored under the active skill before results are known
-and is not sent to the catalog service.
-Each scope accepts at most one category. For a broad request that names no type,
-the model selects exactly one advertised subcategory as the focused starting
-role and names it in `requested_product_type`. That open-role path is forbidden
-when the shopper named the role's type, including an alternative, confirmation,
-comparison, or follow-up. Invalid open-role provenance is rejected rather than
-silently reinterpreted.
-If a shopper-named type is not separately advertised, the model may select one
-faithful advertised parent category while preserving the original type in
-`requested_product_type` and the semantic query. Returned products keep their
-actual catalog categories and are framed as closest alternatives. If neither a
-direct type nor one faithful parent can be selected, the assistant asks one
-concise clarification directly without calling the tool or asserting catalog
-absence. An unsupported modifier does not erase an advertised type, and
-subjective style remains semantic. The duplicate-search
-identity is normalized taxonomy plus hard constraints, so paraphrasing cannot
-repeat a retrieval while a genuinely different hard-filter scope may run within
-`max_catalog_searches_per_turn`. The chain maps generic category/subcategory
-selections to advertised field names and sends the semantic query as a singleton
-`text` list.
-
-One invalid agent search may receive one bounded repair per distinct scope.
-That isolated call receives the capability-derived typed search tool, compact
-server-generated Catalog capabilities, the current shopper message, bounded
-sanitized validator feedback, and the active skill instructions. It may submit
-one corrected search or return no tool call to signal that clarification is
-needed.
-The no-tool response is only branch/control state: the server marks it, discards
-the model prose, and emits `Could you clarify the product type or requirement
-you want me to use?`. If another requested search scope already succeeded, its
-deterministic grounded products precede that clarification. Runtime protects a
-shopper-grounded requested scope across native and strict validation paths. If a
-different shopping tool already completed, the existing grounding editor
-combines its evidence with the fixed clarification. Repair middleware may
-restore only structural `scope_complete`; it does not rewrite catalog fields.
-When strict handler validation has already accepted advertised constraints, its
-feedback may include that finite object and a repaired call that drifts is
-rejected rather than overwritten.
-Malformed or nonempty free-form `unadvertised_requirements` arguments on a
-native schema-invalid call fail closed. A schema-valid, genuinely open role may
-consume that scope's repair for model-owned review: preserve an explicit
-objective must-have, or remove only an inferred or subjective requirement.
-Deterministic code does not parse shopper prose. The
-repair cannot replace a shopper-stated product-scope noun. A successful partial
-search may continue to another valid role with its own one-repair opportunity;
-no scope receives two repairs. Completed scopes and deterministic stop results
-close the loop, and the turn cap is `max_catalog_searches_per_turn` product
-roles (default 10).
-For multi-role output, each pre-retrieval guidance sentence remains grouped with
-products from its originating search. Completed turns get one tools-disabled
-synthesis from collected evidence; search-only drafts pass through grounding,
-with deterministic rendering as fail-closed fallback.
-
-The orchestrator also bounds product-detail reads with
-`max_product_detail_reads_per_turn`. Detail reads are intended for direct
-product fact questions and shortlisted comparisons, not for enriching every
-initial outfit recommendation.
-
-When a cart item matches current-request product evidence, the orchestrator can
-return that product image in a cart or comparison turn. A later turn can obtain
-that evidence from one unique durable same-conversation resolution without
-forcing another catalog search; missing, ambiguous, or stale active-catalog refs
-require clarification or a fresh search.
-
-**Request Body:**
-```json
-{
-  "text": ["practical structured office tote"],
-  "categories": [],
-  "filters": {"subcategory": ["tote_bags"], "price": {"max": 60}},
-  "k": 4,
-  "candidate_k": 215
-}
-```
-
-The catalog endpoint retains a text-list shape for direct/internal compatibility;
-the serving agent uses one entry. The catalog performs embedding generation,
-vector search, candidate fusion, product-ID deduplication, hard filtering,
-thresholding, and deterministic similarity ordering. It performs no
-shopper-language interpretation, query expansion, chat/completion call, or
-learned reranking.
-
-`candidate_k` is optional. When omitted, the current small-catalog default
-covers the complete active snapshot before hard filtering and final trimming to
-`k`. A value above 16384 returns HTTP 422; an accepted value larger than the
-catalog is cut to the catalog's size.
-
-Unknown filter fields, values, taxonomy values, or operators return HTTP 422
-with the catalog's validation message. The orchestrator treats that response as
-non-retryable and does not silently rerun a weakened query. Numeric bounds must
-be finite numbers, not booleans; if any supplied bound is invalid, the complete
-filter request is rejected instead of partially applied. `min`/`gte` are lower-
-bound aliases and `max`/`lte` are upper-bound aliases. Supplying both aliases
-for the same bound is ambiguous and returns HTTP 422. The same rule applies
-across representations: for example, `price.min` cannot be combined with the
-top-level `min_price` compatibility alias. Legacy `categories` may accompany
-non-taxonomy filters, but combining it with an explicit taxonomy filter is
-also ambiguous and returns HTTP 422.
-
-**Response:**
-```json
-{
-  "texts": ["Work Bag | structured tote | accessories,bag\nPRICE: 59.0"],
-  "ids": ["generated:abc123"],
-  "similarities": [0.91],
-  "names": ["Work Bag"],
-  "images": ["/images/work_bag.jpg"],
-  "products": [
-    {
-      "product_id": "generated:abc123",
-      "display_name": "Work Bag",
-      "description": "structured tote",
-      "category": "tote_bags",
-      "price": {"amount": 59.0, "currency": "USD"},
-      "image_url": "/images/work_bag.jpg",
-      "attributes": {"similarity": 0.91}
-    }
-  ],
-  "diagnostics": {
-    "requested_top_k": 4,
-    "candidate_k": 215,
-    "after_filter_count": 1,
-    "returned_count": 1
-  },
-  "no_result_reason": null
-}
-```
-
-Request models reject unknown fields, including client-supplied embedding
-vectors.
-
-### Catalog Retriever GET `/products/{product_id}`
-
-Returns deterministic details for one source product ID from the active
-snapshot. Core mapped roles such as identity, name, description, image, and
-price are returned in top-level contract fields; other source fields marked
-`detail` in the sidecar appear under `attributes`. Accepted source IDs are
-nonempty canonical strings safe for one URL path segment, so the ID returned by
-search round-trips exactly through this endpoint. A missing ID returns HTTP 404.
-
-```json
-{
-  "product_id": "generated:abc123",
-  "display_name": "Classic Black Patent Leather Purse",
-  "description": "A structured black patent leather tote...",
-  "category": "tote_bags",
-  "price": {"amount": 49.9, "currency": "USD"},
-  "image_url": "/images/Classic_Black_Patent_Leather_Purse.jpg",
-  "attributes": {
-    "care": "spot clean with a damp cloth",
-    "composition": "patent leather",
-    "primary_color": "black",
-    "structure": "structured"
-  },
-  "variants": [],
-  "source_uri": null
-}
-```
-
-### Memory Retriever POST `/conversations/{conversation_id}/turn/start`
-
-Starts one durable turn transaction before guardrail, model, or tool work. The
-memory service accepts one active turn per conversation and assigns its ordered
-`sequence`. It returns the authoritative cart and at most
-`MEMORY_RECENT_TURNS` prior non-blocked raw turns. The chain formatter also
-excludes abandoned turns before creating model context. Raw media is not stored;
-the request digest includes ordered media content hashes so exact retries can
-be distinguished safely.
-
-```json
-{
-  "request_id": "request_abc",
-  "shopper_text": "Show me black flats",
-  "cart_user_id": 123,
-  "request_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-  "catalog_revision": "catalog-fingerprint"
-}
-```
-
-```json
-{
-  "turn_id": "8e40575d5e5a4dbca34e1d08a2cb1692",
-  "attempt_id": "bd77b851b3494e37a764e3dfa7500208",
-  "sequence": 4,
-  "replayed": false,
-  "status": "started",
-  "recent_turns": [
-    {
-      "sequence": 3,
-      "shopper_text": "Show me a beige top",
-      "assistant_text": "Here are the grounded beige options.",
-      "status": "completed"
-    }
-  ],
-  "previous_selected_skill_names": ["outfit-styling"],
-  "projection": {
-    "version": 3,
-    "active_anchors": [],
-    "effective_preferences": [],
-    "product_reference_index": [
-      {
-        "candidate_set_id": "candidate-set-event-id",
-        "turn_seq": 3,
-        "catalog_revision": "catalog-fingerprint",
-        "products": [
-          {
-            "ref": "product-123",
-            "name": "Beige Ribbed Top",
-            "category": "apparel",
-            "position": 1
-          }
-        ]
-      }
-    ],
-    "last_turn_id": "prior-turn-id"
-  },
-  "cart": [],
-  "assistant_text": null,
-  "termination_reason": null,
-  "output": null
-}
-```
-
-`projection.product_reference_index` is a compact, bounded index of ordered
-product-card sets derived from durable `candidate_set_presented` events. The
-runtime uses it as read-only context for typed historical resolution; the
-authoritative full product payload remains in the event. The active-anchor and
-preference lanes remain reserved and unused. Its serialized value is capped at
-16,384 characters by retaining the newest complete candidate sets. On an exact retry of a finalized
-turn, `replayed` is `true` and the response includes stored `assistant_text`,
-`termination_reason`, and `output` (`product_results`, `retrieved`,
-`agent_diagnostics`, and `selected_skill_names`). The orchestrator returns that stored output without agent
-execution. Reusing a request ID with different input, retrying a still-started
-turn, or starting another turn while the conversation has an active turn
-returns HTTP 409. These failures insert no new turn and prevent model and
-shopping-tool work.
-
-At memory-service startup and atomically before each new turn start, turns left
-in `started` longer than `MEMORY_TURN_ABANDON_SECONDS` are changed to
-`abandoned`. An exact retry may reopen an abandoned turn only while it is the
-latest sequence in that conversation. The service keeps its turn ID, sequence,
-and request ID but rotates the opaque `attempt_id`; an older abandoned turn is
-superseded and cannot be reopened. This is not a continuous background
-expiration process.
-
-### Memory Retriever POST `/conversations/{conversation_id}/turns/{turn_id}/finalize`
-
-Finalizes a started turn transaction as `completed`, `blocked`, or `failed`.
-The request, any ordered event envelopes, and the compact projection commit
-atomically with the replay output. When finalized `output.product_results`
-contains referenceable product cards, the service derives one ordered
-`candidate_set_presented` event from that server-controlled output. Empty,
-failed, or non-presented candidates do not enter the reference index.
-The `runtime-presented-products` event key is reserved; caller-supplied events
-using it are rejected with HTTP 422.
-
-```json
-{
-  "request_id": "request_abc",
-  "attempt_id": "bd77b851b3494e37a764e3dfa7500208",
-  "assistant_text": "Here are the black flats I found.",
-  "status": "completed",
-  "termination_reason": "completed",
-  "events": [],
-  "output": {
-    "product_results": [],
-    "retrieved": {},
-    "agent_diagnostics": {
-      "final_termination_reason": "completed"
-    }
-  }
-}
-```
-
-```json
-{
-  "turn_id": "8e40575d5e5a4dbca34e1d08a2cb1692",
-  "attempt_id": "bd77b851b3494e37a764e3dfa7500208",
-  "sequence": 4,
-  "replayed": false,
-  "status": "completed",
-  "assistant_text": "Here are the black flats I found.",
-  "termination_reason": "completed"
-}
-```
-
-The caller must echo the `attempt_id` returned by start. An identical finalize
-retry for the current attempt returns the same receipt with `replayed: true`.
-After an abandoned turn is reopened, a late finalize from its old attempt is
-rejected with HTTP 409 `turn_attempt_superseded`; the orchestrator returns a safe
-superseded-attempt response instead of exposing the stale answer or products. A
-generic finalize transport or service failure still preserves the already
-grounded response, its request-scoped graph checkpoint, and records
-`memory_finalize_error`. After successful durable finalization, the orchestrator
-deletes the request-scoped checkpoint identified by that collision-safe
-conversation/request pair. Different final data, a
-request-ID mismatch, duplicate event keys, or an invalid status transition also
-returns a conflict and rolls back the transaction. Event envelopes are stored
-in logical order. Active anchors, preferences, and selections remain reserved;
-only presented-product candidate sets currently update a projection.
-
-### Memory Retriever POST `/conversations/{conversation_id}/products/resolve`
-
-Deterministically resolves a nonempty batch of typed product descriptors against
-that conversation's durable `candidate_set_presented` events. This is an
-internal memory-service API. It performs no catalog, embedding, or model call.
-
-```json
-{
-  "references": [
-    {
-      "reference_id": "chosen_top",
-      "display_name": "Beige Ribbed Top",
-      "turn_sequence": 3
-    }
-  ]
-}
-```
-
-Selectors may include `product_ref`, exact `display_name`, exact `category`,
-`turn_sequence`, or `candidate_set_id`. `ordinal` is one-based and requires a
-turn sequence or candidate-set ID. Matching is case-insensitive after trimming;
-there is no fuzzy or semantic matching. The service accepts at most 20
-descriptors per request.
-
-```json
-{
-  "results": [
-    {
-      "reference_id": "chosen_top",
-      "status": "resolved",
-      "match_count": 1,
-      "matches": [
-        {
-          "product": {
-            "product_id": "product-123",
-            "display_name": "Beige Ribbed Top",
-            "category": "apparel",
-            "image_url": null,
-            "price": null,
-            "availability": "unknown"
-          },
-          "candidate_set_id": "candidate-set-event-id",
-          "turn_sequence": 3,
-          "position": 1,
-          "catalog_revision": "catalog-fingerprint"
-        }
-      ]
-    }
-  ]
-}
-```
-
-Each result is `resolved`, `ambiguous`, or `not_found`. Only a unique match is
-added to the orchestrator's request-local product evidence. Ambiguous and
-missing results return bounded candidates for a concise clarification and never
-authorize a guessed product. The shopper runtime permits at most one batched
-resolver-tool call per turn; a second call is stopped. The current slice does
-not invalidate stored evidence when `catalog_revision` changes.
-
-### Memory Retriever GET `/conversations/{conversation_id}/memory`
-
-Returns the conversation-owned memory the next turn would read, without
-starting a turn or writing anything: the bounded recent-turn window, the latest
-declared and assumed audiences, and the projection. Only
-`product_reference_index` in the projection is consumed by the runtime; the
-other projection lanes are returned as stored. The cart is deliberately absent
-because it outlives the conversation; read it from the orchestrator's
-`GET /cart?cart_id=...`. An
-unknown conversation returns `404` with `conversation_not_found`.
-
-```json
-{
-  "conversation_id": "conversation_abc",
-  "recent_turns": [
-    {
-      "sequence": 1,
-      "shopper_text": "Show me a bag",
-      "assistant_text": "Here are two bags.",
-      "status": "completed"
-    }
-  ],
-  "wearer_audience": [],
-  "assumed_audience": [],
-  "projection": {
-    "version": 1,
-    "active_anchors": [],
-    "effective_preferences": [],
-    "product_reference_index": [
-      {
-        "candidate_set_id": "candidate-set-event-id",
-        "turn_seq": 1,
-        "products": [
-          {"ref": "bag-1", "name": "Structured Tote", "position": 1},
-          {"ref": "bag-2", "name": "Cobalt Crossbody", "position": 2}
-        ]
-      }
-    ],
-    "last_turn_id": "turn-id"
-  }
-}
-```
-
-### Memory Retriever DELETE `/conversations/{conversation_id}`
-
-Deletes that conversation's durable turns, cascaded event envelopes, and
-reserved projection row. It deliberately does not delete cart rows, cart
-mutation replay rows, or the legacy user/context row.
-
-```json
-{
-  "conversation_id": "conversation_abc",
-  "deleted_turns": 4,
-  "deleted_events": 0,
-  "deleted_projection": true
 }
 ```
 
@@ -1321,7 +236,6 @@ Root endpoint with API information.
     "query": "/query",
     "stream": "/query/stream",
     "timing": "/query/timing",
-    "capabilities": "/capabilities",
     "health": "/health",
     "docs": "/docs"
   }
@@ -1334,29 +248,38 @@ Root endpoint with API information.
 
 ```typescript
 interface ErrorResponse {
-  detail: string | object;            // Error message; 422 validation errors carry a list
+  detail: string | Array<Record<string, unknown>>;
 }
 ```
+
+FastAPI validation failures return a list in `detail`; processing failures
+raised before streaming begins return a string. A failure after an SSE stream
+has started is sent as `{"type":"error","payload":"..."}` within the stream.
 
 ### Common Error Codes
 
 | Status Code | Description | Example |
 |-------------|-------------|---------|
-| 400 | Bad Request | Invalid request format |
-| 422 | Validation Error | Missing fields or unsupported catalog constraint |
-| 500 | Internal Server Error | Service unavailable |
-| 503 | Service Unavailable | Model endpoints or catalog index not ready |
+| 422 | Validation Error | Missing required fields |
+| 500 | Internal Server Error | Query processing failed |
 
 **Example Error Response:**
 ```json
 {
-  "detail": "conversation_id and cart_id are required"
+  "detail": [
+    {
+      "type": "missing",
+      "loc": ["body", "user_id"],
+      "msg": "Field required"
+    }
+  ]
 }
 ```
 
 ## ⚡ Rate Limiting
 
-Currently, the API does not implement rate limiting. For production deployments, consider implementing rate limiting based on:
+The blueprint does not implement rate limiting. Do not expose it to untrusted
+clients. Any broader deployment must implement limits such as:
 
 - Requests per minute per user
 - Concurrent connections per user
@@ -1368,24 +291,20 @@ Currently, the API does not implement rate limiting. For production deployments,
 
 **Find dresses by description:**
 ```bash
-curl -X POST "http://localhost:8009/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
-    "conversation_id": "conversation_abc",
-    "cart_id": "cart_abc",
     "query": "Show me summer dresses with floral patterns"
   }'
 ```
 
 **Search by price range:**
 ```bash
-curl -X POST "http://localhost:8009/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
-    "conversation_id": "conversation_abc",
-    "cart_id": "cart_abc",
     "query": "Find shoes under $50"
   }'
 ```
@@ -1394,12 +313,10 @@ curl -X POST "http://localhost:8009/query/stream" \
 
 **Add item to cart:**
 ```bash
-curl -X POST "http://localhost:8009/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
-    "conversation_id": "conversation_abc",
-    "cart_id": "cart_abc",
     "query": "Add the black polka dot dress to my cart",
     "cart": {
       "contents": []
@@ -1409,12 +326,10 @@ curl -X POST "http://localhost:8009/query/stream" \
 
 **View cart contents:**
 ```bash
-curl -X POST "http://localhost:8009/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
-    "conversation_id": "conversation_abc",
-    "cart_id": "cart_abc",
     "query": "What is in my shopping cart?",
     "cart": {
       "contents": [
@@ -1429,12 +344,10 @@ curl -X POST "http://localhost:8009/query/stream" \
 
 **Remove item from cart:**
 ```bash
-curl -X POST "http://localhost:8009/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
-    "conversation_id": "conversation_abc",
-    "cart_id": "cart_abc",
     "query": "Remove the black polka dot dress from my cart",
     "cart": {
       "contents": [
@@ -1451,12 +364,10 @@ curl -X POST "http://localhost:8009/query/stream" \
 
 **Search by uploaded image:**
 ```bash
-curl -X POST "http://localhost:8009/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
-    "conversation_id": "conversation_abc",
-    "cart_id": "cart_abc",
     "query": "Find products similar to this image",
     "image": "base64_encoded_image_data",
     "image_bool": true
@@ -1467,12 +378,10 @@ curl -X POST "http://localhost:8009/query/stream" \
 
 **General questions:**
 ```bash
-curl -X POST "http://localhost:8009/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
-    "conversation_id": "conversation_abc",
-    "cart_id": "cart_abc",
     "query": "What accessories would go well with a red dress?",
     "context": "Previous conversation about summer clothing"
   }'
@@ -1480,12 +389,10 @@ curl -X POST "http://localhost:8009/query/stream" \
 
 **Style advice:**
 ```bash
-curl -X POST "http://localhost:8009/query/stream" \
+curl -X POST "http://localhost:3000/api/query/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
-    "conversation_id": "conversation_abc",
-    "cart_id": "cart_abc",
     "query": "Help me build an outfit for a summer wedding"
   }'
 ```
@@ -1494,12 +401,10 @@ curl -X POST "http://localhost:8009/query/stream" \
 
 **Get detailed timing information:**
 ```bash
-curl -X POST "http://localhost:8009/query/timing" \
+curl -X POST "http://localhost:3000/api/query/timing" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": 123,
-    "conversation_id": "conversation_abc",
-    "cart_id": "cart_abc",
     "query": "Show me red dresses under $100"
   }'
 ```
@@ -1512,7 +417,7 @@ curl -X POST "http://localhost:8009/query/timing" \
 class ShoppingAssistantAPI {
   private baseUrl: string;
 
-  constructor(baseUrl: string = 'http://localhost:8009') {
+  constructor(baseUrl: string = 'http://localhost:3000/api') {
     this.baseUrl = baseUrl;
   }
 
@@ -1561,8 +466,6 @@ const api = new ShoppingAssistantAPI();
 // Stream query
 const stream = await api.streamQuery({
   user_id: 123,
-  conversation_id: "conversation_abc",
-  cart_id: "cart_abc",
   query: "Show me red dresses under $100"
 });
 
@@ -1584,7 +487,7 @@ import json
 import sseclient
 
 class ShoppingAssistantAPI:
-    def __init__(self, base_url: str = "http://localhost:8009"):
+    def __init__(self, base_url: str = "http://localhost:3000/api"):
         self.base_url = base_url
 
     def stream_query(self, request: dict):
@@ -1628,8 +531,6 @@ api = ShoppingAssistantAPI()
 # Stream query
 request = {
     "user_id": 123,
-    "conversation_id": "conversation_abc",
-    "cart_id": "cart_abc",
     "query": "Show me red dresses under $100"
 }
 
@@ -1645,19 +546,11 @@ print(f"Timing: {response['timings']}")
 ## 📝 Notes
 
 - All timestamps are in Unix timestamp format (seconds since epoch)
-- Image data may be raw base64 or a `data:` URL; video media should include
-  `mime_type: "video/mp4"` and is sent through `media[]`
-- The API is the same whether models run on your own GPUs or on NVIDIA-hosted endpoints
-  - The `vlm` model role is enabled by default for image/video media perception
-    and can be set to `disabled`
-  - Content safety is on by default. Turn it off per deployment with
-    `GUARDRAILS_ENABLED=false`, or per request with the request's own
-    `guardrails` flag
-- `/query/stream` uses SSE framing. Token-level Deep Agents streaming is a
-  known follow-up after the harness migration; this slice emits completed turn
-  events rather than live model chunks. The stream includes `products` frames
-  for structured catalog summaries and `metrics` frames for per-turn inference
-  timing summaries.
+- Image data may be a base64 data URI (as sent by the bundled UI) or raw base64;
+  remote URLs and filesystem paths are rejected
+- The API supports both local and cloud-based NIM deployments
+- Content safety is enabled by default but can be disabled per request
+- Streaming responses provide real-time feedback for better user experience
 
 ---
 

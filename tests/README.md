@@ -12,22 +12,18 @@ tests/
 ├── requirements-dev.txt    # Dependencies needed to run the unit suite
 ├── requirements.txt        # Dependencies for the integration scripts
 ├── unit/                   # Offline, hermetic unit tests (see below)
-│   ├── orchestrator/
+│   ├── chain_server/
 │   ├── catalog_retriever/
 │   ├── memory_retriever/
 │   └── guardrails/
 ├── integration/            # End-to-end scripts driving live services
-│   ├── conversations/
-│   │   └── shopping/
-│   │       └── conv_*.yaml # Committed shopping golden conversations
 │   ├── conversation_collector.py
+│   ├── output_collector.py
 │   ├── response_quality.py
 │   ├── time_breakdown.py
-│   └── quality_plots.py
-└── evaluation/             # Challenger/Judge evaluation workflows
-    ├── eval_config.yaml
-    ├── judge_rules.md
-    └── datasets/
+│   ├── quality_plots.py
+│   └── run_tests.sh
+└── examples/               # YAML conversation scenarios consumed by integration scripts
 ```
 
 ## Unit tests
@@ -41,25 +37,32 @@ test or via fixtures in `conftest.py`.
 
 ### Running the unit suite
 
-The repository runner selects the local development/test environment and sets
-host-side shared paths:
+Install the development dependencies into a virtual environment, then run
+`pytest` from the repo root:
 
 ```bash
-python skills/retail-test-runner/scripts/run_retail_tests.py unit
+python3 -m venv .venv-tests
+source .venv-tests/bin/activate
+pip install -r tests/requirements-dev.txt
+
+cd tests
+pytest -q
 ```
 
-Pass focused pytest arguments after `--pytest-args`:
+Common invocations:
 
 ```bash
-python skills/retail-test-runner/scripts/run_retail_tests.py unit \
-  --pytest-args -q unit/catalog_retriever
+pytest unit/chain_server                 # single service
+pytest unit/chain_server/test_cart.py    # single file
+pytest -k "test_add_to_cart"             # keyword match
+pytest --cov=chain_server --cov=catalog_retriever --cov=memory_retriever --cov=guardrails
 ```
 
 ### Writing new unit tests
 
 Fixtures available from `conftest.py`:
 
-- `base_config` / `valid_config_dict`: representative orchestrator configs.
+- `base_config` / `valid_config_dict`: representative chain-server configs.
 - `fake_response_cls`: a tiny `requests.Response` stand-in for HTTP stubs.
 - `make_openai_chat_response`: factory for fake OpenAI chat responses.
 - `stream_writer_capture`: intercepts `langgraph.config.get_stream_writer`
@@ -79,105 +82,16 @@ Guidelines:
 
 The `integration/` folder contains scripts that exercise the full system
 via its public HTTP endpoints. They assume all services are running
-(typically via Docker Compose or the local runner). The committed source of
-truth is `integration/conversations/shopping/conv_*.yaml`.
+(typically via `docker compose up`) and are driven by YAML scenario files
+under `examples/`.
 
-Run endpoint conversations and timing without the paid Judge stage:
-
-```bash
-python skills/retail-test-runner/scripts/run_retail_tests.py integration \
-  --test-path shopping \
-  --skip-quality
-```
-
-The files under `integration/conversations/<TEST_PATH>/conv_*.yaml` are the
-committed golden reference for integration quality checks. Each file contains
-fixed queries plus expected answers. Generated response output, judge output,
-plots, timing summaries, and comparisons are ignored artifacts and should not
-be committed unless that is an explicit project decision.
-
-Endpoint results are written to the ignored directory
-`integration/conversations/<TEST_PATH>/results/`. LLM-as-judge
-outputs are written to the ignored directory
-`integration/conversations/<TEST_PATH>/quality/results/`. Archive completed
-shopping runs and their quality/timing comparisons outside the repository under
-`~/exec-briefs/retail-shopping-assistant/quality/shopping/`; the canonical
-archive stores judged output under `judge/`. In-repo generated folders are
-scratch output, not the reported quality artifact.
-
-The judge stage requires explicit environment configuration:
+Typical flow:
 
 ```bash
-export JUDGE_BASE_URL="<openai-compatible-base-url>"
-export JUDGE_MODEL="<judge-model-name>"
-export JUDGE_API_KEY_ENV="JUDGE_API_KEY"
-export JUDGE_API_KEY="<judge-api-key>"
+export TEST_PATH="2025_08_16"
+bash integration/run_tests.sh
 ```
 
 These are *not* part of the unit suite and are not collected by `pytest`
 by default. They are intended for periodic quality/performance evaluation
 against a deployed stack.
-
-## Replaying fixed conversations
-
-Scripted conversations (journeys, probes and regressions) whose words never change, checked against the
-cart the service holds rather than the wording of the reply.
-
-```bash
-python -m tests.evaluation.src.replay --only J01            # one journey
-python -m tests.evaluation.src.replay --only J01,J02,J13    # several
-python -m tests.evaluation.src.replay --label nightly --parallel
-```
-
-Scenarios in `tests/evaluation/datasets/val/`, transcripts in
-`tests/evaluation/results/val/<label>/transcripts/`. See
-`tests/evaluation/datasets/val/README.md`.
-
-Use it before a merge. Use the challenger to find what nobody thought of; use
-this to confirm it stays fixed.
-
-## Evaluation scaffold
-
-The `evaluation/` folder contains the Challenger/Judge evaluation workflows. It captures
-the planned directory shape, model configuration references, judge rules,
-text/image/style-guide shopping scenario briefs, generated image-shopping
-assets, runnable Challenger/Judge helpers, and ignored generated-results
-location.
-
-Start with:
-
-- `evaluation/eval_config.yaml`: non-secret environment variable references
-  for Challenger and Judge models.
-- `evaluation/judge_rules.md`: optional qualitative scoring rubric.
-- `evaluation/datasets/text_shopping/scenarios.yaml`: text-only scenario
-  briefs with shopper behavior and language cues.
-- `evaluation/datasets/image_shopping/scenarios.yaml`: image-driven scenario
-  briefs that reference asset sidecar ids.
-- `evaluation/datasets/image_shopping/assets/`: generated product images and
-  YAML sidecars for image-shopping evaluation.
-- `evaluation/datasets/style_guide/scenarios.yaml`: styling-skill behavior
-  scenarios covering anchor product, no-anchor discovery, cart styling,
-  mid-browse styling, budget/style blending, comparison, wardrobe gap, and
-  refinement behavior.
-- `evaluation/datasets/style_guide/README.md`: catalog-coupling levels and
-  refresh steps for deployments with a changed catalog.
-- `evaluation/src/challenger.py`: scenario-driven live conversation runner.
-- `evaluation/src/judge.py`: optional saved-run Judge phase.
-- `evaluation/src/report.py`: simple HTML/text report generation.
-
-Typical validation and run commands from the repo root. Source
-`tests/evaluation/.env` first for live Challenger/Judge model calls:
-
-```bash
-PYTHONPATH=tests/evaluation python -m src.challenger --dry-run
-PYTHONPATH=tests/evaluation python -m src.challenger
-PYTHONPATH=tests/evaluation python -m src.challenger --scenario-id text_budget_work_bag
-PYTHONPATH=tests/evaluation python -m src.challenger --all-scenarios --dataset style_guide
-PYTHONPATH=tests/evaluation python -m src.challenger --all-scenarios
-PYTHONPATH=tests/evaluation python -m src.challenger --all-scenarios --dataset text_shopping --dataset image_shopping --dataset style_guide
-PYTHONPATH=tests/evaluation python -m src.judge --latest --enable-judge
-PYTHONPATH=tests/evaluation python -m src.judge tests/evaluation/results/runs/<run_id>/run.yaml
-```
-
-Generated outputs should go under `evaluation/results/` and are ignored except
-for `evaluation/results/.gitkeep`.

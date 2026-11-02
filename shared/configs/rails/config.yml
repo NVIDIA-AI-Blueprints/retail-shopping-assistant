@@ -1,21 +1,19 @@
 models:
   - type: main
     engine: nim
-    model: model-config-managed-main
-    parameters:
-      base_url: http://model-config-managed/v1
+    model: meta/llama-3.1-70b-instruct
     
   - type: content_safety
     engine: nim
-    model: model-config-managed-content-safety
+    model: nvidia/llama-3.1-nemoguard-8b-content-safety
     parameters:
-      base_url: http://model-config-managed/v1
+      base_url: http://content:8000/v1
 
   - type: topic_control
     engine: nim
-    model: model-config-managed-topic-control
+    model: nvidia/llama-3.1-nemoguard-8b-topic-control
     parameters:
-      base_url: http://model-config-managed/v1
+      base_url: http://topic_control:8000/v1
 
 bot_messages:
   refuse to respond: 
@@ -23,7 +21,6 @@ bot_messages:
 
 rails:
   input:
-    parallel: true
     flows:
       - content safety check input $model=content_safety
       - topic safety check input $model=topic_control
@@ -35,6 +32,7 @@ rails:
       context_size: 50
 
 tracing:
-  # Application-level OpenTelemetry records decision metadata only. NeMo's
-  # filesystem tracer is disabled so shopper bodies never land in trace files.
-  enabled: False
+  enabled: True
+  adapters:
+    - name: FileSystem
+      filepath: './traces/traces.jsonl'

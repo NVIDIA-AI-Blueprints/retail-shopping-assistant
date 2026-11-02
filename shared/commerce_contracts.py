@@ -16,7 +16,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 Availability = Literal["in_stock", "out_of_stock", "preorder", "backorder", "unknown"]
 CatalogFilterType = Literal["enum", "enum_list", "number", "text"]
 CatalogFieldType = Literal["enum", "enum_list", "number", "text", "unclassified"]

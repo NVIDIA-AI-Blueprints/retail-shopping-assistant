@@ -9,7 +9,7 @@ import yaml
 EVAL_ROOT = Path(__file__).resolve().parents[2] / "evaluation"
 sys.path.insert(0, str(EVAL_ROOT))
 
-from src.report import generate_report
+from src.report import generate_report  # noqa: E402
 
 
 def _write_run(path: Path, run_id: str, *, completed: int, errors: int) -> None:

@@ -51,7 +51,6 @@ from orchestrator.src.tools import loop_control as tool_loop_control
 from orchestrator.src.tools import policy as policy_mod
 from orchestrator.src.tools import skills as skill_tools
 from orchestrator.src.tools import store as store_tools
-from pydantic import ValidationError
 from shared.commerce_contracts import Cart as CommerceCart
 from shared.commerce_contracts import (
     CartLine,
@@ -8341,7 +8340,6 @@ def test_every_cart_impl_helper_is_callable_by_the_tool_that_wraps_it() -> None:
     """
 
     import inspect
-    import re
 
     from orchestrator.src.runtime import runtime as deepagents_runtime
 

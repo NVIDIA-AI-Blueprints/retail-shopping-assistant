@@ -25,6 +25,7 @@ import pytest
 from catalog_retriever.src.catalog import load_catalog
 from orchestrator.src.catalog_capabilities import CatalogCapabilities
 from orchestrator.src.tools.schemas import _search_catalog_tool_input_model
+from pydantic import ValidationError
 
 #: The catalog the repository ships, read from disk rather than fetched from
 #: the running service: the unit suite runs offline in CI, where nothing is
@@ -116,7 +117,7 @@ def test_a_price_ceiling_with_no_category_is_a_complete_request(model) -> None:
 def test_no_taxonomy_and_no_filter_is_still_refused(model) -> None:
     """Nothing to search on at all. The relaxation is for a scoped request."""
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         model.model_validate(
             {
                 **BASE,
@@ -133,7 +134,7 @@ def test_an_unenforceable_requirement_does_not_scope_a_search(model) -> None:
     """unadvertised_requirements is the field for what the catalog CANNOT
     enforce, so it narrows nothing and must not license an unscoped search."""
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         model.model_validate(
             {
                 **BASE,

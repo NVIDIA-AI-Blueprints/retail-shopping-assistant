@@ -11,7 +11,7 @@ validation contract directly, without touching the real container layout.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 import yaml
@@ -54,7 +54,7 @@ def _clear_model_and_service_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def write_yaml(tmp_path: Path):
     """Helper to drop a YAML config into a temporary directory."""
 
-    def _write(name: str, data: Dict[str, Any]) -> Path:
+    def _write(name: str, data: dict[str, Any]) -> Path:
         path = tmp_path / name
         path.write_text(yaml.safe_dump(data))
         return path

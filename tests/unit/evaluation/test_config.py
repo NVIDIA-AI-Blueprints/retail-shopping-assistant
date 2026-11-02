@@ -10,7 +10,7 @@ import pytest
 EVAL_ROOT = Path(__file__).resolve().parents[2] / "evaluation"
 sys.path.insert(0, str(EVAL_ROOT))
 
-from src.config import ConfigError, load_eval_config, resolve_model_runtime, snapshot_eval_config
+from src.config import ConfigError, load_eval_config, resolve_model_runtime, snapshot_eval_config  # noqa: E402
 
 
 def test_load_eval_config_resolves_runtime_without_snapshot_secret(monkeypatch):

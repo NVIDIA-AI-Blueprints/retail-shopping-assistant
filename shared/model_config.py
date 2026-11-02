@@ -12,13 +12,13 @@ referenced by environment-variable name and are never returned by this module.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import yaml
-
 
 DEFAULT_CONFIG_ROOT = Path("/app/shared/configs")
 MODEL_CONFIG_FILE_NAME = "models.yaml"

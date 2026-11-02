@@ -212,7 +212,7 @@ def _requested_guardrails(requested: bool | None) -> bool:
 async def process_query_stream(request: QueryRequest):
     """
     Stream responses to user queries in real-time.
-    
+
     This endpoint provides streaming responses for responsive UIs
     and chat-like experiences.
     """
@@ -255,13 +255,13 @@ async def process_query_stream(request: QueryRequest):
         raise
     except Exception as e:
         logger.error(f"Error processing streaming query: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 @app.post("/query/timing", response_model=QueryResponse)
 async def process_query_timing(request: QueryRequest):
     """
     Process a query and return detailed timing information.
-    
+
     This endpoint is useful for performance analysis and debugging.
     """
     try:
@@ -314,7 +314,7 @@ async def process_query_timing(request: QueryRequest):
         raise
     except Exception as e:
         logger.error(f"Error processing timing query: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 @app.get("/ready")
 async def readiness_check():
@@ -706,10 +706,7 @@ def _mime_from_data_url(data: str) -> str:
 
 def _data_url_byte_count(data: str) -> int:
     match = _DATA_URL_RE.match((data or "").strip())
-    if not match:
-        encoded = (data or "").strip()
-    else:
-        encoded = match.group(2).strip()
+    encoded = match.group(2).strip() if match else (data or "").strip()
     encoded += "=" * (-len(encoded) % 4)
     try:
         return len(base64.b64decode(encoded, validate=True))

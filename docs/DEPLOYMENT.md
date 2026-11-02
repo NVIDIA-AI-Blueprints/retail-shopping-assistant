@@ -422,11 +422,11 @@ section lists what changes before shoppers can reach it and as traffic grows.
   orchestrator unchanged. Anyone who can reach port 3000 or 8009 can start
   turns, and anyone who learns a `cart_id` can read and change that cart.
   Serve the UI and API over HTTPS.
-- **Keep internal services off public interfaces.** The memory service (8011)
-  binds to loopback. The orchestrator (8009), catalog retriever (8010), rails
-  (8012), Milvus (19530, 9091) and Phoenix (6006) publish on every interface
-  for local convenience. Bind them to `127.0.0.1` or firewall them; only the
-  UI needs to be reachable.
+- **Keep internal services off public interfaces.** The orchestrator (8009),
+  catalog retriever (8010), memory service (8011), rails (8012) and Milvus
+  (19530, 9091) bind to loopback. Phoenix (6006) publishes on every interface
+  for local convenience; bind it to `127.0.0.1` or firewall it. Only the UI
+  needs to be reachable.
 - **Set `GUARDRAILS_CLIENT_CAN_DISABLE=false`.** Guardrails are on by default,
   but a request, such as the UI toggle, may still turn them off, which is
   what a before-and-after demo needs and what an untrusted caller should not

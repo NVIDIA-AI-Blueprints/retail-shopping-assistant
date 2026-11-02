@@ -110,7 +110,7 @@
 - [pytest](https://pypi.org/project/pytest/) ([MIT](https://spdx.org/licenses/MIT.html))
 - [pytest-asyncio](https://pypi.org/project/pytest-asyncio/) ([Apache-2.0](https://spdx.org/licenses/Apache-2.0.html))
 - [pytest-cov](https://pypi.org/project/pytest-cov/) ([MIT](https://spdx.org/licenses/MIT.html))
-- [python-dateutil](https://pypi.org/project/python-dateutil/) ([Dual License](https://spdx.org/licenses/DualLicense.html))
+- [python-dateutil](https://pypi.org/project/python-dateutil/) ([BSD-3-Clause](https://spdx.org/licenses/BSD-3-Clause.html))
 - [python-dotenv](https://pypi.org/project/python-dotenv/) ([BSD-3-Clause](https://spdx.org/licenses/BSD-3-Clause.html))
 - [pytz](https://pypi.org/project/pytz/) ([MIT](https://spdx.org/licenses/MIT.html))
 - [PyYAML](https://pypi.org/project/PyYAML/) ([MIT](https://spdx.org/licenses/MIT.html))

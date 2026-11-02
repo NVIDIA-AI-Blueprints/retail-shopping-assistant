@@ -11,9 +11,9 @@ import pytest
 EVAL_ROOT = Path(__file__).resolve().parents[2] / "evaluation"
 sys.path.insert(0, str(EVAL_ROOT))
 
-import src.challenger as challenger_module
-import src.judge as judge_module
-from src.challenger import (
+import src.challenger as challenger_module  # noqa: E402
+import src.judge as judge_module  # noqa: E402
+from src.challenger import (  # noqa: E402
     OpenAICompatibleChallenger,
     ScenarioContext,
     ShopperTurn,
@@ -26,7 +26,7 @@ from src.challenger import (
     run_scenario,
 )
 
-from src.config import ModelRuntime, chat_completion_options, load_eval_config
+from src.config import ModelRuntime, chat_completion_options, load_eval_config  # noqa: E402
 
 
 def test_judge_flag_overrides_disabled_config(

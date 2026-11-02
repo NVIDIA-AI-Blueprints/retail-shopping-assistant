@@ -469,7 +469,7 @@ def readiness_check(db=Depends(get_db)):
         raise HTTPException(
             status_code=503,
             detail=f"database unavailable: {type(exc).__name__}",
-        )
+        ) from exc
 
     if applied is None or applied < expected:
         raise HTTPException(

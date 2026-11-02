@@ -11,13 +11,13 @@ assistant each time, and "a wedding next week" cannot be planned around.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from orchestrator.src.runtime.prompts import _format_store_date
 
 
 def _block() -> str:
-    return _format_store_date(datetime(2026, 8, 6, 12, 0, tzinfo=timezone.utc))
+    return _format_store_date(datetime(2026, 8, 6, 12, 0, tzinfo=UTC))
 
 
 def test_the_date_is_stated_with_its_weekday() -> None:

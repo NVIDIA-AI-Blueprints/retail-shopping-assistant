@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any
 
 import yaml
 
@@ -26,8 +27,8 @@ class ModelConfig:
     base_url_env: str
     model_env: str
     api_key_env: str
-    base_url: Optional[str]
-    model: Optional[str]
+    base_url: str | None
+    model: str | None
     api_key_required: bool
     disable_thinking: bool
     json_mode: bool
@@ -35,7 +36,7 @@ class ModelConfig:
     max_tokens: int
     timeout_seconds: int
     enabled: bool = True
-    rules_file: Optional[str] = None
+    rules_file: str | None = None
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,7 @@ class ModelRuntime:
     provider: str
     base_url: str
     model: str
-    api_key: Optional[str]
+    api_key: str | None
     disable_thinking: bool
     json_mode: bool
     temperature: float
@@ -93,7 +94,7 @@ class RunConfig:
     random_seed: int
     save_returned_images: bool
     send_asset_descriptions_to_agent: bool
-    compare_to: Optional[str]
+    compare_to: str | None
 
 
 @dataclass(frozen=True)
@@ -350,7 +351,7 @@ def _snapshot_model(model_config: ModelConfig) -> dict[str, Any]:
     }
 
 
-def _env_or_config_value(env_name: str, config_value: Optional[str]) -> str:
+def _env_or_config_value(env_name: str, config_value: str | None) -> str:
     return os.environ.get(env_name, "").strip() or (config_value or "")
 
 
@@ -367,7 +368,7 @@ def _as_str(value: Any, field: str) -> str:
     return value.strip()
 
 
-def _optional_str(value: Any, field: str) -> Optional[str]:
+def _optional_str(value: Any, field: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):

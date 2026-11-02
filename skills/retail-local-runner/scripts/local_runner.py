@@ -19,9 +19,9 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import Iterable, Mapping
 from http.client import HTTPException
 from pathlib import Path
-from typing import Iterable, Mapping
 from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import urlopen

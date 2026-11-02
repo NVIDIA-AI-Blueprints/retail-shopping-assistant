@@ -8,10 +8,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from statistics import mean
-from collections.abc import Mapping
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 import yaml
 
@@ -121,7 +121,7 @@ def judge_run(
     config: EvalConfig,
     run_path: str | Path,
     *,
-    judge: Optional[Judge] = None,
+    judge: Judge | None = None,
     require_enabled: bool = True,
 ) -> dict[str, Any]:
     """Apply the configured Judge to each scenario in ``run.yaml``."""
@@ -409,7 +409,7 @@ def _main() -> int:
     return 0
 
 
-def _resolve_run_path(config: EvalConfig, run_path: Optional[str], *, latest: bool) -> Path:
+def _resolve_run_path(config: EvalConfig, run_path: str | None, *, latest: bool) -> Path:
     if not latest:
         if not run_path:
             raise ConfigError("run_path is required unless --latest is provided.")

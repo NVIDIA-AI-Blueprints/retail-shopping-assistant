@@ -12,7 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from statistics import mean
 from urllib.error import HTTPError, URLError
@@ -97,7 +97,7 @@ def run(cmd: list[str], cwd: Path, env: dict[str, str]) -> int:
 
 
 def utc_timestamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def safe_label(label: str) -> str:
@@ -313,7 +313,7 @@ def archive_integration_run(args: argparse.Namespace, label: str | None = None) 
 
     metadata = {
         "label": label,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "test_path": args.test_path,
         "result_directory": args.result_directory,
         "host": args.host,
@@ -476,7 +476,7 @@ def progress_entry(run_dir: Path, comparison_path: Path | None = None) -> dict[s
     metadata = read_json(run_dir / "metadata.json") or {}
     timing = read_json(run_dir / "timing_summary.json") or {}
     return {
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "label": metadata.get("label", run_dir.name),
         "git_sha": metadata.get("git_sha", ""),
         "git_short_sha": metadata.get("git_short_sha", ""),

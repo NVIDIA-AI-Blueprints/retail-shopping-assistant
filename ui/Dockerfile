@@ -11,36 +11,26 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
+# limitations under the License.
 
-ARG BASE_IMAGE=nvcr.io/nvidia/base/ubuntu:jammy-20260810
+#FROM node:18-alpine
 
-FROM ${BASE_IMAGE} AS build
+FROM nvcr.io/nvidia/base/ubuntu:22.04_20240212
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt update
+RUN apt install -y \
     apt-transport-https \
-    ca-certificates \
     curl \
-    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
+    software-properties-common
+
+RUN curl -sL https://deb.nodesource.com/setup_21.x | bash -
+RUN apt install -y nodejs
 
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
+
 COPY . .
-RUN npm run build
+RUN rm -rf /app/public/images && ln -s /app/shared/images /app/public/images
 
-FROM ${BASE_IMAGE}
+RUN npm install
 
-RUN apt-get update && apt-get install -y --no-install-recommends nginx \
-    && rm -rf /var/lib/apt/lists/* \
-    && chown -R www-data:www-data /var/lib/nginx /var/log/nginx
-
-COPY nginx.conf /etc/nginx/nginx.conf
-COPY --from=build /app/build /usr/share/nginx/html
-
-# Product images are mounted at /app/shared/images by docker-compose, and
-# must be readable by www-data.
-USER www-data
-EXPOSE 3000
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["npm", "run", "start"]

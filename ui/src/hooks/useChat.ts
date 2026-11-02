@@ -10,7 +10,7 @@ import { toast } from 'react-toastify';
 import { MessageData, ApiRequest, StreamingChunk, MessageRole } from '../types';
 import { config } from '../config/config';
 import { 
-  getOrCreateUserSession,
+  getOrCreateUserId, 
   createApiRequest, 
   parseStreamingChunk,
   sleep,
@@ -37,12 +37,10 @@ interface UseChatReturn {
 }
 
 export const useChat = (setNewRenderImage: (value: string) => void): UseChatReturn => {
-  const [userSession, setUserSession] = useState(getOrCreateUserSession());
-  const [userId, setUserId] = useState(userSession.userId);
+  const [userId, setUserId] = useState(getOrCreateUserId());
   const [messages, setMessages] = useState<MessageData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isGuardrailsOn, setIsGuardrailsOn] = useState(config.features.guardrails.defaultState);
-  const guardrailOverrideRef = useRef<boolean | undefined>(undefined);
   const [image, setImage] = useState("");
   const [previewImage, setPreviewImage] = useState("");
   const [lastAssistantIndex, setLastAssistantIndex] = useState<number | null>(null);
@@ -108,9 +106,7 @@ export const useChat = (setNewRenderImage: (value: string) => void): UseChatRetu
   }, []);
 
   const toggleGuardrails = useCallback(() => {
-    const next = !isGuardrailsOn;
-    guardrailOverrideRef.current = next;
-    setIsGuardrailsOn(next);
+    setIsGuardrailsOn(!isGuardrailsOn);
   }, [isGuardrailsOn]);
 
   const sendMessage = useCallback(async (query: string, imageData?: string) => {
@@ -131,12 +127,7 @@ export const useChat = (setNewRenderImage: (value: string) => void): UseChatRetu
       addMessage("assistant" as MessageRole, "loader", "");
 
       // Prepare API request
-      const payload = createApiRequest(
-        userSession,
-        query,
-        imageData || image,
-        guardrailOverrideRef.current
-      );
+      const payload = createApiRequest(userId, query, imageData || image, isGuardrailsOn);
       const url = `${config.api.baseUrl}${config.api.endpoints.stream}`;
 
       // Send request
@@ -248,7 +239,7 @@ export const useChat = (setNewRenderImage: (value: string) => void): UseChatRetu
     } finally {
       setIsLoading(false);
     }
-  }, [userSession, isGuardrailsOn, image, previewImage, addMessage]);
+  }, [userId, isGuardrailsOn, image, previewImage, addMessage]);
 
   const resetChat = useCallback(async () => {
     setMessages([]);
@@ -256,9 +247,7 @@ export const useChat = (setNewRenderImage: (value: string) => void): UseChatRetu
     setPreviewImage("");
     setNewRenderImage("");
     clearUserSession();
-    const nextSession = getOrCreateUserSession();
-    setUserId(nextSession.userId);
-    setUserSession(nextSession);
+    setUserId(getOrCreateUserId());
 
     // Add welcome messages
     addMessage(
@@ -300,4 +289,4 @@ export const useChat = (setNewRenderImage: (value: string) => void): UseChatRetu
     resetChat,
     downloadMessages,
   };
-};
+}; 

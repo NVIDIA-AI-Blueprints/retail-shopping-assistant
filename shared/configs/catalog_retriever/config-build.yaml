@@ -1,0 +1,14 @@
+# Configuration override for build.nvidia.com endpoints
+# This file overrides the embedding endpoints to use cloud-hosted NIMs
+
+# Text embedding endpoint for build.nvidia.com
+text_embed_port: "https://integrate.api.nvidia.com/v1"
+text_model_name: "nvidia/nemotron-3-embed-1b"
+
+# Public multimodal image embedding endpoint
+image_embed_port: "https://integrate.api.nvidia.com/v1"
+image_model_name: "nvidia/llama-nemotron-embed-vl-1b-v2"
+
+# Note: This override will be applied when CONFIG_OVERRIDE=config-build.yaml
+# The base config.yaml will be loaded first, then these values will override
+# the corresponding fields in the base configuration.

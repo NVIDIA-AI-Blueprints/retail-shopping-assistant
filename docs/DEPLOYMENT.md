@@ -4,31 +4,27 @@
 
 - [Overview](#-overview)
 - [Prerequisites](#-prerequisites)
-- [Hosted Endpoints](#-hosted-endpoints)
 - [Deployment Options](#%EF%B8%8F-deployment-options)
-- [Locally Hosted Models](#-locally-hosted-models)
-- [Taking to Production](#-taking-to-production)
+- [Local Deployment](#-local-deployment)
+- [Cloud Deployment](#%EF%B8%8F-cloud-deployment)
+- [Production Deployment](#-production-deployment)
 - [Configuration](#%EF%B8%8F-configuration)
-  - [Model Sampling and Output Limits](#model-sampling-and-output-limits): where each model call's temperature and max tokens are set
 - [Monitoring](#-monitoring)
 - [Troubleshooting](#%EF%B8%8F-troubleshooting)
 
 ## 🎯 Overview
 
-This guide covers deploying the Retail Shopping Assistant. Every model URL and
-model name is set in one file, `.env.example`, which you copy and source.
-`shared/configs/models.yaml` lists the model roles and the variables each one
-reads. Each role can independently use an external endpoint, a locally
-deployed model, or be disabled. Locally
-deployed models are vLLM serving Hugging Face checkpoints from
-`docker-compose-model-local.yaml`.
+This guide covers local development and evaluation deployments of the Retail
+Shopping Assistant. The supplied artifacts are a reference blueprint, not a
+production-ready or multi-tenant service. Host ports bind to loopback by default;
+see [SECURITY.md](../SECURITY.md) before introducing any remote access.
 
 ## 📋 Prerequisites
 
 ### System Requirements
 
 #### Minimum Requirements
-- **OS**: Ubuntu 22.04 LTS or later, or an equivalent Linux distribution
+- **OS**: Ubuntu 20.04+ or equivalent Linux distribution
 - **CPU**: 8+ cores
 - **RAM**: 32GB system memory
 - **Storage**: 50GB available disk space
@@ -38,225 +34,126 @@ deployed models are vLLM serving Hugging Face checkpoints from
 - **OS**: Ubuntu 22.04 LTS
 - **CPU**: 16+ cores
 - **RAM**: 128GB+ system memory
-- **Storage**: 400GB available disk space for locally deployed models
-- **GPUs**: 6x H100 80 GB for locally deployed models (see [GPU Sizing](#gpu-sizing))
+- **Storage**: 100GB+ available disk space
+- **GPUs**: 4x H100 (for local NIM deployment)
 - **Network**: High-speed internet connection
 
 ### Software Dependencies
 
 #### Required Software
-- **Docker**: Version 20.10+ with Docker Compose plugin
+- **Docker Engine**: Version 28.3.3+ with Docker Compose plugin (required for
+  reliable loopback-only port publishing)
 - **NVIDIA Container Toolkit**: For GPU acceleration
 - **NVIDIA Drivers**: Latest compatible drivers
 - **Git**: For repository cloning
-- **Python deploy helper dependencies**: From the cloned repo, install on the
-  host with the same Python interpreter used to run `scripts/model_config.py`:
-  ```bash
-  python -m pip install --user -r requirements-deploy.txt
-  ```
-  The only dependency is PyYAML. Where the system Python has no `pip` and
-  refuses `--user` installs, as on Ubuntu 24.04, install it from the
-  distribution instead and run the helpers with `python3`:
-  ```bash
-  sudo apt-get install -y python3-yaml
-  ```
 
-### Accounts and Keys
+#### Optional Software
+- **Kubernetes**: For downstream product adaptation (not supplied here)
+- **Helm**: For downstream Kubernetes adaptation (not supplied here)
+- **Prometheus**: For monitoring
+- **Grafana**: For visualization
 
-1. **NVIDIA API key** for the hosted endpoints: sign in at
-   [build.nvidia.com](https://build.nvidia.com) and generate a key (it starts
-   with `nvapi-`). No NGC account is needed; the `nvcr.io` images this project
-   uses pull without a login.
-2. **Hugging Face token**, for locally hosted models only: request access to the
-   NemoGuard topic control model's base checkpoint,
-   `meta-llama/Llama-3.1-8B-Instruct` (see
-   [Locally Hosted Models](#-locally-hosted-models)), then create an `HF_TOKEN`.
+### NVIDIA Account Setup
 
-## 🚀 Hosted Endpoints
+1. **Create NVIDIA Account**:
+   - Visit [NVIDIA NGC](https://ngc.nvidia.com/)
+   - Sign up for a free account
 
-Every model role runs on an NVIDIA-hosted endpoint, so this needs no local GPU. It is
-the shortest path for a new environment, and it is the same whether the machine
-is a laptop or a cloud VM.
+2. **Generate API Key**:
+   - Navigate to **API Keys** in your account settings
+   - Generate a new API key
+   - Copy the key (starts with `nvapi-`)
 
-```bash
-git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
-cd retail-shopping-assistant
-
-python -m pip install --user -r requirements-deploy.txt
-
-cp .env.example .env
-$EDITOR .env
-source .env
-
-python scripts/model_config.py show --validate
-python scripts/model_config.py deploy --build
-```
-
-Open `http://localhost:3000`. To watch it come up, or to check what is running:
-
-```bash
-docker compose -f docker-compose.yaml ps
-docker compose -f docker-compose.yaml logs -f
-```
-
-The deploy helper resolves models from `shared/configs/models.yaml`, starts
-only locally deployed models referenced by roles with `source: local_model`, and then
-starts the app stack from `docker-compose.yaml`.
-
-The env file is a sourceable shell profile. Source the profile you want before
-validation or deployment; `COMPOSE_DISABLE_ENV_FILE=1` keeps Docker Compose
-from auto-parsing repo-root `.env` as dotenv and mixing environments.
-
-Copy the template rather than editing it: every `.env.*` is gitignored except
-the templates, so your filled-in copy stays out of git along with its keys.
-
-For an existing deployment, restart the catalog service when changing the
-embedding model or catalog data source. Its fingerprint reuses only
-matching complete collections and rebuilds mismatches. After the catalog is
-healthy, restart the orchestrator so its process-lifetime cached capability
-contract matches the active catalog.
+3. **Accept Terms**:
+   - Accept the terms of service for required NIM containers
+   - Ensure you have access to the NVIDIA Container Registry
 
 ## 🎛️ Deployment Options
 
-Model routing is per role:
+### Option 1: Local NIM Deployment (Recommended)
 
-| `source` | Meaning | Local models started |
-|----------|---------|--------------------|
-| `endpoint` | Use the URL and model in the role's environment variables | none |
-| `local_model` | Start and use the referenced locally deployed model | that service only |
-| `disabled` | Capability is intentionally unavailable | none |
+**Best for**: Local development and evaluation with GPU resources
 
-Use `shared/configs/models.yaml` to choose the source for each role. Copy
-`.env.example` to a private env profile such as `.env` or `.env.hosted`, or
-`.env.local-models.example` to `.env.local-models` for the self-hosted path,
-edit it, then `source` the profile before running validation, deployment, or
-raw Docker Compose commands.
+**Pros**:
+- Maximum performance and low latency
+- Complete privacy and data control
+- No ongoing cloud costs
+- Full customization capabilities
 
-There are two ways to point a role at a model on this machine, and they differ
-in who starts the container:
+**Cons**:
+- Requires significant GPU resources (4x H100)
+- Higher initial hardware investment
+- More complex setup and maintenance
 
-| Approach | How | Who starts vLLM |
-|----------|-----|-----------------|
-| Environment overrides | Keep `source: endpoint` and set `LLM_BASE_URL` and friends to the local container, as `.env.local-models.example` does | **You do**, with `docker compose -f docker-compose-model-local.yaml up` |
-| Declared in `models.yaml` | Set `source: local_model` and `local_service: local-llm` | `python scripts/model_config.py deploy` |
+### Option 2: Cloud NIM Deployment
 
-The [Locally Hosted Models](#-locally-hosted-models) walkthrough below uses the first
-approach, because it self-hosts without editing a tracked file. The consequence
-is that `scripts/model_config.py deploy` prints "No locally deployed models
-required by models.yaml" and starts only the application: nothing in
-`models.yaml` asked for a local service, so there is nothing for it to start.
-That is correct behavior, not a failure. Start the models yourself first, as
-[Step 4](#step-4-start-the-models-then-the-app) does.
+**Best for**: Local development and evaluation without local GPUs
 
-Every model role can move to your own GPUs: the language, media,
-text-embedding and guardrail roles each have a local service in
-`docker-compose-model-local.yaml`, and `.env.local-models.example` points all
-of them there.
+**Pros**:
+- No local GPU requirements
+- Faster initial setup
+- Pay-per-use pricing
+- Managed infrastructure
 
-Feature defaults are declared once, in the service's config file. Compose and
-the env profiles pass the environment variable through without a default of
-their own, so an empty value means "not set" and the config file decides; for
-guardrails, that is `shared/configs/orchestrator/config.yaml`.
+**Cons**:
+- Ongoing cloud costs
+- Network latency
+- Data privacy considerations
+- API rate limits
 
-## 🏠 Locally Hosted Models
+Cloud mode uses `nvidia/llama-nemotron-embed-vl-1b-v2` for image embeddings.
+Local NIM mode continues to use NV-CLIP.
 
-Use this only when this machine will serve the models itself. The local setup
-mirrors the hosted default: Nemotron 3.5 Super answers the shopper and reads
-photo and video uploads, Nemotron 3.5 Embed 1B embeds the catalog, and three
-guardrail judges check each turn. All are locally deployed models: Hugging
-Face checkpoints served by vLLM from `docker-compose-model-local.yaml`:
+> **⚠️ Embedding model migration — existing deployments must reset Milvus.**
+> The text embedder is now `nvidia/nemotron-3-embed-1b`, which emits **2048-dim**
+> vectors (the previous `nv-embedqa-e5-v5` emitted 1024). A collection created by
+> the old model will reject every query with
+> `vector dimension mismatch, expected vector size(byte) 4096, actual 8192`.
+>
+> `docker compose down -v` is **not** sufficient: Milvus data here lives in a host
+> bind-mount (`./catalog_retriever/volumes/milvus`), which survives `-v`. Preserve
+> the directory and force a re-seed at the new dimension:
+> ```bash
+> docker compose -f docker-compose.yaml down -v
+> mv ./catalog_retriever/volumes ./catalog_retriever/volumes.previous
+> ```
+> Fresh checkouts are unaffected. The text collection is 2048-dimensional in
+> both modes. The image collection is 1024-dimensional with local NV-CLIP and
+> 2048-dimensional with the public vision embedder, so switching modes also
+> requires fresh Milvus state.
 
-| Service | Role | Checkpoint | Weights | GPU memory in use | Default GPU |
-|---------|------|------------|---------|-------------------|-------------|
-| `local-llm` | `app_llm`, `vlm` | [`nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16), BF16, tensor parallel 4 | ~249 GB | ~70 GB on each of 4 GPUs | 0-3, its own |
-| `local-embedding` | `text_embedding` | [`nvidia/Nemotron-3.5-Embed-1B-BF16`](https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16) | ~3 GB | up to ~6 GB (`--gpu-memory-utilization=0.08`) | 4, shared |
-| `local-content-safety` | `content_safety` | [`nvidia/Nemotron-3.5-Content-Safety`](https://huggingface.co/nvidia/Nemotron-3.5-Content-Safety) | ~9 GB | ~22 GB | 4, shared |
-| `local-topic-control` | `topic_control` | [`nvidia/llama-3.1-nemoguard-8b-topic-control`](https://huggingface.co/nvidia/llama-3.1-nemoguard-8b-topic-control) LoRA on `meta-llama/Llama-3.1-8B-Instruct` | ~16 GB | ~28 GB | 4, shared |
-| `local-video-safety` | `multimodal_safety` | [`nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8`](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8) | ~35 GB | ~72 GB | 5, its own |
+### Option 3: Hybrid Deployment
 
-Memory in use was measured on H100 80 GB GPUs. It is more than the weights
-because vLLM also reserves a KV cache, plus a few GB of working memory.
+**Best for**: Advanced local evaluation with mixed model-hosting requirements
 
-The chat model figures are for the BF16 checkpoint of Nemotron 3.5 Super, the
-default, which needs four 80 GB GPUs. An NVFP4 checkpoint,
-[`nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4),
-is released for Blackwell GPUs; this guide has not yet validated or sized it.
+**Pros**:
+- Flexibility in resource allocation
+- Cost optimization
+- Scalability options
 
-The default layout needs six 80 GB GPUs. `.env.local-models.example` points
-every role at these services through the environment, so `models.yaml` does not change,
-and adds video to the guarded modalities. As on the hosted path, guardrails
-are on by default for API requests, and the UI's Guardrails toggle starts off
-and turns them on per session; `GUARDRAILS_ENABLED=false` makes off the API
-default. To deploy without them, set
-`GUARDRAILS_AVAILABLE=false` in `.env.local-models`: the three guardrail
-models are not started, which frees GPU 5 and 50 GB of GPU 4, and the UI has
-no Guardrails toggle. The same setting works on the hosted path
-([Guardrails](GUARDRAILS.md#deploying-without-guardrails)).
+**Cons**:
+- More complex configuration
+- Network management overhead
 
-The guardrail service picks its request shape from the model name: the
-dedicated on-topic/off-topic check runs only for a name containing
-`topic-control`, and the Omni video request only for one containing
-`nemotron-3-nano-omni`. The served names in the compose file are chosen to
-match; keep them if you change a checkpoint.
-
-### GPU Sizing
-
-Two models fill their GPUs: the chat model reserves most of four, and Omni
-most of one. The other three are small, so they share one GPU, GPU 4, using
-about 54 of its 80 GB. Each reserves its weights plus a fixed 8 GiB KV cache
-(`--kv-cache-memory-bytes`) rather than a share of the GPU, which vLLM would
-misjudge while its neighbours load at the same time.
-
-| Layout | GPUs (80 GB) | Placement | Set |
-|--------|--------------|-----------|-----|
-| Every model local (default) | 6 | 0-3 chat; 4 embedding, content safety and topic control; 5 video safety | nothing |
-| Every model local, one GPU each | 8 | 0-3 chat; 4 embedding; 5 content safety; 6 topic control; 7 video safety | `LOCAL_CONTENT_SAFETY_GPU=5 LOCAL_TOPIC_CONTROL_GPU=6 LOCAL_VIDEO_SAFETY_GPU=7` |
-| No guardrails | 5 | 0-3 chat; 4 embedding | `GUARDRAILS_AVAILABLE=false` |
-| Guardrails hosted | 5 | 0-3 chat; 4 embedding | comment out the guardrails block in `.env.local-models` ([Step 4](#step-4-start-the-models-then-the-app)) |
-| No guardrails, embedding hosted | 4 | 0-3 chat | `GUARDRAILS_AVAILABLE=false`, and comment out the embedding lines ([Step 4](#step-4-start-the-models-then-the-app)) |
-
-`LOCAL_LLM_GPUS` (with `LOCAL_LLM_TP` set to as many GPUs), `LOCAL_EMBED_GPU`,
-`LOCAL_CONTENT_SAFETY_GPU`, `LOCAL_TOPIC_CONTROL_GPU` and
-`LOCAL_VIDEO_SAFETY_GPU` move any model to other GPU ids.
-
-Omni runs at FP8, which leaves about 32 GB of KV cache on one 80 GB card. Its
-BF16 checkpoint (~66 GB) leaves little room on that card; on a larger GPU, set
-`LOCAL_VIDEO_SAFETY_HF_MODEL` to
-`nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16`.
-
-**You need**
-
-- Docker 20.10+ with the Compose plugin, and the NVIDIA Container Toolkit
-- Your user in the `docker` group (`sudo usermod -aG docker $USER`, then log
-  out and back in), or `sudo` in front of each `docker` command
-- Python 3 with PyYAML on the host, for the deploy helpers (see
-  [Software Dependencies](#software-dependencies))
-- **Six 80 GB GPUs** for the default layout, such as H100 80 GB; see
-  [GPU Sizing](#gpu-sizing) for the other layouts
-- About 400 GB of disk: ~312 GB of checkpoints, most of it the chat model's
-  BF16 weights, plus the three vLLM images the services pull
-- A Hugging Face token with access to the one gated checkpoint: the base
-  checkpoint that the NemoGuard topic control adapter runs on
-  (`meta-llama/Llama-3.1-8B-Instruct`, approved by hand). The other four are
-  public.
-- Network access from the `local-video-safety` container at start, which
-  installs vLLM's audio packages before serving
-
-With every role local, no NGC account or NVIDIA API key is needed: the vLLM
-images come from Docker Hub, the checkpoints from Hugging Face, and the UI's
-`nvcr.io` base image pulls without a login.
+## 🏠 Local Deployment
 
 ### Step 1: Environment Setup
 
 ```bash
+# Clone the repository
 git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
 cd retail-shopping-assistant
-python3 -m pip install --user -r requirements-deploy.txt   # or: sudo apt-get install -y python3-yaml
 
-cp .env.local-models.example .env.local-models
-${EDITOR:-nano} .env.local-models   # set HF_TOKEN
-source .env.local-models
-mkdir -p "$HF_CACHE"
+# Create NIM cache directory
+export LOCAL_NIM_CACHE=~/.cache/nim
+mkdir -p "$LOCAL_NIM_CACHE"
+chmod a+w "$LOCAL_NIM_CACHE"
+
+# Set environment variables
+export NGC_API_KEY=your_nvapi_key_here
+export LLM_API_KEY=$NGC_API_KEY
+export EMBED_API_KEY=$NGC_API_KEY
+export RAIL_API_KEY=$NGC_API_KEY
 ```
 
 ### Step 2: Verify GPU Setup
@@ -266,705 +163,436 @@ mkdir -p "$HF_CACHE"
 nvidia-smi
 
 # Verify Docker GPU support
-docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi
 
 # Check GPU memory
 nvidia-smi --query-gpu=memory.total,memory.used,memory.free --format=csv
 ```
 
-### Step 3: Check Hugging Face Access
-
-The gated checkpoint fails only once its download starts, which can be well
-into the first start. Check the token first; this should print `200` (`403`
-means the access request is still pending or was declined):
+### Step 3: Authenticate with NVIDIA Registry
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" \
-  -H "Authorization: Bearer $HF_TOKEN" \
-  "https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct/resolve/main/config.json"
+# Login to NVIDIA Container Registry
+docker login nvcr.io
+
+# Username: oauthtoken
+# Password: your_nvapi_key_here
 ```
 
-### Step 4: Start the Models, Then the App
+### Step 4: Deploy NIMs
 
 ```bash
-echo "$LOCAL_MODEL_SERVICES"
-docker compose -f docker-compose-model-local.yaml up -d --wait $LOCAL_MODEL_SERVICES
-python3 scripts/model_config.py show --validate
+# Start local NIMs
+docker compose -f docker-compose-nim-local.yaml up -d
+
+# Monitor NIM startup
+docker compose -f docker-compose-nim-local.yaml logs -f
+
+# Wait for all NIMs to be ready (check logs for "ready" messages)
+```
+
+### Step 5: Deploy Application
+
+```bash
+# Build and start application services
 docker compose -f docker-compose.yaml up -d --build
+
+# Monitor application startup
+docker compose -f docker-compose.yaml logs -f
 ```
-
-`LOCAL_MODEL_SERVICES` is set by `.env.local-models` to the model services its
-roles point at: all five by default, and `local-llm local-embedding` with
-`GUARDRAILS_AVAILABLE=false`. `--wait` returns once every model reports healthy. Start the app after that:
-the catalog indexer embeds the catalog once, at startup. The first start
-downloads ~300 GB into `HF_CACHE`, most of it the chat model, and can take an
-hour; follow it with
-`docker compose -f docker-compose-model-local.yaml logs -f local-llm`.
-
-Each new shell needs `source .env.local-models` before these commands.
-
-Both compose files share one Compose project, so `up` on either one warns that
-the other's containers are "orphan containers" and suggests
-`--remove-orphans`. Ignore the warning: that flag would stop the models.
-
-To keep text embedding on the hosted endpoint, comment out the
-`TEXT_EMBED_*` and `EMBED_API_KEY` lines in `.env.local-models`.
-To keep guardrails hosted, comment out the `RAILS_*`, `RAIL_API_KEY` and
-`MULTIMODAL_SAFETY_*` lines there, and set `RAIL_API_KEY` and
-`MULTIMODAL_SAFETY_API_KEY` to build.nvidia.com keys. To leave guardrails out,
-set `GUARDRAILS_AVAILABLE=false` there. Each drops the matching services from
-`LOCAL_MODEL_SERVICES` after the next `source .env.local-models`.
-[GPU Sizing](#gpu-sizing) lists the GPUs each of these layouts needs and the
-variables that move models.
-
-### Step 5: Index the catalog
-
-Serving containers do not index themselves. Rebuilding an index begins by
-dropping the collection, so it must happen exactly once, and a container cannot
-know whether it is the only one doing it.
-
-Under Compose this is already handled: the `catalog-indexer` service runs
-`python -m app.index_catalog` once and exits, and `catalog-retriever` depends on
-its successful completion, so it cannot start against a missing index. `up`
-re-runs it, which covers any change to the catalog data, schema, or embedding
-model.
-
-To index out of band -- forcing a rebuild without cycling Compose, or after
-editing catalog files in place -- run it directly:
-
-```bash
-docker compose exec catalog-retriever python -m app.index_catalog
-```
-
-Safe to repeat and safe to leave unconditionally in a pipeline: it checks the
-catalog fingerprint first and does nothing when the index is already current.
 
 ### Step 6: Verify Deployment
 
-Check `/ready`, not only `/health`. They answer different questions and are
-meant to disagree: `/health` says the process is alive and should not be
-restarted, `/ready` says it should be sent traffic. A catalog container with an
-unbuilt index is alive and unable to answer.
-
 ```bash
+# Check service status
 docker compose -f docker-compose.yaml ps
-docker compose -f docker-compose-model-local.yaml ps
 
-# Each model server lists the model it serves
-for port in 8000 8001 8003 8004 8005; do curl -s http://localhost:$port/v1/models; echo; done
-
-curl http://localhost:8009/ready    # orchestrator
-curl http://localhost:8010/ready    # catalog: 503 until the index is built
-curl http://localhost:8011/ready    # memory: 503 until migrations finish
+# Test API endpoints
 curl http://localhost:3000
+curl http://localhost:3000/api/health
+
+# Check NIM status
+docker compose -f docker-compose-nim-local.yaml ps
 ```
 
-To check the guardrails, open the UI, turn on the **Guardrails** toggle (it
-starts off) and ask something unrelated to shopping; the topic control judge
-should refuse it. With the toggle off the same question gets an answer.
+## ☁️ Cloud Deployment
 
-To check video safety, keep the toggle on and attach
-`tests/evaluation/datasets/val/assets/casual_lady_fall.mp4` with "Find me
-shoes like the ones in this video"; the turn should proceed and report
-"Video safety and retail relevance" as used. Two limits apply to video (see
-[Guardrails](GUARDRAILS.md#media)):
-
-- For about a minute after `local-video-safety` starts, the first videos take
-  longer than `GUARDRAILS_TIMEOUT_SECONDS` (45 s) to judge, so those turns stop
-  with the guardrails-unavailable message. Once one has been judged, later
-  videos take about 2 s.
-- A video with no audio track at all cannot be judged (a silent audio track
-  is fine): it is an `error`, which stops the turn under the default `closed`
-  failure mode.
-
-### Model Metrics
-
-Running the models yourself gets you what a hosted endpoint cannot: no rate
-limit, and the model's own metrics. vLLM serves Prometheus metrics with nothing
-to enable:
+### Step 1: Environment Setup
 
 ```bash
-curl -s http://localhost:8000/metrics | grep -E '^vllm:'
+# Clone the repository
+git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git
+cd retail-shopping-assistant
+
+# Authenticate with NVIDIA Container Registry
+docker login nvcr.io
+# Use oauthtoken as the username and your NGC API key as the password
+
+# Set environment variables for cloud NIMs
+export NGC_API_KEY=your_nvapi_key_here
+export LLM_API_KEY=$NGC_API_KEY
+export EMBED_API_KEY=$NGC_API_KEY
+export RAIL_API_KEY=$NGC_API_KEY
 ```
 
-[PERFORMANCE.md](PERFORMANCE.md) covers reading them.
+### Step 2: Configure Cloud Endpoints
 
-### Stopping
+# Set environment variable
+export CONFIG_OVERRIDE=config-build.yaml
+
+### Step 3: Deploy Application
 
 ```bash
-docker compose -f docker-compose.yaml down
-docker compose -f docker-compose-model-local.yaml down   # if you started them
+# Start application services only
+docker compose -f docker-compose.yaml up -d --build
+
+# Monitor startup
+docker compose -f docker-compose.yaml logs -f
 ```
 
-### On NVIDIA Brev
+### Step 4: Verify Deployment
 
-No GPUs of your own? [NVIDIA Brev](https://developer.nvidia.com/brev) offers
-pay-as-you-go GPU instances; its [documentation](https://docs.nvidia.com/brev/latest/index.html)
-covers creating one. What this project needs from it:
+```bash
+# Check service status
+docker compose -f docker-compose.yaml ps
+```
 
-1. A VM-mode instance with Jupyter, and a secure tunnel on port `3000`. Size the
-   GPUs from [GPU Sizing](#gpu-sizing); against hosted endpoints, any instance works.
-2. In a Jupyter terminal, clone the repository, then run
-   `notebook/1_Getting_Started.ipynb` cell by cell.
-3. Open the tunnel's shareable URL for port 3000, not `localhost:3000`. Start
-   chatting once the catalog indexer logs `index is current`.
+## 🏭 Production Deployment
 
-## 🏭 Taking to Production
+The repository does not ship a supported production deployment. Kubernetes,
+Docker Swarm, public ingress, and multi-user operation require a separate
+security architecture and deployment implementation.
 
-The Compose stack runs everything on one machine for development, demos and
-trusted networks. It has no login, and the cart and conversation IDs the UI
-generates are the only thing that separates one shopper from another. This
-section lists what changes before shoppers can reach it and as traffic grows.
-
-### Secure the Deployment
-
-- **Put authentication in front of `/api`.** The UI proxies `/api/*` to the
-  orchestrator unchanged. Anyone who can reach port 3000 or 8009 can start
-  turns, and anyone who learns a `cart_id` can read and change that cart.
-  Serve the UI and API over HTTPS.
-- **Keep internal services off public interfaces.** The orchestrator (8009),
-  catalog retriever (8010), memory service (8011), rails (8012) and Milvus
-  (19530, 9091) bind to loopback. Phoenix (6006) publishes on every interface
-  for local convenience; bind it to `127.0.0.1` or firewall it. Only the UI
-  needs to be reachable.
-- **Set `GUARDRAILS_CLIENT_CAN_DISABLE=false`.** Guardrails are on by default,
-  but a request, such as the UI toggle, may still turn them off, which is
-  what a before-and-after demo needs and what an untrusted caller should not
-  have.
-- **Image queries carry the image itself.** The catalog retriever refuses an
-  image URL and never fetches one or opens a file for a query; only catalog
-  indexing loads the image URLs and `shared/` paths in your catalog data.
-- **Keep keys in a secret store**, not in env files on disk, and give each role
-  its own key ([Model Endpoints and API Keys](#model-endpoints-and-api-keys)).
-- **Treat conversation turns and replay diagnostics as customer data.**
-  Restrict access to the memory database and its backups, and set a retention
-  and deletion policy; turns are kept until deleted.
-- **Harden the images:** scan them for vulnerabilities, run as non-root, set
-  resource limits and rebuild for security updates.
-
-### Host the Models
-
-Hosted endpoints suit development. For production traffic, data residency or
-cost control, serve the models on your own GPUs with vLLM:
-[Locally Hosted Models](#-locally-hosted-models) covers the services and
-[GPU Sizing](#gpu-sizing) the layouts, from four GPUs to eight.
-
-### Scale Out
-
-- **Orchestrator:** any replica can serve any turn. A turn's graph checkpoint
-  is keyed on `(conversation_id, request_id)`, and the durable record of the
-  conversation lives in the memory service, so nothing ties a conversation to
-  one worker.
-- **Memory service:** SQLite is one file with one writer, so the service runs
-  as a single replica.
-- **Catalog:** the index is built once per catalog and read by every replica;
-  see [Kubernetes](#kubernetes) for running indexing as a Job.
-- **Load balancing:** the bundled UI sends uploaded media as base64 JSON. Keep
-  any reverse proxy request-body limit aligned with
-  `media_input.max_video_bytes` after base64 expansion; with the default
-  50 MiB raw video cap, `nginx.conf` uses `client_max_body_size 80m`. Keep
-  proxy read and send timeouts above the turn budget; the bundled `nginx.conf`
-  uses 300 seconds, and turns stream as server-sent events, so turn off
-  response buffering.
-
-### Back Up and Monitor
-
-- Back up the memory database before upgrades and teardown;
-  [Data Recovery](#data-recovery) has the commands for the SQLite volume.
-- Wire `/health` (liveness) and `/ready` (readiness) into your orchestrator
-  ([Health Checks](#health-checks)) and export traces to your collector
-  ([Observability](OBSERVABILITY.md)).
-
-### Kubernetes
-
-No Kubernetes manifests or Helm chart ship with this repository. These notes
-are for whoever writes them.
-
-#### What is already decided, so it need not be re-decided here
-
-- **No session affinity.** A graph checkpoint is keyed on
-  `(conversation_id, request_id)`, so two turns of one conversation never share
-  one and nothing carries across turns inside a pod. Any orchestrator replica
-  can serve any turn. Verified by running a four-turn conversation, including a
-  referring expression and a cart write, with every turn on a different pod.
-- **Probes are distinct.** `/health` is liveness and stays on the event loop, so
-  a loaded pod answers it instantly and is not killed for being busy. `/ready`
-  is readiness and is allowed to say no. Neither checks a dependency: a
-  readiness probe that fails on a downstream service removes every pod at once
-  and turns a partial outage into a total one.
-- **Draining works.** uvicorn is PID 1 in every container, so SIGTERM starts a
-  drain rather than stopping at a shell. `terminationGracePeriodSeconds` must
-  exceed `SHUTDOWN_GRACE_SECONDS` (160 for the orchestrator, which must clear a
-  turn that may run to `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS`) or the kubelet
-  sends SIGKILL mid-drain.
-- **Streaming.** The Ingress must not buffer and must allow a whole turn:
-  `proxy_buffering off` and a read timeout above the turn budget. Turns are
-  server-sent events over a single long request.
-
-#### What must be decided here
-
-- **Catalog indexing is a Job**, `parallelism: 1`, using the catalog image with
-  `command: ["python", "-m", "app.index_catalog"]`. Run it before the pods that
-  read the index; they will sit unready until it succeeds, which is correct and
-  needs no coordination.
-- **The memory service stays at one replica** on SQLite, on a volume one pod
-  mounts; see [Scale Out](#scale-out).
-- **`shared/` is still a bind mount.** All four services read configuration,
-  data, images, and Python modules from it, and a hostPath does not exist on
-  another node. It is read-only at runtime, so the fix is
-  `COPY ./shared /app/shared` in the four Dockerfiles and dropping the mounts.
-  Open, and deliberately deferred to this work.
+At minimum, production adopters must provide authenticated TLS ingress,
+server-derived identity, per-user authorization, tenant isolation, private
+service networking, secrets management, rate limiting, audit logging, monitoring,
+data-retention controls, dependency and image maintenance, backup/recovery, and a
+deployment-specific threat analysis. Do not adapt the loopback reference Compose
+file by merely publishing its ports.
 
 ## ⚙️ Configuration
 
-### Model Endpoints and API Keys
-
-Each model role has its own endpoint, model name, and key variable, so any one
-of them can be repointed without touching the others. Every URL and model name
-is set in `.env.example`, and nowhere else: `shared/configs/models.yaml` only
-names the variables a role reads, and a role whose variables are empty stops
-the service at startup with the names of the missing variables.
-
-| Role | What it does | Host in `.env.example` | URL and model variables | Key variable |
-|------|--------------|------------------------|-------------------------|--------------|
-| `app_llm` | Answers the shopper and drives tool use | `integrate.api.nvidia.com` | `LLM_BASE_URL`, `LLM_MODEL` | `LLM_API_KEY` |
-| `vlm` | Reads photo and video uploads | `integrate.api.nvidia.com` | `VLM_BASE_URL`, `VLM_MODEL` | `VLM_API_KEY` |
-| `text_embedding` | Embeds the catalog and text queries | `integrate.api.nvidia.com` | `TEXT_EMBED_BASE_URL`, `TEXT_EMBED_MODEL` | `EMBED_API_KEY` |
-| `content_safety` | Checks text and images for unsafe content (guardrails, on by default) | `integrate.api.nvidia.com` | `RAILS_CONTENT_BASE_URL`, `RAILS_CONTENT_MODEL` | `RAIL_API_KEY` |
-| `topic_control` | Checks whether a request is on topic (guardrails) | `integrate.api.nvidia.com` | `RAILS_TOPIC_BASE_URL`, `RAILS_TOPIC_MODEL` | `RAIL_API_KEY` |
-| `multimodal_safety` | Checks video, including embedded audio (guardrails) | `integrate.api.nvidia.com` | `MULTIMODAL_SAFETY_BASE_URL`, `MULTIMODAL_SAFETY_MODEL` | `MULTIMODAL_SAFETY_API_KEY` |
-
-Every role in `.env.example` is on `integrate.api.nvidia.com`, so one
-[build.nvidia.com](https://build.nvidia.com) key in `NVIDIA_API_KEY` runs them
-all: every key variable falls back to it. **A key works only on the host that
-issued it.** When a role is repointed to another host, set that role's key
-variable to a key from that host; a mismatch looks like a broken service, with
-one role returning authentication errors while the others answer normally.
-`python scripts/model_config.py show --validate` reports which URL, model and
-key variables are missing, though it cannot tell whether a present key is the
-right one for its host.
-
-To repoint a role, set its `*_BASE_URL` and `*_MODEL` variables in your
-profile, together: hosts can name the same model differently.
-
 ### Environment Variables
-
-A default written as a `config.yaml` key lives only in
-`shared/configs/orchestrator/config.yaml`; look it up there. The variable
-overrides it, and left empty it leaves the key in place. `docker-compose.yaml`
-passes these variables through empty and `.env.example` leaves most of them
-empty, so change a default in `config.yaml`. A few guardrails variables are set
-in `.env.example` to the same values as `config.yaml`; change those there too. The exception is the model URL and model
-name variables, whose values live only in `.env.example`.
-
-The memory service has no config file; a default written as a constant lives
-in its code, named in the table. `MEMORY_MAX_CONCURRENT_REQUESTS` has one more
-copy, in `memory_retriever/Dockerfile`, because uvicorn's admission limit is
-set there; a unit test fails if the two differ, so change both together.
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `NVIDIA_API_KEY` | Fallback build.nvidia.com key for roles whose own key variable is unset | No | - |
+| `NGC_API_KEY` | NVIDIA NGC API key | Yes | - |
 | `LLM_API_KEY` | Language model API key | Yes | - |
-| `LLM_BASE_URL` / `LLM_MODEL` | Shopping agent endpoint and model | Yes | `.env.example` |
-| `TEXT_EMBED_BASE_URL` / `TEXT_EMBED_MODEL` | Catalog text embedding endpoint and model | Yes | `.env.example` |
-| `APP_LLM_TEMPERATURE` | Temperature for the shopping agent and grounding editor; see [Model Sampling and Output Limits](#model-sampling-and-output-limits) | No | `config.yaml`: `llm_temperature` |
-| `APP_LLM_FREQUENCY_PENALTY` | Optional frequency penalty for the same calls | No | off |
-| `LLM_MAX_OUTPUT_TOKENS` | Shopping agent output ceiling per call | No | `config.yaml`: `llm_max_output_tokens` |
-| `GROUNDING_EDITOR_MAX_OUTPUT_TOKENS` | Grounding editor output ceiling per call | No | `config.yaml`: `grounding_editor_max_output_tokens` |
-| `VLM_BASE_URL`, `VLM_MODEL` | Media perception endpoint and model; set separately from `LLM_*` | Yes | `.env.example`, the same model as `app_llm` |
-| `VLM_API_KEY` | Optional VLM media perception API key; Compose falls back to `NVIDIA_API_KEY` when unset | When `vlm` uses an authenticated endpoint and `NVIDIA_API_KEY` is unset | `NVIDIA_API_KEY` |
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
 | `RAIL_API_KEY` | Guardrails API key | Yes | - |
-| `GUARDRAILS_URL` | Orchestrator URL for the guardrail service | No | `http://rails:8012` |
-| `RAILS_CONTENT_BASE_URL` / `RAILS_CONTENT_MODEL` | Endpoint and model for current text/image content safety | With guardrails | `.env.example` |
-| `RAILS_TOPIC_BASE_URL` / `RAILS_TOPIC_MODEL` | Topic-control endpoint and model. The dedicated Topic Control model is preferred; selecting Content Safety applies the configured retail policy through `custom_policy` | With guardrails | `.env.example` |
-| `MULTIMODAL_SAFETY_API_KEY` | Key for the independently routed video safety judge | When the video safety endpoint requires authentication | `RAIL_API_KEY` |
-| `MULTIMODAL_SAFETY_BASE_URL` | OpenAI-compatible endpoint for the video safety judge | With guardrails | `.env.example` |
-| `MULTIMODAL_SAFETY_MODEL` | Video safety model, independent of perception | With guardrails | `.env.example` |
-| `MULTIMODAL_SAFETY_VIDEO_FPS` | Temporal sampling rate sent to Nemotron Omni. The complete video object and embedded audio are submitted, but the model evaluates sampled frames | No | `rails.py` (2.0) |
-| `MULTIMODAL_SAFETY_USE_AUDIO` | `false` leaves the video's audio out of the judgement, for an Omni endpoint that rejects audio | No | `rails.py` (true) |
-| `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the content and topic input rails in `parallel` or `sequential` mode | No | `shared/configs/rails/config.yml`: `rails.input.parallel` (parallel) |
-| `GUARDRAILS_AVAILABLE` | `false` deploys without guardrails: no guardrail model is called or needs a key, `.env.local-models` starts no guardrail model, the UI hides the Guardrails toggle, and a request with `guardrails: true` gets a 400. Cannot be combined with `GUARDRAILS_ENABLED=true`. Read from the environment only, as both services and `.env.local-models` need it | No | true |
-| `GUARDRAILS_ENABLED` | Default orchestrator guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Set false to turn guardrails off by default | No | `config.yaml`: `guardrails_enabled` (on; off when `GUARDRAILS_AVAILABLE=false`) |
-| `GUARDRAILS_CLIENT_CAN_DISABLE` | With guardrails enabled, whether a request's `guardrails: false` is honoured. On by default, so the UI toggle can show before and after; set `false` to lock guardrails on | No | true |
-| `GUARDRAILS_FAILURE_MODE` | Required-check error/timeout behavior: `open` bypasses and `closed` stops the turn. Explicit unsafe decisions always block in either mode | No | `config.yaml`: `guardrails_failure_mode` (closed) |
-| `GUARDRAILS_TIMEOUT_SECONDS` | Timeout for each isolated guardrail service decision. Both services read it: the orchestrator bounds its call, the guardrail service bounds the judges behind it | No | `config.yaml`: `guardrails_timeout_seconds`, and `rails.py` (45.0) |
-| `GUARDRAILS_SPECULATIVE_MAIN_MODEL_ENABLED` | For guarded text-only turns, overlap the first app-model step with input guardrails while holding every tool behind the allow decision. Reduces latency but blocked turns can still incur one app-model request. Media remains sequential | No | `config.yaml`: `guardrails_speculative_main_model_enabled` (off) |
-| `GUARDRAILS_SUPPORTED_MODALITIES` | Modalities enforced by guardrails and advertised to clients | No | `config.yaml`: `guardrails_supported_modalities` |
-| `DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` | Shared deadline for the Deep Agents graph and grounding editor before the durable turn fails cleanly | No | `config.yaml`: `deepagents_execution_timeout_seconds` |
-| `DEEPAGENTS_RECURSION_LIMIT` | Maximum model-and-tool rounds in one turn before the graph stops | No | `config.yaml`: `deepagents_recursion_limit` |
-| `GROUNDING_EDITOR_RESERVE_SECONDS` | Slice of the turn deadline held back so the grounding editor can still run after the agent loop | No | `config.yaml`: `grounding_editor_reserve_seconds` |
-| `GROUNDING_REWRITE_ENABLED` | Let the grounding editor rewrite a reply that drifted from tool evidence | No | `config.yaml`: `grounding_rewrite_enabled` |
-| `GROUNDING_REWRITE_MAX_EVIDENCE_CHARS` | Ceiling on the evidence passed to that editor | No | `config.yaml`: `grounding_rewrite_max_evidence_chars` |
-| `EXPOSE_AGENT_DIAGNOSTICS` | Expose detailed agent/tool traces in query responses; enable only behind a trusted operator or evaluation surface | No | `config.yaml`: `expose_agent_diagnostics` (off) |
-| `CATALOG_SEARCH_TIMEOUT_SECONDS` | Optional orchestrator timeout for catalog search requests | No | no timeout |
-| `CATALOG_RETRIEVER_URL` / `MEMORY_RETRIEVER_URL` | Where the orchestrator reaches the retrieval services | No | `config.yaml`: `retriever_port`, `memory_port` |
-| `CATALOG_VECTOR_INDEX_TYPE` | Vector index for both catalog collections: `AUTOINDEX` (CPU) or `GPU_CAGRA` (needs the Milvus `-gpu` image); see [Vector Search](VECTOR_SEARCH.md) | No | `catalog_retriever/config.yaml`: `vector_index.type` (`AUTOINDEX`) |
-| `CATALOG_GPU_SEARCH` | With `GPU_CAGRA`, search on the GPU too rather than building on the GPU and searching on the CPU | No | `catalog_retriever/config.yaml`: `vector_index.gpu_search` (off) |
-| `CATALOG_DATA_SOURCE` / `CATALOG_SCHEMA_SOURCE` | Catalog JSONL and schema sidecar paths; see [Catalog Architecture](CATALOG_ARCHITECTURE.md#replace-the-catalog) | No | `catalog_retriever/config.yaml`: `data_source`, `schema_source` |
-| `CATALOG_DB_PORT` | Milvus URI the catalog service connects to | No | `catalog_retriever/config.yaml`: `db_port` |
-| `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-plus-hard-constraint scope executions in one assistant turn; a repeated scope is stopped even when semantic wording changes | No | `config.yaml`: `max_catalog_searches_per_turn` |
-| `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `config.yaml`: `max_product_detail_reads_per_turn` |
-| `CHECKPOINT_STORE` | Deep Agents conversation checkpoint store; currently supports only `memory` | No | `memory` |
-| `MEMORY_DATABASE_URL` | SQLite database for conversation turns, product cards and cart state; Compose puts it on the `memory-data` volume. For more than one memory replica see [Scale Out](#scale-out) | No | Compose: `sqlite:////data/context.db` |
-| `MEMORY_SQLITE_BUSY_TIMEOUT_MS` | SQLite lock wait for the single memory-service writer | No | `DEFAULT_BUSY_TIMEOUT_MS` in `memory_retriever/src/database.py` |
-| `MEMORY_MAX_CONCURRENT_REQUESTS` | Requests the memory service works on at once; sizes its connection pool, its threadpool and uvicorn's admission limit together | No | `DEFAULT_MAX_CONCURRENT_REQUESTS` in `memory_retriever/src/database.py`, and `memory_retriever/Dockerfile` |
-| `MEMORY_TURN_ABANDON_SECONDS` | Age at which startup or the next turn start marks an unfinished `started` turn abandoned | No | `DEFAULT_ABANDONED_SECONDS` in `memory_retriever/src/conversations.py` |
-| `MEMORY_RECENT_TURNS` | Maximum prior context-eligible raw turns returned at the next durable turn start | No | `DEFAULT_RECENT_TURNS_LIMIT` in `memory_retriever/src/conversations.py` |
-| `WEATHER_ENABLED` | Registers the forecast tool with the shopper agent (needs `WEATHER_API_KEY`) | No | `config.yaml`: `weather.enabled` (off) |
-| `WEATHER_API_KEY` | Visual Crossing server-side credential, read indirectly from the variable named by orchestrator weather config | Only when directly constructing an enabled weather client | empty |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Where traces are exported; unset disables export. See [Observability](OBSERVABILITY.md) | No | unset |
-| `OTEL_SERVICE_NAME` | Service name traces are attributed to | No | `orchestrator` |
-| `RELAY_ENABLED` | Route model calls through NeMo Relay for richer LLM spans | No | `config.py`: `relay_enabled` (off); `.env.example` turns it on |
-| `RELAY_OTLP_ENDPOINT` | Where the in-container Relay sends its spans | No | `http://127.0.0.1:4318` |
-| `INSTALL_RELAY` | Build argument that installs the Relay dependency into the orchestrator image; required before `RELAY_ENABLED` can work | No | `false` |
-| `SHUTDOWN_GRACE_SECONDS` | Time the orchestrator and memory service drain in-flight turns before exiting | No | image default |
-| `ORCHESTRATOR_RELOAD` | Reload the orchestrator on source changes; development only | No | off |
-| `HF_TOKEN` | Hugging Face token with access to the gated Llama 3.1 8B Instruct checkpoint | Local only | - |
-| `HF_CACHE` | Hugging Face cache the locally deployed models download into | Local only | `~/.cache/huggingface` |
-| `LOCAL_LLM_HF_MODEL` | Checkpoint the local vLLM server loads | Local only | `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16` |
-| `LOCAL_LLM_GPUS` | Comma-separated GPU ids for the local LLM; supply as many as `LOCAL_LLM_TP` | Local only | `0,1,2,3` |
-| `LOCAL_LLM_TP` | Tensor parallel size for the local LLM | Local only | `4` |
-| `LOCAL_LLM_VLLM_IMAGE` | vLLM image serving the local LLM | Local only | `vllm/vllm-openai:v0.32.0` |
-| `LOCAL_EMBED_GPU` | GPU id for the local embedding model | Local only | `4` |
-| `LOCAL_EMBED_VLLM_IMAGE` | vLLM image serving local embeddings | Local only | `vllm/vllm-openai:v0.32.0` |
-| `LOCAL_CONTENT_SAFETY_GPU` | GPU id for the local content safety model | Local only | `4` |
-| `LOCAL_TOPIC_CONTROL_GPU` | GPU id for the local topic control model | Local only | `4` |
-| `LOCAL_VIDEO_SAFETY_GPU` | GPU id for the local video safety model | Local only | `5` |
-| `LOCAL_VIDEO_SAFETY_HF_MODEL` | Checkpoint the local video safety server loads; the `-BF16` variant needs about twice the memory | Local only | `nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8` |
-| `LOCAL_CONTENT_SAFETY_VLLM_IMAGE` | vLLM image serving the local content safety model | Local only | `vllm/vllm-openai:v0.20.0` |
-| `LOCAL_TOPIC_CONTROL_VLLM_IMAGE` | vLLM image serving the local topic control model | Local only | `vllm/vllm-openai:v0.31.0` |
-| `LOCAL_VIDEO_SAFETY_VLLM_IMAGE` | vLLM image serving the local video safety model; it installs `vllm[audio]` at the same version on start | Local only | `vllm/vllm-openai:v0.20.0` |
+| `LOCAL_NIM_CACHE` | NIM cache directory | Local only | `~/.cache/nim` |
 | `LOG_LEVEL` | Logging level | No | `INFO` |
 | `NODE_ENV` | Node environment | No | `production` |
-| `SHARED_CONFIG_ROOT` | Directory the services read `shared/configs/` from | No | `/app/shared/configs` |
-
-### Weather Tool
-
-The orchestrator ships a provider-neutral daily weather client and
-`get_weather_forecast_tool`, with Visual Crossing as the first adapter. It is
-**off by default**: disabled, it is not registered at all, and startup, health
-checks, shopper turns, and offline tests make no provider request and need no
-weather key.
-
-Enabled, the tool is granted only by the `destination-weather` skill, forecasts
-a place the shopper named within a 15-day horizon, and runs at most twice per
-turn. It has no FastAPI route and no UI of its own.
-
-The complete non-secret configuration is in
-`shared/configs/orchestrator/config.yaml`:
-
-```yaml
-weather:
-  enabled: false
-  provider: visual_crossing
-  base_url: https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline
-  api_key_env: WEATHER_API_KEY
-  timeout_seconds: 3.0
-  max_forecast_horizon_days: 15
-  max_range_days: 15
-```
-
-To turn it on, set `WEATHER_ENABLED=true` and supply `WEATHER_API_KEY` through
-an ignored `.env`, the process environment, or a secret manager. The config
-stores only the variable *name*, never the value, and enabling the client
-without that key fails closed. Compose passes both variables to `orchestrator`
-alone — never to the catalog, memory, guardrail, UI, or local model services —
-and the local process runner enforces the same boundary.
-
-`python scripts/weather_smoke.py` makes at most one provider request, for
-checking credentials. It needs `WEATHER_ENABLED`, `WEATHER_API_KEY`, and
-`WEATHER_SMOKE_ZIP` set, and optionally `WEATHER_SMOKE_DATE` or a
-`WEATHER_SMOKE_START_DATE`/`WEATHER_SMOKE_END_DATE` pair. It deliberately
-prints no location, dates, forecast, key, or URL — only outcome category,
-schema validity, and latency. Nothing runs it automatically.
-
-The adapter normalizes forecast evidence and persists nothing. Before any later
-work displays or stores it, confirm your Visual Crossing plan's attribution,
-storage, sharing, and uncertainty requirements in its
-[pricing terms](https://www.visualcrossing.com/weather-data-editions/) and
-[service terms](https://www.visualcrossing.com/weather-service-terms/).
-
-### Durable Conversation Turns
-
-Compose runs one memory-service SQLite replica at
-`sqlite:////data/context.db` and mounts the `memory-data` named volume at
-`/data`. Its host port is bound to `127.0.0.1:8011`; sibling containers use the
-private Compose network. The service has no authentication, so non-Compose
-deployments must preserve an equivalent internal-only boundary. The chain
-server starts a durable row before guardrail/model/tool work,
-receives bounded model-context-eligible shopper/assistant turns plus the
-authoritative cart, and finalizes the row as `completed`, `blocked`, or
-`failed`. An exact retry of
-a finalized request replays the stored response and output without another
-model turn. Blocked turns remain stored for exact replay and audit but are
-excluded from both the next-turn service projection and the chain prompt
-formatter.
-
-`DEEPAGENTS_EXECUTION_TIMEOUT_SECONDS` is one model-stage deadline shared by the
-active graph and grounding editor. The editor receives only the remaining time.
-A graph timeout records `agent_timeout`, captures bounded partial graph messages,
-clears unsent products and images, and finalizes the durable turn as failed. A
-grounding timeout records `grounding_timeout` and also finalizes as failed;
-search-only evidence uses deterministic catalog rendering, while other turns
-receive a fixed retry/cart-check response instead of the unverified draft. The
-same response rule applies to editor errors and empty or whitespace-only output,
-recorded as `grounding_error`. The request checkpoint is deleted only after finalization
-succeeds. This live deadline is separate from
-`MEMORY_TURN_ABANDON_SECONDS`, which handles unfinished turns left by a crash or
-process loss.
-
-The busy timeout must be non-negative, the abandoned-turn threshold must be positive, and
-`MEMORY_RECENT_TURNS` is bounded by the service to 1–50 records.
-
-SQLite uses WAL mode, foreign-key enforcement, and the configured busy timeout.
-This is a single-writer, single-memory-service deployment boundary, not a shared
-multi-replica conversation store. At memory-service startup and before each
-turn start, unfinished rows older than `MEMORY_TURN_ABANDON_SECONDS` become
-`abandoned`; there is no continuous expiration worker. An exact abandoned
-request retry reopens the same durable turn only when it is still the latest
-conversation sequence, preserving the request ID used by cart idempotency while
-rotating its service-issued `attempt_id`. Older abandoned turns are superseded.
-A finalize must echo the current attempt token, so a late worker cannot overwrite
-a reopened attempt; the orchestrator replaces that stale result with a safe
-superseded-attempt response. Other finalize outages preserve the grounded
-response and add `memory_finalize_error`. Operators must define transcript
-retention and backup policy. Deleting the `memory-data` volume deletes the
-durable transcript, cart, and mutation replay records.
-
-Stored turns contain shopper/assistant text plus bounded replay output and
-ordered event envelopes. Raw uploaded media, model reasoning, and the full graph
-message/tool transcript are not stored there. On finalization, ordered product
-cards are also stored as a `candidate_set_presented` event and folded into a
-compact product-reference projection. The deterministic resolver can recover a
-unique typed reference from those same-conversation events after a orchestrator
-restart or on another worker; zero or multiple matches require clarification.
-The projection keeps the newest complete candidate sets within a 16,384-
-character serialized cap, and the serving runtime permits at most one batched
-resolver call per turn.
-Preferences, sentiment, active anchors, fuzzy/embedding lookup, and
-cross-conversation resolution are not implemented. Catalog revisions are
-recorded when supplied but are not yet used to invalidate stored evidence.
-
-### Graph Checkpointing
-
-`CHECKPOINT_STORE=memory` preserves the in-process development and test
-behavior. Each graph thread is keyed by a collision-safe pair of conversation
-ID and request ID and holds only one request's working Deep Agents state. The runtime deletes it after the
-durable turn finalizes successfully. A finalize failure preserves that request's
-checkpoint for diagnosis or retry instead of discarding the incomplete attempt.
-Checkpoints still disappear when the orchestrator process restarts and are not
-shared across replicas, but they are no longer the source of shopper memory or
-product-reference authorization.
-
-`memory` is currently the only accepted value; an empty or different value
-fails during orchestrator initialization instead of silently falling back to
-process-local state. The durable memory-service turn record, not the graph
-checkpoint, supplies cross-turn continuity. A shared graph backend is therefore
-not required for this request-scoped design; durability and scale are those of
-the memory service ([Scale Out](#scale-out)).
-
-### Store Policy Content
-
-Operator-managed policy content lives in
-`shared/configs/orchestrator/store_policies.yaml`, under `SHARED_CONFIG_ROOT`
-at runtime. The bundled template is disabled. Replace every
-`[Operator placeholder]` title or body, then set `configured: true`; enabled
-content that retains the marker fails closed with `policy_load_failed`. Restart
-the orchestrator after changing the file because policy content is cached on
-first use.
 
 ### Configuration File
 
-Orchestrator service behavior is configured in
-`shared/configs/orchestrator/config.yaml`. Model endpoints are configured
-separately; see [Model Routing](#model-routing):
+The main configuration is in `shared/configs/chain_server/config.yaml`:
 
 ```yaml
+# NIM Endpoints
+llm_port: "http://nemotron:8000/v1"  # or cloud endpoint
+llm_name: "nvidia/nemotron-3-super-120b-a12b"
 retriever_port: "http://catalog-retriever:8010"
 memory_port: "http://memory-retriever:8011"
-guardrails_url: "http://rails:8012"
-memory_length: 16384
-deepagents_recursion_limit: 48
-max_catalog_searches_per_turn: 10
-max_product_detail_reads_per_turn: 10
-guardrails_enabled: true
-guardrails_failure_mode: closed
-guardrails_timeout_seconds: 45.0
-guardrails_speculative_main_model_enabled: false
-guardrails_supported_modalities: [text, image, video]
+rails_port: "http://rails:8012"
+
+# Agent Prompts
+routing_prompt: |
+  You are a retail store assistant that routes customer queries...
+
+chatter_prompt: |
+  You are a helpful shopping assistant specializing in...
 ```
 
-### Updating Catalog Filter Metadata
+### Updating Categories
 
-The active runtime gets available product filters from the catalog retriever
-after the catalog data is loaded. Do not maintain product categories in
-`shared/configs/orchestrator/config.yaml`.
+The system uses a static list of product categories for classification and retrieval. These categories are defined in the configuration file and should be updated when new product types are added to the system.
 
-The sidecar declares field types and uses; every value, range, coverage figure
-and taxonomy scope is discovered from the rows.
+#### Current Categories
 
-The deployment-side part is two paths in
-`shared/configs/catalog_retriever/config.yaml`:
+The following categories are currently supported:
+- **Bags**: Handbags, purses, clutches
+- **Sunglasses**: Eyewear and sun protection
+- **Dresses**: Various dress styles and lengths
+- **Skirts**: Different skirt types and lengths
+- **Top/Blouse/Sweater**: Upper body garments
+- **Shoes**: Footwear including heels, flats, and sandals
+- **Earrings**: Jewelry worn on the lobe or edge of the ear
+- **Bracelets**: Jewelry worn on the wrist or arm
+- **Necklaces**: Jawelry wrong around the neck
+
+#### How to Update Categories
+
+1. **Edit Configuration Files**: Update the categories list in `shared/configs/chain_server/config.yaml`
+2. **Restart Services**: After updating categories, restart the chain server and catalog retriever services
+3. **Update Product Data**: Ensure new products in your catalog are tagged with the appropriate categories
+4. **Test Classification**: Verify that the LLM can properly classify queries into the new categories
+
+#### Configuration File Location
 
 ```yaml
-data_source: "/app/shared/data/enriched_products.jsonl"
-schema_source: "/app/shared/data/enriched_products.schema.yaml"
+# shared/configs/chain_server/config.yaml
+categories: [
+    "bag",
+    "sunglasses", 
+    "dress",
+    "skirt",
+    "top blouse sweater",
+    "shoes",
+    "earrings",
+    "bracelet",
+    "necklace"
+]
 ```
 
-Changing either of those, or the embedding model, changes the service
-fingerprint, so the index must be rebuilt by the `catalog-indexer` service. A
-serving container never indexes itself; until the indexer has run it answers
-`/ready` with 503.
+### Configuration Override System
 
-For the field-role rules, see
-[Catalog Architecture](CATALOG_ARCHITECTURE.md#the-sidecar). For the
-reindex-and-verify sequence, see
-[Replace the catalog](CATALOG_ARCHITECTURE.md#replace-the-catalog).
+The application supports a flexible configuration override system that allows you to switch between different deployment scenarios without modifying the base configuration files.
 
-### Model Routing
+#### How It Works
 
-Model URLs and model names are set in one file, `.env.example`, or the profile
-you copy from it. `shared/configs/models.yaml` holds the rest of the routing:
-which roles exist, each role's `source`, the environment variables it reads for
-its URL, model and key, and the locally deployed model metadata. A `base_url`
-or `model` written on a role in `models.yaml` is rejected at startup, so a value
-cannot hide there. Service behavior stays in each service's normal config file.
+1. **Base Configuration**: Services load their base file from
+   `shared/configs/<service>/`
+2. **Override Detection**: If the `CONFIG_OVERRIDE` environment variable is set, the system looks for an override file
+3. **Merge Process**: The override file values are merged into the base configuration, with override values taking precedence
 
-Each role has a `source`:
+#### Environment Variable
 
-| Source | Use case |
-|--------|----------|
-| `endpoint` | Hosted NVIDIA endpoint, remote model host, or any OpenAI-compatible HTTP endpoint |
-| `local_model` | A locally deployed model started from `docker-compose-model-local.yaml` by the deploy helper |
-| `disabled` | Optional capability intentionally turned off for a deployment |
+| Variable | Description | Example Values |
+|----------|-------------|----------------|
+| `CONFIG_OVERRIDE` | Specifies the override config file name | `config-build.yaml`, `config-custom.yaml` |
 
-If `api_key_env` is set, `show --validate` requires that environment variable
-to be present and the runtime sends it to the model endpoint. For locally
-deployed roles that do not need request-time auth, use `api_key_env: null`.
-Local model container startup credentials are separate and are listed once under
-`local_models.required_env`.
+#### Default Configuration (Local NIMs)
 
-The `vlm` role controls image/video media perception for user uploads. By
-default it uses the same model as `app_llm`, Nemotron 3.5 Super VL, which reads
-photos and video. It is configured separately through `VLM_*`, so replacing the
-app LLM leaves media perception where it is; set `VLM_*` as well to move it.
-It can be set to `disabled` when media perception should be off.
-
-#### Applying a Routing Change
-
-Whichever path you deployed with, these are the two commands to rerun after
-changing your profile or `models.yaml`:
+By default, the application uses local NIM endpoints. No environment variable is needed:
 
 ```bash
-python scripts/model_config.py show --validate
-python scripts/model_config.py deploy --build
+# Deploy with local NIMs (default)
+docker compose -f docker-compose-nim-local.yaml up -d
+docker compose -f docker-compose.yaml up -d --build
 ```
 
-`show --validate` prints the resolved routing for every role without printing
-any key value, and fails if a required API-key or endpoint variable is missing.
-`deploy` starts only the local services that roles actually reference, then the
-app stack.
+**Chain Server Default** (`shared/configs/chain_server/config.yaml`):
+```yaml
+# LLM endpoint for local NIM deployment
+llm_port: "http://nemotron:8000/v1"
+llm_name: "nvidia/nemotron-3-super-120b-a12b"
+```
 
-Keep the env profile sourced while you do it. Without it, the endpoint roles
-have no URL or model, and both commands stop and name the missing variables. A
-`local_model` role ignores those variables and always uses its local service's
-URL and model from `local_models.services`.
+**Catalog Retriever Default** (`shared/configs/catalog_retriever/config.yaml`):
+```yaml
+# Text embedding endpoint for local NIM deployment
+text_embed_port: "http://embedqa:8000/v1"
+text_model_name: "nvidia/nemotron-3-embed-1b"
 
-#### Adding or Changing Models
+# Image embedding endpoint for local NIM deployment
+image_embed_port: "http://nvclip:8000/v1"
+image_model_name: "nvidia/nvclip"
+```
 
-To point an existing role at another model, change its `*_BASE_URL` and
-`*_MODEL` in your profile; `models.yaml` does not change. To add a role, or
-change how one is served, edit its entry in `shared/configs/models.yaml`:
-
+**Guardrails Default** (`shared/configs/rails/config.yml`):
 ```yaml
 models:
-  app_llm:
-    source: endpoint
-    provider: openai_compatible
-    base_url_env: LLM_BASE_URL
-    model_env: LLM_MODEL
-    api_key_env: LLM_API_KEY
+  - type: content_safety
+    engine: nim
+    model: nvidia/llama-3.1-nemoguard-8b-content-safety
+    parameters:
+      base_url: http://content:8000/v1
+
+  - type: topic_control
+    engine: nim
+    model: nvidia/llama-3.1-nemoguard-8b-topic-control
+    parameters:
+      base_url: http://topic_control:8000/v1
 ```
 
-For a Compose-managed locally deployed model, use `source: local_model` and reference a
-service under `local_models.services`:
+#### Cloud NIM Deployment (`config-build.yaml`)
 
+Use this when using NVIDIA API Catalog hosted endpoints:
+
+```bash
+# Set environment variable
+export CONFIG_OVERRIDE=config-build.yaml
+
+# Deploy without local NIMs
+docker compose -f docker-compose.yaml up -d --build
+```
+
+**Chain Server Override** (`shared/configs/chain_server/config-build.yaml`):
+```yaml
+# Public NVIDIA API endpoint
+llm_port: "https://integrate.api.nvidia.com/v1"
+llm_name: "nvidia/nemotron-3-super-120b-a12b"
+```
+
+**Catalog Retriever Override** (`shared/configs/catalog_retriever/config-build.yaml`):
+```yaml
+# Public NVIDIA API endpoint
+text_embed_port: "https://integrate.api.nvidia.com/v1"
+text_model_name: "nvidia/nemotron-3-embed-1b"
+
+# Image embedding endpoint for build.nvidia.com
+image_embed_port: "https://integrate.api.nvidia.com/v1"
+image_model_name: "nvidia/llama-nemotron-embed-vl-1b-v2"
+```
+
+The public vision embedder requires image inputs to be sent with
+`input_type: passage` and `modality: image`; the catalog retriever adds those
+parameters automatically for this model.
+
+**Guardrails Override** (`shared/configs/rails/config-build.yaml`):
 ```yaml
 models:
-  text_embedding:
-    source: local_model
-    provider: openai_compatible
-    local_service: local-embedding
-    api_key_env: null
+  - type: content_safety
+    engine: nim
+    model: nvidia/llama-3.1-nemotron-safety-guard-8b-v3
+    parameters:
+      base_url: https://integrate.api.nvidia.com/v1
+
+  - type: topic_control
+    engine: nim
+    model: nvidia/nemotron-3.5-lightning-30b-a3b
+    parameters:
+      base_url: https://integrate.api.nvidia.com/v1
+      chat_template_kwargs:
+        enable_thinking: false
 ```
 
-Every role takes one of those two shapes. Only the variable prefix changes —
-`LLM_`, `VLM_`, `EMBED_`, and so on — so pointing media perception at its own
-hosted endpoint means the same `endpoint` block with `VLM_BASE_URL`,
-`VLM_MODEL`, and `VLM_API_KEY`. Set the variables in the profile you source,
-then rerun the two commands above.
+Cloud mode uses Llama 3.1 Nemotron Safety Guard 8B V3 plus Nemotron 3.5
+Lightning as the topic classifier. Reasoning is disabled for topic control so
+the rail receives the required `on-topic` or `off-topic` label. Local NIM mode
+continues to use the dedicated content-safety and topic-control NIMs.
 
-#### Model Sampling and Output Limits
+#### Creating Custom Override Files
 
-The orchestrator calls the app LLM in four places. Each call's temperature and
-output token ceiling are set in one place, listed here:
+You can create your own override files for custom configurations:
 
-| Call | Temperature | Max output tokens |
-|------|-------------|-------------------|
-| Shopping agent: picks tools, writes the reply | `llm_temperature` in `shared/configs/orchestrator/config.yaml`, default `0.7`; `APP_LLM_TEMPERATURE` overrides | `llm_max_output_tokens` in the same file, default `4096`; `LLM_MAX_OUTPUT_TOKENS` overrides |
-| Grounding editor: rewrites the draft to match the tools' product data | Same client as the agent: `llm_temperature` | `grounding_editor_max_output_tokens` in the same file, default `3072`; `GROUNDING_EDITOR_MAX_OUTPUT_TOKENS` overrides |
-| Media perception: reads uploaded photos and videos | `0.6`, `_TEMPERATURE` in `orchestrator/src/media_perception.py` | `4096`, `_MAX_TOKENS` in the same file; change `_MAX_ANALYSIS_CHARS` (`16000`) with it, as it caps the analysis passed to the agent |
-| Vocabulary judge: matches shopper words to catalog values | `0`, in `orchestrator/src/category_resolver.py` | `1200`, `_MAX_TOKENS` in the same file |
+1. **Create the override file** in the same directory as the base config:
+   ```bash
+   # For chain server
+   cp shared/configs/chain_server/config.yaml shared/configs/chain_server/config-custom.yaml
+   
+   # For catalog retriever
+   cp shared/configs/catalog_retriever/config.yaml shared/configs/catalog_retriever/config-custom.yaml
+   
+   # For guardrails
+   cp shared/configs/rails/config.yml shared/configs/rails/config-custom.yaml
+   ```
 
-`APP_LLM_FREQUENCY_PENALTY` optionally adds a frequency penalty to the agent
-and grounding editor. It is off when unset.
+2. **Modify the override file** with your custom values:
+   ```yaml
+   # Example: Custom LLM endpoint
+   llm_port: "https://your-custom-endpoint.com/v1"
+   llm_name: "your-custom-model"
+   
+   # Example: Custom embedding endpoint
+   text_embed_port: "https://your-embedding-service.com/v1"
+   text_model_name: "your-embedding-model"
+   
+   # Example: Custom guardrails endpoints
+   models:
+     - type: content_safety
+       engine: nim
+       model: nvidia/llama-3.1-nemoguard-8b-content-safety
+       parameters:
+         base_url: https://your-custom-endpoint.com/v1
+   ```
 
-To change a default so it holds for every deployment and every way of running
-the orchestrator:
+3. **Use the custom override**:
+   ```bash
+   export CONFIG_OVERRIDE=config-custom.yaml
+   docker compose -f docker-compose.yaml up -d --build
+   ```
 
-- **Agent and grounding editor:** edit `llm_temperature`,
-  `llm_max_output_tokens` and `grounding_editor_max_output_tokens` in
-  `shared/configs/orchestrator/config.yaml`. It is the only place these
-  defaults live. It is mounted into the container, so a restart of
-  `orchestrator` picks it up. `.env.example` and `docker-compose.yaml` only
-  pass the overrides through, empty by default.
+#### Switching Between Configurations
 
-- **Media perception and the vocabulary judge:** these have no environment
-  variable or config key. Edit the values in the files named above, then
-  rebuild the orchestrator with `docker compose up -d --build orchestrator`.
-  Compose mounts only `shared/` into the container, so a code edit takes
-  effect only after a rebuild.
+Changing `CONFIG_OVERRIDE` requires Compose to recreate the affected containers;
+`docker compose restart` does not apply changed environment values.
 
-To change the agent's settings for one deployment only, set the environment
-variables in the env profile you source; they win over these defaults. Compose
-passes all four to `orchestrator`.
+```bash
+# Use local NIMs (default - no environment variable needed)
+unset CONFIG_OVERRIDE
+docker compose -f docker-compose.yaml up -d
 
-A reply that reaches its token ceiling is cut off mid-sentence, with no error.
-The model's reasoning counts against the same ceiling, so a ceiling of 1024 can
-end a turn with no tool call and no reply.
+# Switch to cloud NIMs
+export CONFIG_OVERRIDE=config-build.yaml
+docker compose -f docker-compose.yaml up -d
 
-#### Guardrail Defaults
+# Use custom configuration
+export CONFIG_OVERRIDE=config-custom.yaml
+docker compose -f docker-compose.yaml up -d
+```
 
-Guardrails ships enabled and spans two services, so each default lives with
-whichever one reads it. [Guardrails](GUARDRAILS.md) owns that layout, along
-with what a failed check costs and what the shopper is told.
+#### Docker Compose Integration
 
-The `GUARDRAILS_*` and `RAIL_API_KEY` variables above override those defaults
-for one deployment, as everywhere else here.
+You can also set the override in your docker-compose files:
+
+```yaml
+# In docker-compose.yaml
+services:
+  chain-server:
+    environment:
+      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE:-config-local.yaml}
+  
+  catalog-retriever:
+    environment:
+      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE:-config-local.yaml}
+  
+  rails:
+    environment:
+      - CONFIG_OVERRIDE=${CONFIG_OVERRIDE:-config-local.yaml}
+```
+
+Then use it:
+```bash
+# Use local config
+CONFIG_OVERRIDE=config-local.yaml docker compose up -d
+
+# Use cloud config
+CONFIG_OVERRIDE=config-build.yaml docker compose up -d
+```
+
+### Performance Tuning
+
+#### GPU Memory Optimization
+
+```yaml
+# In docker-compose-nim-local.yaml
+environment:
+  - NIM_KVCACHE_PERCENT=.5  # Adjust based on GPU memory
+  - NIM_MAX_BATCH_SIZE=1    # Reduce for memory constraints
+```
+
+#### System Resource Limits
+
+```yaml
+# In docker-compose.yaml
+deploy:
+  resources:
+    limits:
+      memory: 8G
+      cpus: '4.0'
+    reservations:
+      memory: 4G
+      cpus: '2.0'
+```
 
 ## 📊 Monitoring
 
 ### Health Checks
 
 ```bash
-# Check individual services
-curl http://localhost:8009/health  # Orchestrator
-curl http://localhost:8010/health  # Catalog retriever
-curl http://localhost:8011/health  # Memory retriever
-curl http://localhost:8012/health  # Guardrails
-curl http://localhost:3000         # UI
+# Docker Compose: check the public entrypoint and routed chain-server health
+curl http://localhost:3000
+curl http://localhost:3000/api/health
+
+# Inspect internal container health without publishing service ports
+docker compose -f docker-compose.yaml exec chain-server \
+  python -c 'import urllib.request; print(urllib.request.urlopen("http://localhost:8009/health").read().decode())'
+docker compose -f docker-compose.yaml exec catalog-retriever \
+  python -c 'import urllib.request; print(urllib.request.urlopen("http://localhost:8010/health").read().decode())'
+docker compose -f docker-compose.yaml exec memory-retriever \
+  python -c 'import urllib.request; print(urllib.request.urlopen("http://localhost:8011/health").read().decode())'
 ```
 
 ### Logging
@@ -973,28 +601,34 @@ curl http://localhost:3000         # UI
 # View application logs
 docker compose -f docker-compose.yaml logs -f
 
-# View locally deployed model logs
-docker compose -f docker-compose-model-local.yaml logs -f
+# View NIM logs
+docker compose -f docker-compose-nim-local.yaml logs -f
 
 # View specific service logs
-docker compose -f docker-compose.yaml logs -f orchestrator
+docker compose -f docker-compose.yaml logs -f chain-server
 ```
+
+### Metrics and Alerting
+
+The blueprint does not expose Prometheus `/metrics` endpoints or ship Grafana
+dashboards and alerts. Downstream deployments must add application
+instrumentation and monitoring appropriate to their environment.
 
 ## 🛠️ Troubleshooting
 
 ### Common Issues
 
-#### 1. nvcr.io Pull Failures
+#### 1. NIM Container Pull Failures
 
 **Symptoms**: Docker pull errors for nvcr.io containers
 
-The images pull without a login. A stale or wrong saved login can still break
-the pull, so remove it first.
-
 **Solutions**:
 ```bash
-# Drop a saved nvcr.io login
-docker logout nvcr.io
+# Verify that the NGC API key is present without printing it
+test -n "$NGC_API_KEY" && echo "NGC_API_KEY is set" || echo "NGC_API_KEY is missing"
+
+# Re-authenticate
+docker login nvcr.io
 
 # Clear Docker cache
 docker system prune -a
@@ -1012,13 +646,14 @@ curl -I https://nvcr.io
 # Check GPU memory usage
 nvidia-smi
 
-# Move the local models to free GPUs (LOCAL_LLM_GPUS must hold LOCAL_LLM_TP
-# IDs); for example, everything two GPUs up from the default layout:
-LOCAL_LLM_GPUS=2,3,4,5 LOCAL_EMBED_GPU=6 LOCAL_CONTENT_SAFETY_GPU=6 \
-LOCAL_TOPIC_CONTROL_GPU=6 LOCAL_VIDEO_SAFETY_GPU=7 \
-  docker compose -f docker-compose-model-local.yaml up -d --wait $LOCAL_MODEL_SERVICES
+# Reduce batch sizes in config
+# Edit docker-compose-nim-local.yaml
+environment:
+  - NIM_KVCACHE_PERCENT=.3
+  - NIM_MAX_BATCH_SIZE=1
 
-# Or return to hosted endpoints: source .env instead of .env.local-models
+# Restart NIMs
+docker compose -f docker-compose-nim-local.yaml restart
 ```
 
 #### 3. Service Startup Failures
@@ -1037,7 +672,7 @@ docker stats
 docker compose -f docker-compose.yaml ps
 
 # Check port conflicts
-sudo netstat -tulpn | grep -E ':(3000|8009|8010|8011|8012)'
+sudo netstat -tulpn | grep :8000
 ```
 
 #### 4. Performance Issues
@@ -1052,10 +687,12 @@ nvidia-smi -l 1
 # Monitor system resources
 htop
 
-# Bound per-turn work in shared/configs/orchestrator/config.yaml:
-#   deepagents_recursion_limit         graph steps per turn
-#   max_catalog_searches_per_turn      distinct catalog search scopes per turn
-#   max_product_detail_reads_per_turn  product-detail reads per turn
+# Check public endpoint reachability
+curl -sS -o /dev/null -w 'HTTP %{http_code}\n' https://integrate.api.nvidia.com/v1/models
+
+# Optimize configuration
+# Edit shared/configs/chain_server/config.yaml
+top_k_retrieve: 2  # Reduce for faster responses
 ```
 
 #### 5. Authentication Issues
@@ -1064,29 +701,12 @@ htop
 
 **Solutions**:
 ```bash
-# Show which key variables each role needs and whether they are set
-python scripts/model_config.py show --validate
-```
+# Check key permissions
+# Ensure key has access to required NIMs
 
-#### 6. Every Reply Says "I cannot safely validate this request right now"
-
-**Symptoms**: with guardrails on, every turn is refused; with the UI's
-Guardrails toggle off, the same turn works.
-
-**Cause**: the guardrail check errored, and `GUARDRAILS_FAILURE_MODE=closed`
-refuses the turn. Usually `RAIL_API_KEY` is not a build.nvidia.com key with
-access to the guard models, so `integrate.api.nvidia.com` answers 401 or 403.
-It falls back to `NVIDIA_API_KEY`, which works only if that is also a
-build.nvidia.com key.
-
-**Solutions**:
-```bash
-# Set a build.nvidia.com key for the guard models, then recreate the services
-export RAIL_API_KEY="..."
-docker compose -f docker-compose.yaml up -d --force-recreate rails orchestrator
-
-# Or, until you have one, make guardrails off by default
-export GUARDRAILS_ENABLED=false
+# Test API key
+curl -H "Authorization: Bearer $NGC_API_KEY" \
+  https://integrate.api.nvidia.com/v1/models
 ```
 
 ### Debug Mode
@@ -1110,7 +730,7 @@ docker compose -f docker-compose.yaml logs -f
 
 ```bash
 # Restart specific service
-docker compose -f docker-compose.yaml restart orchestrator
+docker compose -f docker-compose.yaml restart chain-server
 
 # Restart all services
 docker compose -f docker-compose.yaml restart
@@ -1122,21 +742,43 @@ docker compose -f docker-compose.yaml up -d --build
 #### Data Recovery
 
 ```bash
-# Back up memory-service SQLite while its writer is stopped
-docker compose stop memory-retriever
-docker run --rm -v retail-shopping-assistant_memory-data:/data \
-  -v $(pwd):/backup alpine tar czf /backup/memory-data_backup.tar.gz -C /data .
-docker compose start memory-retriever
+# Back up the host bind-mounted Milvus state
+tar -czf milvus_backup.tar.gz -C catalog_retriever volumes
 
-# Restore memory-service SQLite while its writer is stopped
-docker compose stop memory-retriever
-docker run --rm -v retail-shopping-assistant_memory-data:/data \
-  -v $(pwd):/backup alpine tar xzf /backup/memory-data_backup.tar.gz -C /data
-docker compose start memory-retriever
+# Restore it only while the stack is stopped
+tar -xzf milvus_backup.tar.gz -C catalog_retriever
 ```
 
-`docker compose down -v` removes `memory-data` and `milvus-data`; back up
-`memory-data` first when durable turns or carts must survive teardown.
+## 🔒 Security Considerations
+
+### Network Security
+
+- Keep the supplied loopback bindings and private service network intact
+- Never bind internal application, database, object-store, or model ports to a
+  non-loopback address or place them behind a remote link
+- Add authenticated TLS ingress before any remote or multi-user access
+- Derive user identity and authorization server-side
+
+### Data Security
+
+- Encrypt sensitive data at rest
+- Use secure API keys
+- Implement access controls
+- Regular security updates
+
+### Container Security
+
+- Scan images for vulnerabilities
+- Use non-root users
+- Implement resource limits
+- Regular image updates
+
+## 📈 Scaling
+
+Scaling is outside the supplied reference deployment. It requires the production
+controls described above, including authenticated ingress, server-derived
+identity, shared-state and tenant-isolation design, network policy, and a
+deployment-specific threat analysis.
 
 ---
 

@@ -17,17 +17,14 @@ Goals
 from __future__ import annotations
 
 import os
-import re
-import subprocess
 import sys
-from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Dict, Iterator
 
 import pytest
 
-# Ensure the repo root is importable so tests can `import orchestrator.src...`.
+# Ensure the repo root is importable so tests can `import chain_server.src...`.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -35,125 +32,58 @@ if str(REPO_ROOT) not in sys.path:
 
 # Several service modules read API keys at import time. Set harmless defaults
 # before any test imports them so we never trip on KeyError during collection.
-for _key in ("LLM_API_KEY", "EMBED_API_KEY", "RAIL_API_KEY", "NVIDIA_API_KEY", "VLM_API_KEY"):
+for _key in ("LLM_API_KEY", "EMBED_API_KEY", "RAIL_API_KEY", "NVIDIA_API_KEY"):
     os.environ.setdefault(_key, f"test-{_key.lower()}")
-os.environ.setdefault("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared" / "configs"))
-
-
-@lru_cache(maxsize=1)
-def _env_example_model_endpoints() -> tuple[tuple[str, str], ...]:
-    """Every *_BASE_URL and *_MODEL a clean shell gets from .env.example."""
-
-    result = subprocess.run(
-        ["bash", "-c", "set -a && . ./.env.example && env -0"],
-        cwd=REPO_ROOT,
-        env={"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "")},
-        capture_output=True,
-        check=True,
-    )
-    pairs = (item.split("=", 1) for item in result.stdout.decode().split("\0") if "=" in item)
-    return tuple(
-        (key, value) for key, value in pairs if re.search(r"_(BASE_URL|MODEL)$", key)
-    )
-
-
-@pytest.fixture
-def model_endpoint_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
-    """Set the model URLs and names exactly as .env.example ships them."""
-
-    for key, value in _env_example_model_endpoints():
-        monkeypatch.setenv(key, value)
-    return monkeypatch
 
 
 @pytest.fixture
 def base_config() -> SimpleNamespace:
-    """Return a valid orchestrator-shaped config object.
+    """Return a valid chain-server-shaped config object.
 
-    Agent classes in ``orchestrator`` accept any object with matching
+    Agent classes in ``chain_server`` accept any object with matching
     attributes; using ``SimpleNamespace`` keeps the fixture decoupled from
-    the concrete ``OrchestratorConfig`` pydantic model so we can test agents
+    the concrete ``ChainServerConfig`` pydantic model so we can test agents
     in isolation.
     """
     return SimpleNamespace(
         llm_port="http://localhost:8000/v1",
         llm_name="test-model",
-        llm_api_key_env="LLM_API_KEY",
-        llm_api_key_required=False,
         retriever_port="http://localhost:8010",
         memory_port="http://localhost:8011",
-        guardrails_url="http://localhost:8012",
+        rails_port="http://localhost:8012",
+        routing_prompt="You are a routing assistant.",
+        chatter_prompt="You are a helpful shopping assistant.",
+        categories=[
+            "bag",
+            "sunglasses",
+            "dress",
+            "shoes",
+            "top blouse sweater",
+        ],
+        agent_choices=["cart", "retriever", "chatter"],
         memory_length=16384,
         top_k_retrieve=4,
-        deepagents_recursion_limit=24,
-        deepagents_execution_timeout_seconds=45.0,
-        grounding_editor_reserve_seconds=15.0,
-        max_catalog_searches_per_turn=3,
-        max_product_detail_reads_per_turn=2,
-        grounding_rewrite_enabled=True,
-        grounding_rewrite_max_evidence_chars=12000,
-        llm_temperature=0.0,
-        llm_max_output_tokens=1024,
-        grounding_editor_max_output_tokens=512,
-        expose_agent_diagnostics=False,
-        catalog_search_timeout_seconds=None,
         multimodal=True,
-        media_input=SimpleNamespace(
-            enabled=True,
-            allow_mixed_media=True,
-            max_images_per_turn=1,
-            max_videos_per_turn=1,
-            image_mime_types=["image/jpeg", "image/png"],
-            video_mime_types=["video/mp4"],
-            max_image_bytes=10 * 1024 * 1024,
-            max_video_bytes=50 * 1024 * 1024,
-            max_video_duration_seconds=120,
-        ),
-        vlm_enabled=True,
-        vlm_port="http://localhost:8006/v1",
-        vlm_name="test-vlm",
-        vlm_api_key_env="VLM_API_KEY",
-        vlm_api_key_required=True,
-        guardrails_available=True,
-        guardrails_enabled=True,
-        guardrails_client_can_disable=True,
-        guardrails_failure_mode="closed",
-        guardrails_timeout_seconds=15.0,
-        guardrails_speculative_main_model_enabled=False,
-        guardrails_supported_modalities=["text", "image", "video"],
         unsafe_message="Sorry, I can only help with shopping questions.",
-        guardrails_unavailable_message=(
-            "I cannot safely validate this request right now. Please retry. "
-            "If it involved a cart change, check your cart first."
-        ),
     )
 
 
 @pytest.fixture
-def valid_config_dict() -> dict[str, Any]:
+def valid_config_dict() -> Dict[str, Any]:
     """Dict counterpart of :func:`base_config` for testing pydantic validation."""
     return {
         "llm_port": "http://localhost:8000/v1",
         "llm_name": "test-model",
-        "llm_api_key_env": "LLM_API_KEY",
-        "llm_api_key_required": False,
         "retriever_port": "http://localhost:8010",
         "memory_port": "http://localhost:8011",
-        "guardrails_url": "http://localhost:8012",
+        "rails_port": "http://localhost:8012",
+        "routing_prompt": "You are a routing assistant.",
+        "chatter_prompt": "You are a helpful shopping assistant.",
+        "categories": ["bag", "shoes"],
+        "agent_choices": ["cart", "retriever", "chatter"],
         "memory_length": 16384,
         "top_k_retrieve": 4,
-        "deepagents_recursion_limit": 24,
-        "deepagents_execution_timeout_seconds": 45.0,
-        "grounding_editor_reserve_seconds": 15.0,
-        "max_catalog_searches_per_turn": 3,
-        "max_product_detail_reads_per_turn": 2,
-        "grounding_rewrite_enabled": True,
-        "grounding_rewrite_max_evidence_chars": 12000,
-        "expose_agent_diagnostics": False,
-        "catalog_search_timeout_seconds": None,
         "multimodal": True,
-        "guardrails_enabled": True,
-        "guardrails_failure_mode": "closed",
         "unsafe_message": "Sorry, I can only help with shopping questions.",
     }
 
@@ -164,7 +94,7 @@ class FakeResponse:
     Providing a tiny shim here (rather than in each test file) keeps the
     service tests readable and avoids subtle coupling to the ``requests``
     implementation. Supports the subset of the interface exercised by the
-    orchestrator agents: ``status_code``, ``text``, ``json``,
+    chain-server agents: ``status_code``, ``text``, ``json``,
     ``raise_for_status``.
     """
 
@@ -223,3 +153,28 @@ def make_openai_chat_response():
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
     return _build
+
+
+@pytest.fixture
+def stream_writer_capture(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
+    """Capture LangGraph stream writer payloads emitted by agent ``invoke``.
+
+    Several chain-server agents call ``get_stream_writer()`` and push events
+    through it. For unit tests we intercept the factory and redirect writes
+    into a plain list so assertions can inspect what the agent streamed
+    without standing up the real LangGraph runtime.
+    """
+    from chain_server.src import chatter as chatter_mod
+    from chain_server.src import graph as graph_mod
+
+    captured: list[str] = []
+
+    def _fake_writer() -> Any:
+        def _write(payload: str) -> None:
+            captured.append(payload)
+
+        return _write
+
+    monkeypatch.setattr(chatter_mod, "get_stream_writer", _fake_writer)
+    monkeypatch.setattr(graph_mod, "get_stream_writer", _fake_writer)
+    yield captured

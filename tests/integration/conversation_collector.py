@@ -1,14 +1,21 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
 import argparse
+import math
+import yaml
+import requests
+import time
 import os
 import random
-import time
-import uuid
 
-import requests
-import yaml
+
+def _nonnegative_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a nonnegative number") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("must be a finite, nonnegative number")
+    return parsed
+
 
 parser = argparse.ArgumentParser(
                     prog='ConvTest',
@@ -19,15 +26,10 @@ parser.add_argument('-H', '--host', default='localhost', type=str)
 parser.add_argument('-d', '--result_directory', default='results')
 parser.add_argument('-u', '--uri', default='api/query/timing')
 parser.add_argument(
-    '--disable-guardrails',
-    action='store_true',
-    help='Send guardrails=false in every query payload.',
-)
-parser.add_argument(
-    '--request-timeout',
-    default=120,
-    type=float,
-    help='Seconds to wait for each API request before recording an error.',
+    '--request-delay',
+    default=0.5,
+    type=_nonnegative_float,
+    help='Seconds to wait between requests. Defaults to 0.5.',
 )
 
 args = parser.parse_args()
@@ -37,18 +39,22 @@ sub_path = os.environ["TEST_PATH"]
 INPUT_DIRECTORY = f"conversations/{sub_path}"
 OUTPUT_DIRECTORY = f"{INPUT_DIRECTORY}/{args.result_directory}"
 API_ENDPOINT = f"http://{args.host}:{args.port}/{args.uri}"
-REQUEST_DELAY = 0.5
+REQUEST_TIMEOUT = 210
 
 # Ensure the output directory exists
 os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
 
 # Collect all YAML files in the directory
-yaml_files = [f for f in os.listdir(INPUT_DIRECTORY) if f.endswith('.yaml') or f.endswith('.yml')]
+yaml_files = sorted(
+    f
+    for f in os.listdir(INPUT_DIRECTORY)
+    if f.endswith('.yaml') or f.endswith('.yml')
+)
+request_errors = 0
 
 for filename in yaml_files:
 
     user_id = random.randint(0,99999)
-    conversation_id = f"collector-{uuid.uuid4().hex}"
 
     print(f"USER_ID: {user_id}")
     
@@ -70,30 +76,29 @@ for filename in yaml_files:
     for query in queries:
         payload = {
             "user_id" : user_id,
-            "session_id": conversation_id,
-            "conversation_id": conversation_id,
-            "cart_id": f"{conversation_id}-cart",
-            "query": query,
-            "guardrails": not args.disable_guardrails,
+            "query": query
             }
         try:
-            response = requests.post(API_ENDPOINT, json=payload, timeout=args.request_timeout)
+            response = requests.post(
+                API_ENDPOINT,
+                json=payload,
+                timeout=REQUEST_TIMEOUT,
+            )
             response.raise_for_status()
             data = response.json()
-            response_text = data.get("response", "No response collected.")
             results.append({
                 "query": query,
-                "content": response_text,
-                "response": response_text,
-                "timing": data.get("timings", "No timing collected." ),
-                "agent_diagnostics": data.get("agent_diagnostics", {}),
+                "content": data.get("content", "No response collected."),
+                "response": data.get("response", "No response collected."),
+                "timing": data.get("timings", "No timing collected." )
             })
         except Exception as e:
+            request_errors += 1
             results.append({
                 "query": query,
                 "response": f"Error: {str(e)}"
             })
-        time.sleep(REQUEST_DELAY)
+        time.sleep(args.request_delay)
 
     # Save individual result
     with open(output_path, 'w') as f:
@@ -103,3 +108,8 @@ for filename in yaml_files:
         }, f, sort_keys=False)
 
     print(f"Saved results to {output_path}")
+
+if request_errors:
+    raise SystemExit(
+        f"Integration collection failed with {request_errors} request error(s)."
+    )

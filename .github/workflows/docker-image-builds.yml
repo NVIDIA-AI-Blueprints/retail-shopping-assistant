@@ -5,9 +5,8 @@ on:
     paths:
       - ".github/workflows/docker-image-builds.yml"
       - "docker-compose.yaml"
-      - "docker-compose-nim-local.yaml"
       - "catalog_retriever/**"
-      - "chain_server/**"
+      - "orchestrator/**"
       - "guardrails/**"
       - "memory_retriever/**"
       - "ui/**"
@@ -34,15 +33,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate Docker Compose configuration
-        env:
-          NGC_API_KEY: test-ngc-api-key
-          NVIDIA_API_KEY: test-nvidia-api-key
-          LOCAL_NIM_CACHE: /tmp/nim-cache
-        run: |
-          docker compose -f docker-compose.yaml config --quiet
-          docker compose -f docker-compose-nim-local.yaml config --quiet
-
       - name: Build changed service images
         shell: bash
         run: |
@@ -61,7 +51,7 @@ jobs:
           sed 's/^/  /' "${changed_files}"
 
           services=(
-            "chain-server"
+            "orchestrator"
             "catalog-retriever"
             "memory-retriever"
             "rails"
@@ -69,7 +59,7 @@ jobs:
           )
 
           declare -A contexts=(
-            ["chain-server"]="chain_server"
+            ["orchestrator"]="orchestrator"
             ["catalog-retriever"]="catalog_retriever"
             ["memory-retriever"]="memory_retriever"
             ["rails"]="guardrails"
@@ -77,7 +67,7 @@ jobs:
           )
 
           declare -A image_names=(
-            ["chain-server"]="retail-shopping-assistant/chain-server"
+            ["orchestrator"]="retail-shopping-assistant/orchestrator"
             ["catalog-retriever"]="retail-shopping-assistant/catalog-retriever"
             ["memory-retriever"]="retail-shopping-assistant/memory-retriever"
             ["rails"]="retail-shopping-assistant/guardrails"

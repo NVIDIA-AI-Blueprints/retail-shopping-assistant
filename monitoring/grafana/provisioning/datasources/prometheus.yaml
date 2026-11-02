@@ -1,0 +1,19 @@
+apiVersion: 1
+
+datasources:
+  - name: prometheus
+    type: prometheus
+    access: proxy
+    # Service name, not localhost: Grafana queries Prometheus from inside its
+    # own container, and both join the application's shopping-network. The host
+    # port published for Prometheus is for humans and SSH tunnels, and is not
+    # reachable from in here -- localhost would resolve to Grafana itself.
+    url: http://prometheus:9090
+    isDefault: true
+    # This uid is not arbitrary. vLLM's official dashboard ships with its
+    # DS_PROMETHEUS template variable defaulting to uid "edx8memhpd9tsa".
+    # Provisioning the datasource under that uid lets the dashboard load
+    # unmodified, instead of opening with "datasource not found" until someone
+    # picks it by hand.
+    uid: edx8memhpd9tsa
+    editable: false

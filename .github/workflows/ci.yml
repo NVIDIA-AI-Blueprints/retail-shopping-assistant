@@ -1,3 +1,9 @@
+# Jobs:
+#   unit-tests   offline unit suite (tests/unit)
+#   notebooks    deploy with notebook 1, run notebooks 2-4 on the same stack,
+#                replay the val probes and regressions, then run the QA suite
+#                (notebook output checks + live API and UI checks)
+#   performance  notebook 5 on a GPU machine; manual runs only, opt-in
 name: Run notebooks and validate the results
 
 on:
@@ -5,173 +11,178 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      full_replay:
+        description: Replay every val probe and regression scenario after the notebooks
+        type: boolean
+        default: true
+      run_performance:
+        description: Run notebook 5 (needs ~280 GB of GPU memory, takes hours)
+        type: boolean
+        default: false
+      gpu_runner:
+        description: Runner label for notebook 5
+        type: string
+        default: arc-runners-org-nvidia-ai-bp-4-gpu
+      test_image:
+        description: QA test image (defaults to the staging QA build)
+        type: string
+        default: nvcr.io/rw983xdqtcdp/auto_test_team/blueprint-github-test-image:branch-vphuc-retail-shopping-assistant-staging
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PYTHON_VERSION: "3.12"
+  # The QA suite is built from the blueprint-github-test branch
+  # vphuc/retail-shopping-assistant-staging (GitLab job docker_build_push).
+  TEST_IMAGE: ${{ inputs.test_image || 'nvcr.io/rw983xdqtcdp/auto_test_team/blueprint-github-test-image:branch-vphuc-retail-shopping-assistant-staging' }}
+  # Folder the notebook HTML is collected in and mounted into the test image.
+  QA_INPUT: qa-input
+
 jobs:
-  run-nim-notebooks:
-    runs-on: arc-runners-org-nvidia-ai-bp-4-gpu
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
-      PYTHON_VERSION: 3.12
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-    steps:  
+      PYTHONDONTWRITEBYTECODE: "1"
+      LLM_API_KEY: test-llm-api-key
+      EMBED_API_KEY: test-embed-api-key
+      RAIL_API_KEY: test-rail-api-key
+      NVIDIA_API_KEY: test-nvidia-api-key
+    steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
-        
+        uses: actions/checkout@v4
+
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          
-      - name: Check Container Status
+          cache: pip
+          cache-dependency-path: tests/requirements-dev.txt
+
+      - name: Install unit test dependencies
         run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r tests/requirements-dev.txt
+
+      - name: Run offline unit tests
+        working-directory: tests
+        run: python -m pytest -q unit --junitxml=../unit-tests.xml
+
+      - name: Upload unit test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-unit-tests
+          path: unit-tests.xml
+          retention-days: 14
+
+  notebooks:
+    name: Notebooks 1-4 and QA suite
+    runs-on: arc-runners-org-nvidia-ai-bp-4-gpu
+    timeout-minutes: 360
+    env:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      # Temporary QA suite in blueprint-github-test. Switch back to
+      # retail_shopping_assistant once the suite is promoted.
+      TEST_MARKER: retail_shopping_assistant_staging
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Check prerequisites
+        run: |
+          if [ -z "$NVIDIA_API_KEY" ]; then
+            echo "❌ NVIDIA_API_KEY secret is not set; the notebooks would block on their key prompt"
+            exit 1
+          fi
+          docker --version
+          docker compose version
           echo "===================== Container Status ====================="
           docker ps -a
 
       - name: Install dependencies
-        run: |          
-          echo "Installing dependencies ..."
+        run: |
           python -m pip install --upgrade pip
-          pip install ipykernel nbformat
-          echo "Installing Python kernel..."
+          pip install papermill ipykernel nbformat nbconvert
           python -m ipykernel install --user --name python3 --display-name "Python 3"
-          
-          echo "Verifying kernel installation..."
           jupyter kernelspec list
 
-      - name: Run Notebooks
-        run: |
-          # Function to skip specified cells in a notebook
-          # Supports individual cells and ranges: skip_cells notebook.ipynb 47-48 78-79
-          skip_cells() {
-            local NOTEBOOK_PATH="$1"
-            shift
-            local CELLS_TO_SKIP=("$@")
-            
-            if [ ${#CELLS_TO_SKIP[@]} -eq 0 ]; then
-              return 0
-            fi
-            
-            echo "⏭️  Skipping cells: ${CELLS_TO_SKIP[*]}"
-            
-            # Expand ranges and build Python list
-            local EXPANDED_CELLS=()
-            for item in "${CELLS_TO_SKIP[@]}"; do
-              if [[ "$item" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-                # Range format: start-end
-                local start="${BASH_REMATCH[1]}"
-                local end="${BASH_REMATCH[2]}"
-                for ((i=start; i<=end; i++)); do
-                  EXPANDED_CELLS+=("$i")
-                done
-              else
-                # Single cell number
-                EXPANDED_CELLS+=("$item")
-              fi
-            done
-            
-            local CELLS_LIST=$(printf '%s,' "${EXPANDED_CELLS[@]}")
-            CELLS_LIST="[${CELLS_LIST%,}]"
-            
-            python3 -c "import nbformat; nb = nbformat.read('$NOTEBOOK_PATH', as_version=4); cells = $CELLS_LIST; exec('for i in cells:\\n  if i < len(nb.cells):\\n    nb.cells[i].source = \"# Skipped cell \" + str(i) if nb.cells[i].cell_type == \"code\" else \"<!-- Skipped cell \" + str(i) + \" -->\"'); nbformat.write(nb, '$NOTEBOOK_PATH'); print('✅ Skipped ' + str(len(cells)) + ' cell(s)')"
-          }
-          
-          # Function to run a single notebook
-          run_notebook() {
-            local NOTEBOOK_PATH="$1"
-            local FIX_TRTLLM_PATH="${2:-}"
-            
-            local NOTEBOOK_DIR=$(dirname "$NOTEBOOK_PATH")
-            local NOTEBOOK_NAME=$(basename "$NOTEBOOK_PATH" .ipynb)
-            local OUTPUT_NOTEBOOK="${NOTEBOOK_DIR}/${NOTEBOOK_NAME}_result.ipynb"
-            
-            # Create a temporary copy of the notebook for modification
-            local TEMP_NOTEBOOK="${NOTEBOOK_DIR}/${NOTEBOOK_NAME}_temp.ipynb"
-            cp "$NOTEBOOK_PATH" "$TEMP_NOTEBOOK"
-            
-            echo "================================"
-            echo "Running: $NOTEBOOK_NAME"
-            echo "================================"
-            
-            # Skip cloud NIM config and container teardown cells for 1_Deploy_Retail_Shopping_Assistant.ipynb
-            if [[ "$NOTEBOOK_NAME" == "1_Deploy_Retail_Shopping_Assistant" ]]; then
-              skip_cells "$TEMP_NOTEBOOK" 47-48 78-79
-              
-              echo "Modifying notebook for CI environment..."
-              
-              # Modification 1: Change cache directory to local path
-              echo "  - Changing cache directory to local path..."
-              sed -i 's|"local_nim_cache = os.path.expanduser(\\"~/.cache/nim\\")\\n"|"local_nim_cache = os.path.join(os.getcwd(), \\".cache\\", \\"nim\\")\\n"|g' "$TEMP_NOTEBOOK"
-              echo "    ✅ Modified cache directory path"
-              
-              # Modification 2: Add sleep before docker logs command
-              echo "  - Adding sleep before docker logs command..."
-              sed -i '/"# Monitor application startup\\n",/a\    "!sleep 60\\n",' "$TEMP_NOTEBOOK"
-              echo "    ✅ Added sleep 60 before docker logs command"
+          # Notebook 4 validates its trace with AIPerf from ~/aiperf (Step 8).
+          command -v uv || curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          uv venv ~/aiperf --python 3.12
+          uv pip install --python ~/aiperf/bin/python aiperf==0.13.0
 
-              # Modification 3: Pin the cloned app to the workflow commit
-              echo "  - Pinning cloned app to the workflow commit..."
-              sed -i 's|!git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git #Using HTTP|!git clone https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant.git \&\& git -C retail-shopping-assistant checkout --detach $GITHUB_SHA \&\& git -C retail-shopping-assistant rev-parse HEAD #Using HTTP|' "$TEMP_NOTEBOOK"
-              echo "    ✅ Pinned cloned app to $GITHUB_SHA"
-              
-              echo "✅ All notebook modifications complete"
-            fi
-            
-            # Run notebook with papermill
-            papermill "$TEMP_NOTEBOOK" "$OUTPUT_NOTEBOOK" -k python3 --log-output --log-level DEBUG
-            local EXIT_CODE=$?
-            
-            # Check results
-            if [ $EXIT_CODE -ne 0 ]; then
-              echo "❌ Notebook execution failed"
-              rm -f "$TEMP_NOTEBOOK"
-              return 1
-            fi
-            
-            if [ ! -f "$OUTPUT_NOTEBOOK" ]; then
-              echo "❌ Output notebook not created"
-              rm -f "$TEMP_NOTEBOOK"
-              return 1
-            fi
-            
-            # Clean up temporary notebook
-            rm -f "$TEMP_NOTEBOOK"
-            
-            echo "✅ Completed: $NOTEBOOK_NAME"
-            echo ""
-            return 0
-          }
-          
-          # Run all notebooks
-          run_notebook "notebook/1_Deploy_Retail_Shopping_Assistant.ipynb" || exit 1
-
-      - name: Convert results to HTML format
-        if: always()
+      - name: Run notebooks 1-4
         run: |
-          echo "Converting notebooks to HTML..."
-          for notebook in notebook/*_result.ipynb; do
-            if [ -f "$notebook" ]; then
-              jupyter nbconvert --to html "$notebook"
-              echo "✅ Converted $(basename $notebook)"
+          # Every notebook runs from notebook/ (it imports helpers.py and runs
+          # deploy and replay commands from the repository root with `cd ..`).
+          # NVIDIA_API_KEY is in the environment, so no key prompt appears.
+          # Notebook 1 deploys the stack; 2-4 use that deployment, so a failed
+          # notebook 1 stops the run and any other failure is reported at the end.
+          mkdir -p "$QA_INPUT"
+          failed=()
+          for name in 1_Getting_Started 2_Observability 3_Evaluation 4_Capture_Traces; do
+            echo "================================"
+            echo "Running: $name"
+            echo "================================"
+            if ! papermill "notebook/$name.ipynb" "notebook/${name}_result.ipynb" \
+                --cwd notebook -k python3 \
+                --log-output --log-level INFO \
+                --execution-timeout 3600; then
+              echo "❌ $name failed"
+              failed+=("$name")
+            fi
+            if [ -f "notebook/${name}_result.ipynb" ]; then
+              jupyter nbconvert --to html "notebook/${name}_result.ipynb" --output-dir "$QA_INPUT" --output "$name"
+            fi
+            if [ "$name" = 1_Getting_Started ] && [ ${#failed[@]} -gt 0 ]; then
+              echo "❌ Deployment notebook failed; skipping notebooks 2-4"
+              break
             fi
           done
-
-      - name: Run Test Code
-        if: always()
-        run: |   
-          # Wait for services to stabilize
-          echo "Waiting 5 minutes for services to fully stabilize..."
-          sleep 600
-          echo "✅ Wait completed"
-          
-          # Check if the HTML files exist before running tests
-          if [ ! -f "./notebook/1_Deploy_Retail_Shopping_Assistant_result.html" ]; then
-            echo "Warning: 1_Deploy_Retail_Shopping_Assistant_result.html not found"
+          ls -l "$QA_INPUT"
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "❌ Failed notebooks: ${failed[*]}"
+            exit 1
           fi
-          
-          # Wait for the application to be ready
+          echo "✅ All notebooks completed"
+
+      - name: Replay val probes and regressions
+        if: always() && (github.event_name == 'push' || inputs.full_replay)
+        # Informational: the agent is non-deterministic, so the replay report is
+        # read by QA rather than gating the run. The notebooks' own replays gate.
+        continue-on-error: true
+        run: |
+          if ! curl -sf http://127.0.0.1:8009/ready > /dev/null; then
+            echo "⚠️ orchestrator is not ready; skipping the replay"
+            exit 1
+          fi
+          scenarios=$(ls tests/evaluation/datasets/val/scripts/probes/P*.yaml \
+                         tests/evaluation/datasets/val/scripts/regression/R*.yaml \
+                      | xargs -n1 basename | sed 's/_.*//' | grep -v '^P9' | paste -sd, -)
+          echo "Scenarios: $scenarios"
+          label="qa-sweep-${GITHUB_RUN_ID}"
+          pip install --quiet requests pyyaml openai
+          python -m tests.evaluation.src.replay --only "$scenarios" --label "$label" --concurrency 3 \
+            | tee replay-summary.txt
+          report="tests/evaluation/results/val/$label/report.md"
+          if [ -f "$report" ]; then
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Run QA test suite
+        if: always()
+        run: |
           echo "Waiting for application to be ready..."
           max_retries=30
           retry_count=0
@@ -185,89 +196,184 @@ jobs:
             sleep 10
           done
           echo "✅ Application is ready"
-              
-          # Run the test and capture the exit code
-          # Use --net=host to allow test container to access services on host
+
+          # --net=host lets the API and UI tests reach the services on localhost.
+          # Notebook 5 runs in its own job, so its checks are deselected here.
           docker run --rm \
             --net=host \
-            -v "$(pwd)/notebook/1_Deploy_Retail_Shopping_Assistant_result.html:/app/input/1_Deploy_Retail_Shopping_Assistant.html" \
+            -v "$(pwd)/$QA_INPUT:/app/input/retail_shopping_assistant_staging" \
             -v "$(pwd):/workspace" \
-            nvcr.io/rw983xdqtcdp/auto_test_team/blueprint-github-test-image:latest \
-            pytest -m retail_shopping_assistant \
+            "$TEST_IMAGE" \
+            pytest -m "$TEST_MARKER and not performance" \
             --disable-warnings \
             --html=/workspace/retail-shopping-assistant_test.html \
             --self-contained-html
+
+      - name: Collect service logs
+        if: always()
+        run: |
+          docker compose ps -a > compose-ps.txt 2>&1 || true
+          docker compose logs --no-color --timestamps > compose-logs.txt 2>&1 || true
 
       - name: Upload notebook and test results as artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: nim-notebooks-results
+          name: staging-notebook-results
           path: |
-             notebook/1_Deploy_Retail_Shopping_Assistant_result.html
-             retail-shopping-assistant_test.html
-          retention-days: 14 
+            ${{ env.QA_INPUT }}/
+            notebook/*_result.ipynb
+            notebook/traces/capture.json
+            tests/evaluation/results/val/
+            replay-summary.txt
+            retail-shopping-assistant_test.html
+            compose-ps.txt
+            compose-logs.txt
+          retention-days: 14
 
       - name: Cleanup Docker resources
         if: always()
         run: |
           echo "🧹 Cleaning up workflow resources..."
-          
-          # Stop and remove Docker Compose services and their images
-          echo "Stopping Docker Compose services and removing images..."
-          cd retail-shopping-assistant
-          docker compose -f docker-compose.yaml down --rmi all 2>/dev/null || true
-          docker compose -f docker-compose-nim-local.yaml down --rmi all 2>/dev/null || true
-          cd ..
-          echo "✅ Docker Compose services and images removed"
-          
-          sleep 120 # Wait for 2 minutes to ensure all containers are stopped
 
-          # Check remaining containers
+          # The notebooks deploy from the repository root, so the compose project
+          # lives here. --volumes drops the catalog index, memory and traces so
+          # the next run starts clean.
+          docker compose -f docker-compose.yaml down --volumes --rmi all 2>/dev/null || true
+          docker compose -f docker-compose-model-local.yaml down --volumes --rmi all 2>/dev/null || true
+          echo "✅ Docker Compose services, volumes and images removed"
+
           echo "Remaining containers:"
           docker ps -a
-          
-          # Remove test image
-          echo "Removing test image..."
-          docker rmi nvcr.io/rw983xdqtcdp/auto_test_team/blueprint-github-test-image:latest 2>/dev/null || true
-          
-          # Remove any dangling images that might have been created during notebook execution
-          echo "Removing dangling images..."
+
+          docker rmi "$TEST_IMAGE" 2>/dev/null || true
           docker image prune -f
-          
-          # Show remaining images
+
           echo "Remaining images:"
           docker images
-
           echo "✅ Workflow cleanup completed"
 
+  performance:
+    name: Notebook 5 (GPU performance)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_performance
+    runs-on: ${{ inputs.gpu_runner }}
+    timeout-minutes: 720
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      TEST_MARKER: retail_shopping_assistant_staging and performance
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check prerequisites
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "❌ HF_TOKEN secret is not set; deploy.sh cannot download Nemotron"
+            exit 1
+          fi
+          nvidia-smi
+          docker --version
+
+      - name: Install AIPerf and Jupyter
+        run: |
+          command -v uv || curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          uv venv ~/aiperf --python 3.12
+          uv pip install --python ~/aiperf/bin/python aiperf==0.13.0 matplotlib papermill ipykernel nbconvert
+          ~/aiperf/bin/python -m ipykernel install --user --name aiperf --display-name "AIPerf"
+
+      - name: Serve Nemotron with vLLM
+        run: |
+          # deploy.sh stops before the ~240 GB download when the GPUs have
+          # less than ~280 GB in total. The Hugging Face cache is kept between
+          # runs so later runs skip the download.
+          notebook/gpu/deploy.sh
+          notebook/gpu/verify_prefix_cache.sh
+
+      - name: Run notebook 5
+        run: |
+          mkdir -p "$QA_INPUT"
+          ~/aiperf/bin/papermill notebook/5_Performance_Measurement.ipynb \
+            notebook/5_Performance_Measurement_result.ipynb \
+            --cwd notebook -k aiperf \
+            --log-output --log-level INFO
+
+      - name: Convert results to HTML format
+        if: always()
+        run: |
+          if [ -f notebook/5_Performance_Measurement_result.ipynb ]; then
+            ~/aiperf/bin/jupyter nbconvert --to html notebook/5_Performance_Measurement_result.ipynb \
+              --output-dir "$QA_INPUT" --output 5_Performance_Measurement
+          fi
+
+      - name: Run QA test suite
+        if: always()
+        run: |
+          docker run --rm \
+            -v "$(pwd)/$QA_INPUT:/app/input/retail_shopping_assistant_staging" \
+            -v "$(pwd):/workspace" \
+            "$TEST_IMAGE" \
+            pytest -m "$TEST_MARKER" \
+            --disable-warnings \
+            --html=/workspace/retail-shopping-assistant-performance_test.html \
+            --self-contained-html
+
+      - name: Upload results as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-performance-results
+          path: |
+            ${{ env.QA_INPUT }}/
+            notebook/5_Performance_Measurement_result.ipynb
+            notebook/stress_results/
+            retail-shopping-assistant-performance_test.html
+          retention-days: 14
+
+      - name: Stop the model server
+        if: always()
+        run: |
+          docker rm -f nemotron35 2>/dev/null || true
+          docker rmi "$TEST_IMAGE" 2>/dev/null || true
+
+  notify:
+    name: Send result mail
+    if: always()
+    needs: [unit-tests, notebooks, performance]
+    runs-on: ubuntu-latest
+    steps:
       - name: Set result output
         id: set_result
-        if: always()  
         run: |
-          echo "RESULT=$(if [ ${{ job.status }} == 'success' ]; then echo 'PASS'; else echo 'FAIL'; fi)" >> $GITHUB_OUTPUT
-   
+          result=PASS
+          for status in "${{ needs.unit-tests.result }}" "${{ needs.notebooks.result }}" "${{ needs.performance.result }}"; do
+            case "$status" in success|skipped) ;; *) result=FAIL ;; esac
+          done
+          echo "RESULT=$result" >> "$GITHUB_OUTPUT"
+
       - name: Send mail
         uses: dawidd6/action-send-mail@6e71c855c9a091d80a519621b9fd3e8d252ca40c
-        if: always()
         with:
           server_address: smtp.gmail.com
           server_port: 587
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
-          
+
           # Email details
-          subject: "QA Test Workflow Result for ${{ github.repository }}"
+          subject: "QA Test Workflow Result for ${{ github.repository }} (${{ github.ref_name }})"
           to: Github-Action-Blueprint-QA@nvidia.com
           from: github-workflow-notification@gmail.com
           html_body: |
             <p>Hello,</p>
-            
-            <p>The workflow for repository: <strong>${{ github.repository }}</strong> has completed.<br>
+
+            <p>The workflow for repository: <strong>${{ github.repository }}</strong> (branch <strong>${{ github.ref_name }}</strong>) has completed.<br>
             <strong>Result:</strong> ${{ steps.set_result.outputs.RESULT }}</p>
-            
+
+            <p>Unit tests: ${{ needs.unit-tests.result }}<br>
+            Notebooks 1-4 and QA suite: ${{ needs.notebooks.result }}<br>
+            Notebook 5 (performance): ${{ needs.performance.result }}</p>
+
             <p>You can review the details on GitHub:<br>
             <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}</a></p>
-            
-            <p>Thanks!</p>           
 
+            <p>Thanks!</p>

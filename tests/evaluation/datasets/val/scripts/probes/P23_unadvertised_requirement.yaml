@@ -1,0 +1,11 @@
+id: P23_unadvertised_requirement
+covers: [discovery, filters, honesty]
+why: >
+  Waterproofing is not an advertised attribute here. A requirement the catalog
+  cannot express must be disclosed and ranked on, never turned into a silent
+  veto that returns nothing.
+turns:
+  - say: I need waterproof sandals for a beach wedding
+    expect:
+      products_min: 1
+      every_product: {subcategory: sandals}

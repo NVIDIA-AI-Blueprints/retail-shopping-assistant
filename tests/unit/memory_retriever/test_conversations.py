@@ -1,0 +1,2465 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Focused tests for durable conversation storage."""
+
+from __future__ import annotations
+
+import json
+import time
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from memory_retriever.src import main as memory_main
+from memory_retriever.src import product_references
+from memory_retriever.src.migrations import _MIGRATIONS
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.fixture
+def conversation_db(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    test_engine = memory_main.build_engine(
+        "sqlite:///:memory:",
+        poolclass=StaticPool,
+    )
+    session_factory = sessionmaker(bind=test_engine, expire_on_commit=False)
+    monkeypatch.setattr(memory_main, "engine", test_engine)
+    monkeypatch.setattr(memory_main, "SessionLocal", session_factory)
+    monkeypatch.setenv(
+        "SHARED_CONFIG_ROOT",
+        str(REPO_ROOT / "shared" / "configs"),
+    )
+
+    with TestClient(memory_main.app) as client:
+        yield client
+
+    memory_main.Base.metadata.drop_all(bind=test_engine)
+    test_engine.dispose()
+
+
+def _start_turn(
+    client: TestClient,
+    conversation_id: str,
+    *,
+    request_id: str,
+    shopper_text: str = "Show me a bag",
+    cart_user_id: int = 7,
+    request_digest: str | None = None,
+):
+    payload = {
+        "request_id": request_id,
+        "shopper_text": shopper_text,
+        "cart_user_id": cart_user_id,
+        "request_digest": request_digest or f"digest:{request_id}",
+        "catalog_revision": "catalog-v1",
+    }
+    return client.post(
+        f"/conversations/{conversation_id}/turn/start",
+        json=payload,
+    )
+
+
+def _finalize_turn(
+    client: TestClient,
+    conversation_id: str,
+    turn_id: str,
+    *,
+    request_id: str,
+    attempt_id: str,
+    assistant_text: str = "Here is a bag.",
+    status: str = "completed",
+    events: list[dict] | None = None,
+    output: dict | None = None,
+):
+    return client.post(
+        f"/conversations/{conversation_id}/turns/{turn_id}/finalize",
+        json={
+            "request_id": request_id,
+            "attempt_id": attempt_id,
+            "assistant_text": assistant_text,
+            "status": status,
+            "termination_reason": status,
+            "events": events or [],
+            "output": output,
+        },
+    )
+
+
+def _present_products(
+    client: TestClient,
+    conversation_id: str,
+    *,
+    request_id: str,
+    products: list[dict],
+    product_groups: list[dict] | None = None,
+) -> tuple[dict, str]:
+    started = _start_turn(
+        client,
+        conversation_id,
+        request_id=request_id,
+        shopper_text=f"Show products for {request_id}",
+    ).json()
+    finalized = _finalize_turn(
+        client,
+        conversation_id,
+        started["turn_id"],
+        request_id=request_id,
+        attempt_id=started["attempt_id"],
+        output={
+            "product_results": products,
+            "retrieved": {},
+            "agent_diagnostics": {},
+            "product_groups": product_groups or [],
+        },
+    )
+    assert finalized.status_code == 200
+    with memory_main.SessionLocal() as db:
+        event = (
+            db.query(memory_main.ConversationEvent)
+            .filter_by(
+                turn_id=started["turn_id"],
+                event_type="candidate_set_presented",
+            )
+            .one()
+        )
+        candidate_set_id = event.event_id
+    return started, candidate_set_id
+
+
+def test_start_returns_recent_turns_projection_and_authoritative_cart(
+    conversation_db: TestClient,
+) -> None:
+    added = conversation_db.post(
+        "/user/7/cart/add",
+        json={
+            "product_id": "bag-1",
+            "item": "Structured Bag",
+            "amount": 1,
+            "price": 45.0,
+            "idempotency_key": "add-bag-1",
+        },
+    )
+    first = _start_turn(
+        conversation_db,
+        "conversation-a",
+        request_id="request-1",
+    )
+
+    assert first.status_code == 200
+    assert first.json() == {
+        "turn_id": first.json()["turn_id"],
+        "attempt_id": first.json()["attempt_id"],
+        "sequence": 1,
+        "replayed": False,
+        "status": "started",
+        "recent_turns": [],
+        # No wearer has been declared, so nothing is carried forward.
+        "wearer_audience": [],
+        "assumed_audience": [],
+        "previous_selected_skill_names": [],
+        "projection": {
+            "version": 0,
+            "active_anchors": [],
+            "effective_preferences": [],
+            "product_reference_index": [],
+            "last_turn_id": None,
+        },
+        "cart": [added.json()["cart_line"]],
+        "assistant_text": None,
+        "termination_reason": None,
+        "output": None,
+    }
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-a",
+            first.json()["turn_id"],
+            request_id="request-1",
+            attempt_id=first.json()["attempt_id"],
+            output={
+                "product_results": [],
+                "retrieved": {},
+                "agent_diagnostics": {},
+                "selected_skill_names": ["outfit-styling"],
+            },
+        ).status_code
+        == 200
+    )
+
+    second = _start_turn(
+        conversation_db,
+        "conversation-a",
+        request_id="request-2",
+        shopper_text="Show me shoes",
+    )
+
+    assert second.status_code == 200
+    assert second.json()["sequence"] == 2
+    assert second.json()["recent_turns"] == [
+        {
+            "sequence": 1,
+            "shopper_text": "Show me a bag",
+            "assistant_text": "Here is a bag.",
+            "status": "completed",
+        }
+    ]
+    assert second.json()["previous_selected_skill_names"] == ["outfit-styling"]
+
+
+def test_turn_start_leaves_the_retired_profile_column_empty(
+    conversation_db: TestClient,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-guest",
+        request_id="request-guest",
+    )
+
+    assert started.status_code == 200
+    assert "shopper_context" not in started.json()
+    with memory_main.SessionLocal() as db:
+        assert {
+            turn.shopper_profile_id
+            for turn in db.query(memory_main.ConversationTurn).all()
+        } == {None}
+
+
+def test_blocked_turn_replays_but_is_excluded_from_next_turn_context(
+    conversation_db: TestClient,
+) -> None:
+    blocked = _start_turn(
+        conversation_db,
+        "conversation-blocked",
+        request_id="request-blocked",
+        shopper_text="blocked shopper text",
+    ).json()
+    finalized = _finalize_turn(
+        conversation_db,
+        "conversation-blocked",
+        blocked["turn_id"],
+        request_id="request-blocked",
+        attempt_id=blocked["attempt_id"],
+        assistant_text="blocked response",
+        status="blocked",
+    )
+
+    replay = _start_turn(
+        conversation_db,
+        "conversation-blocked",
+        request_id="request-blocked",
+        shopper_text="blocked shopper text",
+    )
+    next_turn = _start_turn(
+        conversation_db,
+        "conversation-blocked",
+        request_id="request-safe",
+        shopper_text="Show me a bag",
+    )
+
+    assert finalized.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json()["replayed"] is True
+    assert replay.json()["status"] == "blocked"
+    assert replay.json()["assistant_text"] == "blocked response"
+    assert next_turn.status_code == 200
+    assert next_turn.json()["recent_turns"] == []
+    assert next_turn.json()["previous_selected_skill_names"] == []
+    with memory_main.SessionLocal() as db:
+        stored = (
+            db.query(memory_main.ConversationTurn)
+            .filter_by(turn_id=blocked["turn_id"])
+            .one()
+        )
+        assert stored.shopper_text == "blocked shopper text"
+        assert stored.status == "blocked"
+
+
+def test_start_is_idempotent_and_rejects_active_or_conflicting_reuse(
+    conversation_db: TestClient,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-idempotent",
+        request_id="request-1",
+    )
+    active_replay = _start_turn(
+        conversation_db,
+        "conversation-idempotent",
+        request_id="request-1",
+    )
+    another_request = _start_turn(
+        conversation_db,
+        "conversation-idempotent",
+        request_id="request-2",
+    )
+
+    assert active_replay.status_code == 409
+    assert active_replay.json()["detail"] == "turn_in_progress"
+    assert another_request.status_code == 409
+    assert another_request.json()["detail"] == "conversation_turn_in_progress"
+
+    finalized = _finalize_turn(
+        conversation_db,
+        "conversation-idempotent",
+        started.json()["turn_id"],
+        request_id="request-1",
+        attempt_id=started.json()["attempt_id"],
+        output={
+            "product_results": [{"product_ref": "bag-1"}],
+            "retrieved": {"Structured Bag": "/images/bag.png"},
+            "agent_diagnostics": {"final_termination_reason": "completed"},
+        },
+    )
+    replay = _start_turn(
+        conversation_db,
+        "conversation-idempotent",
+        request_id="request-1",
+    )
+    conflict = _start_turn(
+        conversation_db,
+        "conversation-idempotent",
+        request_id="request-1",
+        shopper_text="Different request",
+    )
+
+    assert finalized.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json()["replayed"] is True
+    assert replay.json()["status"] == "completed"
+    assert replay.json()["assistant_text"] == "Here is a bag."
+    assert replay.json()["output"] == {
+        "product_results": [{"product_ref": "bag-1"}],
+        "retrieved": {"Structured Bag": "/images/bag.png"},
+        "agent_diagnostics": {"final_termination_reason": "completed"},
+        "guardrails_enabled": False,
+        "guardrail_results": [],
+        "selected_skill_names": [],
+        "product_groups": [],
+    }
+    assert conflict.status_code == 409
+
+
+def test_finalize_indexes_ordered_presented_products_once(
+    conversation_db: TestClient,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-presented-products",
+        request_id="request-products",
+    ).json()
+    products = [
+        {
+            "product_id": "bag-1",
+            "display_name": "Structured Tote",
+            "category": "tote_bags",
+            "price": {"amount": 59.99, "currency": "USD"},
+            "attributes": {
+                "taxonomy": {"category": "bags"},
+                "primary_color": "black",
+                # What retrieval hands over and no reader wants back.
+                "catalog_text": "name: Structured Tote\ntaxonomy: bags\n…",
+                "similarity": 0.68,
+            },
+        },
+        {
+            "product_id": "bag-2",
+            "display_name": "Cobalt Crossbody",
+            "category": "crossbody_bags",
+            "image_url": "/images/bag-2.png",
+        },
+    ]
+    output = {
+        "product_results": products,
+        "retrieved": {"Cobalt Crossbody": "/images/bag-2.png"},
+        "agent_diagnostics": {},
+    }
+
+    first = _finalize_turn(
+        conversation_db,
+        "conversation-presented-products",
+        started["turn_id"],
+        request_id="request-products",
+        attempt_id=started["attempt_id"],
+        output=output,
+    )
+    replay = _finalize_turn(
+        conversation_db,
+        "conversation-presented-products",
+        started["turn_id"],
+        request_id="request-products",
+        attempt_id=started["attempt_id"],
+        output=output,
+    )
+
+    assert first.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json()["replayed"] is True
+    with memory_main.SessionLocal() as db:
+        events = db.query(memory_main.ConversationEvent).all()
+        assert len(events) == 1
+        assert events[0].event_type == "candidate_set_presented"
+        assert events[0].source_kind == "runtime"
+        assert events[0].logical_order == 1
+        # Everything the shopper was shown, minus the two keys nothing reads
+        # back: the prose serialisation and the retrieval score.
+        #
+        # Each entry holds the product under its own key, with what this record
+        # knows about the showing -- the place on the screen -- beside it rather
+        # than within it. The runtime parses that product against a contract
+        # that refuses unrecognised fields, so a presentation fact stored on a
+        # product comes back as a refused product.
+        # One group here, unheaded: this turn declared no scopes, which is
+        # also the shape every conversation recorded before groups existed
+        # reads back as.
+        groups = json.loads(events[0].payload_json)["groups"]
+        assert [group["heading"] for group in groups] == [""]
+        stored = groups[0]["products"]
+        assert [entry["product"]["display_name"] for entry in stored] == [
+            p["display_name"] for p in products
+        ]
+        assert [entry["screen_position"] for entry in stored] == [1, 2]
+        assert stored[0]["product"]["attributes"] == {
+            "taxonomy": {"category": "bags"},
+            "primary_color": "black",
+        }
+        assert "catalog_text" not in stored[0]["product"]["attributes"]
+        candidate_set_id = events[0].event_id
+
+    next_turn = _start_turn(
+        conversation_db,
+        "conversation-presented-products",
+        request_id="request-next",
+    )
+
+    assert next_turn.status_code == 200
+    assert next_turn.json()["projection"]["product_reference_index"] == [
+        {
+            "candidate_set_id": candidate_set_id,
+            "catalog_revision": "catalog-v1",
+            "turn_seq": 1,
+            "products": [
+                {
+                    "ref": "bag-1",
+                    "name": "Structured Tote",
+                    "category": "tote_bags",
+                    "position": 1,
+                },
+                {
+                    "ref": "bag-2",
+                    "name": "Cobalt Crossbody",
+                    "category": "crossbody_bags",
+                    "position": 2,
+                },
+            ],
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "products",
+    [
+        [],
+        [
+            {"product_id": "", "display_name": "Missing ID"},
+            {"product_id": "bag-1", "display_name": " "},
+            {"display_name": "Missing product ID"},
+        ],
+    ],
+)
+def test_finalize_does_not_index_empty_or_malformed_products(
+    conversation_db: TestClient,
+    products: list[dict],
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-no-products",
+        request_id="request-no-products",
+    ).json()
+
+    finalized = _finalize_turn(
+        conversation_db,
+        "conversation-no-products",
+        started["turn_id"],
+        request_id="request-no-products",
+        attempt_id=started["attempt_id"],
+        output={
+            "product_results": products,
+            "retrieved": {},
+            "agent_diagnostics": {},
+        },
+    )
+
+    assert finalized.status_code == 200
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationEvent).count() == 0
+        projection = db.query(memory_main.ConversationProjection).one()
+        assert projection.product_reference_index_json == "[]"
+
+
+def test_the_record_keeps_the_facts_and_drops_the_prose(
+    conversation_db,
+) -> None:
+    """catalog_text is the same attributes again, as prose.
+
+    It was half of every stored event and every consumer filtered it out again
+    on the way to the model, so it was written once, kept forever and read by
+    nobody. similarity is the score of the search that produced the row, which
+    means nothing once the turn is over.
+    """
+
+    from memory_retriever.src.product_references import _persistable
+
+    stored = _persistable(
+        {
+            "product_id": "bag-1",
+            "display_name": "Structured Tote",
+            "attributes": {
+                "primary_color": "black",
+                "sizes": ["2", "4"],
+                "catalog_text": "name: Structured Tote\nsummary: …",
+                "similarity": 0.68,
+            },
+        }
+    )
+
+    assert stored["attributes"] == {"primary_color": "black", "sizes": ["2", "4"]}
+    # The facts a later turn resolves against are untouched.
+    assert stored["display_name"] == "Structured Tote"
+
+
+def test_product_reference_index_keeps_newest_complete_sets_within_budget(
+    conversation_db: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(product_references, "_MAX_REFERENCE_INDEX_CHARS", 400)
+    for index in range(1, 5):
+        _present_products(
+            conversation_db,
+            "conversation-bounded-index",
+            request_id=f"request-{index}",
+            products=[
+                {
+                    "product_id": f"product-{index}",
+                    "display_name": f"Product {index} " + ("x" * 100),
+                }
+            ],
+        )
+
+    with memory_main.SessionLocal() as db:
+        stored = db.query(memory_main.ConversationProjection).one()
+        reference_sets = json.loads(stored.product_reference_index_json)
+
+    assert len(stored.product_reference_index_json) <= 400
+    assert reference_sets[-1]["products"][0]["ref"] == "product-4"
+    assert all(
+        reference_set["products"][0]["ref"] != "product-1"
+        for reference_set in reference_sets
+    )
+
+
+def test_product_resolution_batches_unique_ambiguous_and_missing_results(
+    conversation_db: TestClient,
+) -> None:
+    products = [
+        {
+            "product_id": "bag-1",
+            "display_name": "Structured Tote",
+            "category": "tote_bags",
+            "price": {"amount": 59.99, "currency": "USD"},
+        },
+        {
+            "product_id": "bag-2",
+            "display_name": "Canvas Tote",
+            "category": "tote_bags",
+        },
+    ]
+    _, candidate_set_id = _present_products(
+        conversation_db,
+        "conversation-resolve",
+        request_id="request-resolve",
+        products=products,
+    )
+
+    response = conversation_db.post(
+        "/conversations/conversation-resolve/products/resolve",
+        json={
+            "references": [
+                {
+                    "reference_id": "unique",
+                    "display_name": "  structured tote  ",
+                },
+                {"reference_id": "ambiguous", "category": "TOTE_BAGS"},
+                {"reference_id": "missing", "display_name": "Missing Bag"},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    results = {result["reference_id"]: result for result in response.json()["results"]}
+    assert results["unique"] == {
+        "reference_id": "unique",
+        "status": "resolved",
+        "matches": [
+            {
+                "product": products[0],
+                "candidate_set_id": candidate_set_id,
+                "turn_sequence": 1,
+                "position": 1,
+                "group": "",
+                "group_index": 0,
+                "catalog_revision": "catalog-v1",
+            }
+        ],
+        "match_count": 1,
+        "blocking_field": None,
+        "corroboration_mismatch": [],
+    }
+    assert results["ambiguous"]["status"] == "ambiguous"
+    assert results["ambiguous"]["match_count"] == 2
+    assert [
+        match["product"]["product_id"]
+        for match in results["ambiguous"]["matches"]
+    ] == ["bag-1", "bag-2"]
+    assert results["missing"] == {
+        "reference_id": "missing",
+        "status": "not_found",
+        "matches": [],
+        "match_count": 0,
+        "blocking_field": None,
+        "corroboration_mismatch": [],
+    }
+
+
+def test_product_resolution_uses_candidate_set_ordinal(
+    conversation_db: TestClient,
+) -> None:
+    products = [
+        {"product_id": "bag-1", "display_name": "First Bag"},
+        {"product_id": "bag-2", "display_name": "Second Bag"},
+    ]
+    _, candidate_set_id = _present_products(
+        conversation_db,
+        "conversation-ordinal",
+        request_id="request-ordinal",
+        products=products,
+    )
+
+    response = conversation_db.post(
+        "/conversations/conversation-ordinal/products/resolve",
+        json={
+            "references": [
+                {
+                    "reference_id": "second",
+                    "candidate_set_id": candidate_set_id,
+                    "ordinal": 2,
+                }
+            ]
+        },
+    )
+
+    result = response.json()["results"][0]
+    assert response.status_code == 200
+    assert result["status"] == "resolved"
+    assert result["matches"][0]["product"] == products[1]
+    assert result["matches"][0]["position"] == 2
+
+
+def test_the_record_hands_back_a_product_the_runtime_can_read(
+    conversation_db: TestClient,
+) -> None:
+    """Whatever this service records, the runtime has to be able to parse.
+
+    The runtime's product contract admits product fields and refuses the whole
+    object over anything else. So a field this service keeps about how a turn
+    presented a product -- the place on the screen, the heading it was shown
+    under -- reaches the runtime as a refusal, and the refusal was read there as
+    "no such reference". A shopper asking for a bag they had been shown four
+    turns earlier was told the reference was not valid, with the bag sitting in
+    the record and having been returned.
+
+    So this asserts the round trip rather than a field list: present a product,
+    resolve it, and parse what comes back with the contract itself. It is the
+    only test that fails if a new annotation is stored on a product instead of
+    beside one.
+    """
+
+    from shared.commerce_contracts import ProductSummary
+
+    _, candidate_set_id = _present_products(
+        conversation_db,
+        "conversation-contract",
+        request_id="request-contract",
+        products=[
+            {
+                "product_id": "tote-1",
+                "display_name": "Jade Tone Canvas Tote Bag",
+                "category": "tote_bags",
+                "price": {"amount": 39.99, "currency": "USD"},
+                "attributes": {"sizes": ["onesize"], "primary_color": "green"},
+            }
+        ],
+    )
+
+    resolved = conversation_db.post(
+        "/conversations/conversation-contract/products/resolve",
+        json={
+            "references": [
+                {
+                    "reference_id": "by-ref",
+                    "product_ref": "tote-1",
+                    "candidate_set_id": candidate_set_id,
+                }
+            ]
+        },
+    ).json()["results"][0]
+
+    assert resolved["status"] == "resolved"
+    match = resolved["matches"][0]
+    ProductSummary.model_validate(match["product"])
+    # The position still travels -- beside the product, where the runtime reads
+    # it as a presentation coordinate rather than as a product field.
+    assert match["position"] == 1
+
+
+def test_a_product_recorded_the_old_way_still_resolves(
+    conversation_db: TestClient,
+) -> None:
+    """Conversations already written keep the shape they were written in.
+
+    Two older shapes exist: the product with its screen position stamped into
+    it, and, before positions were kept at all, the product alone. Both have to
+    resolve, and neither may hand the stamped field back to the runtime.
+    """
+
+    from shared.commerce_contracts import ProductSummary
+
+    started = _start_turn(
+        conversation_db,
+        "conversation-legacy",
+        request_id="request-legacy",
+        shopper_text="show me bags",
+    ).json()
+    _finalize_turn(
+        conversation_db,
+        "conversation-legacy",
+        started["turn_id"],
+        request_id="request-legacy",
+        attempt_id=started["attempt_id"],
+        output={
+            "product_results": [{"product_id": "bag-1", "display_name": "Only Bag"}],
+            "retrieved": {},
+            "agent_diagnostics": {},
+        },
+    )
+
+    with memory_main.SessionLocal() as db:
+        event = (
+            db.query(memory_main.ConversationEvent)
+            .filter_by(turn_id=started["turn_id"], event_type="candidate_set_presented")
+            .one()
+        )
+        # Rewritten as the two shapes that predate nesting.
+        event.payload_json = json.dumps(
+            {
+                "products": [
+                    {
+                        "product_id": "bag-1",
+                        "display_name": "Only Bag",
+                        "screen_position": 1,
+                    },
+                    {"product_id": "bag-2", "display_name": "Second Bag"},
+                ]
+            }
+        )
+        candidate_set_id = event.event_id
+        db.commit()
+
+    resolved = conversation_db.post(
+        "/conversations/conversation-legacy/products/resolve",
+        json={
+            "references": [
+                {"reference_id": "a", "candidate_set_id": candidate_set_id, "ordinal": 1},
+                {"reference_id": "b", "candidate_set_id": candidate_set_id, "ordinal": 2},
+            ]
+        },
+    ).json()["results"]
+
+    assert [result["status"] for result in resolved] == ["resolved", "resolved"]
+    for result in resolved:
+        product = result["matches"][0]["product"]
+        assert "screen_position" not in product
+        ProductSummary.model_validate(product)
+
+
+def test_a_showing_is_recorded_as_the_groups_the_shopper_saw(
+    conversation_db: TestClient,
+) -> None:
+    """Two headed groups, each numbered from one, as the screen showed them.
+
+    Recorded flat, "the second shoes" had no structural answer: the shoes
+    began at position three, and the only way back to the group was guessing
+    from category strings that two scopes out of one category defeat.
+    """
+
+    products = [
+        {"product_id": "dress-1", "display_name": "Vivienne Lace"},
+        {"product_id": "dress-2", "display_name": "Coral Silk Maxi"},
+        {"product_id": "shoe-1", "display_name": "Wine Red Pumps"},
+    ]
+    _present_products(
+        conversation_db,
+        "conversation-groups",
+        request_id="request-groups",
+        products=products,
+        product_groups=[
+            {"heading": "dresses", "product_ids": ["dress-1", "dress-2"]},
+            {"heading": "shoes", "product_ids": ["shoe-1"]},
+        ],
+    )
+
+    with memory_main.SessionLocal() as db:
+        event = (
+            db.query(memory_main.ConversationEvent)
+            .filter_by(event_type="candidate_set_presented")
+            .one()
+        )
+        groups = json.loads(event.payload_json)["groups"]
+
+    assert [
+        (
+            group["heading"],
+            [
+                (entry["screen_position"], entry["product"]["display_name"])
+                for entry in group["products"]
+            ],
+        )
+        for group in groups
+    ] == [
+        ("dresses", [(1, "Vivienne Lace"), (2, "Coral Silk Maxi")]),
+        ("shoes", [(1, "Wine Red Pumps")]),
+    ]
+
+
+def test_a_product_in_the_second_group_still_resolves_and_still_parses(
+    conversation_db: TestClient,
+) -> None:
+    """Grouping changes the record's shape, so the runtime's read is retested.
+
+    A showing stored one way and read another is how a shopper asking for a
+    bag they had been shown was told the reference was not valid.
+    """
+
+    from shared.commerce_contracts import ProductSummary
+
+    _, candidate_set_id = _present_products(
+        conversation_db,
+        "conversation-groups-resolve",
+        request_id="request-groups-resolve",
+        products=[
+            {"product_id": "dress-1", "display_name": "Vivienne Lace"},
+            {"product_id": "shoe-1", "display_name": "Wine Red Pumps"},
+        ],
+        product_groups=[
+            {"heading": "dresses", "product_ids": ["dress-1"]},
+            {"heading": "shoes", "product_ids": ["shoe-1"]},
+        ],
+    )
+
+    resolved = conversation_db.post(
+        "/conversations/conversation-groups-resolve/products/resolve",
+        json={
+            "references": [
+                {
+                    "reference_id": "a",
+                    "candidate_set_id": candidate_set_id,
+                    "display_name": "Wine Red Pumps",
+                }
+            ]
+        },
+    ).json()["results"]
+
+    assert [result["status"] for result in resolved] == ["resolved"]
+    product = resolved[0]["matches"][0]["product"]
+    assert product["display_name"] == "Wine Red Pumps"
+    assert "screen_position" not in product
+    ProductSummary.model_validate(product)
+
+
+def _a_dresses_and_shoes_showing(client: TestClient, conversation_id: str) -> str:
+    _, candidate_set_id = _present_products(
+        client,
+        conversation_id,
+        request_id=f"request-{conversation_id}",
+        products=[
+            {"product_id": "dress-1", "display_name": "Coral Silk Maxi"},
+            {"product_id": "dress-2", "display_name": "Vivienne Lace"},
+            {"product_id": "shoe-1", "display_name": "Buckled Heels"},
+            {"product_id": "shoe-2", "display_name": "Wine Red Pumps"},
+        ],
+        product_groups=[
+            {"heading": "dresses", "product_ids": ["dress-1", "dress-2"]},
+            {"heading": "shoes", "product_ids": ["shoe-1", "shoe-2"]},
+        ],
+    )
+    return candidate_set_id
+
+
+def _resolved(client: TestClient, conversation_id: str, **descriptor) -> dict:
+    return client.post(
+        f"/conversations/{conversation_id}/products/resolve",
+        json={"references": [{"reference_id": "r", **descriptor}]},
+    ).json()["results"][0]
+
+
+def test_a_named_group_decides_which_number_the_shopper_meant(
+    conversation_db: TestClient,
+) -> None:
+    """"The second shoes" is the shoes, not the second thing on the screen."""
+
+    _a_dresses_and_shoes_showing(conversation_db, "conversation-second-shoes")
+
+    result = _resolved(
+        conversation_db, "conversation-second-shoes", ordinal=2, group="shoes"
+    )
+
+    assert result["status"] == "resolved"
+    assert result["matches"][0]["product"]["display_name"] == "Wine Red Pumps"
+
+
+def test_a_bare_ordinal_takes_the_first_group_rather_than_asking(
+    conversation_db: TestClient,
+) -> None:
+    """Numbering restarts per group, so "the first one" named two products.
+
+    It came back ambiguous, which is the assistant stopping to ask over a
+    reference the shopper could not have made clearer. The first group is the
+    one the reply anchors on, and it is the only group there is when they
+    asked for one kind.
+    """
+
+    _a_dresses_and_shoes_showing(conversation_db, "conversation-bare-ordinal")
+
+    result = _resolved(conversation_db, "conversation-bare-ordinal", ordinal=1)
+
+    assert result["status"] == "resolved"
+    assert result["matches"][0]["product"]["display_name"] == "Coral Silk Maxi"
+
+
+def test_naming_the_showing_does_not_stop_the_number_finding_its_group(
+    conversation_db: TestClient,
+) -> None:
+    """Saying which turn is the helpful thing to do, and it cost the answer.
+
+    Which showing a number counts in depends on whether the shopper named one.
+    Which group it counts in does not. Narrowing the group only when neither
+    the turn nor the set was given meant the model volunteering either --
+    both are offered to it -- came back ambiguous over a showing of dresses
+    and shoes, and "that first one" turned into a question.
+    """
+
+    candidate_set_id = _a_dresses_and_shoes_showing(
+        conversation_db, "conversation-qualified-ordinal"
+    )
+
+    by_turn = _resolved(
+        conversation_db, "conversation-qualified-ordinal", ordinal=1, turn_sequence=1
+    )
+    by_set = _resolved(
+        conversation_db,
+        "conversation-qualified-ordinal",
+        ordinal=1,
+        candidate_set_id=candidate_set_id,
+    )
+
+    for result in (by_turn, by_set):
+        assert result["status"] == "resolved"
+        assert result["matches"][0]["product"]["display_name"] == "Coral Silk Maxi"
+
+
+def test_a_named_group_still_wins_when_the_showing_is_named_too(
+    conversation_db: TestClient,
+) -> None:
+    """"The second shoes, from that first lot" is still the shoes."""
+
+    _a_dresses_and_shoes_showing(conversation_db, "conversation-qualified-group")
+
+    result = _resolved(
+        conversation_db,
+        "conversation-qualified-group",
+        ordinal=2,
+        group="shoes",
+        turn_sequence=1,
+    )
+
+    assert result["status"] == "resolved"
+    assert result["matches"][0]["product"]["display_name"] == "Wine Red Pumps"
+
+
+def test_a_heading_the_record_does_not_know_still_resolves_by_number(
+    conversation_db: TestClient,
+) -> None:
+    """The shopper's word for a group is not always the search's word for it.
+
+    An unrecognised heading narrows nothing rather than resolving nothing.
+    """
+
+    _a_dresses_and_shoes_showing(conversation_db, "conversation-odd-heading")
+
+    result = _resolved(
+        conversation_db, "conversation-odd-heading", ordinal=1, group="frocks"
+    )
+
+    assert result["status"] == "resolved"
+    assert result["matches"][0]["product"]["display_name"] == "Coral Silk Maxi"
+
+
+def test_the_index_a_later_turn_reads_names_each_product_s_group(
+    conversation_db: TestClient,
+) -> None:
+    """Without the heading the index offered two first ones and no way to pick."""
+
+    _a_dresses_and_shoes_showing(conversation_db, "conversation-index-groups")
+    started = _start_turn(
+        conversation_db,
+        "conversation-index-groups",
+        request_id="request-index-groups-next",
+        shopper_text="and the first one?",
+    ).json()
+
+    shown = [
+        (product["group"], product["position"], product["name"])
+        for reference_set in started["projection"]["product_reference_index"]
+        for product in reference_set["products"]
+    ]
+
+    assert shown == [
+        ("dresses", 1, "Coral Silk Maxi"),
+        ("dresses", 2, "Vivienne Lace"),
+        ("shoes", 1, "Buckled Heels"),
+        ("shoes", 2, "Wine Red Pumps"),
+    ]
+
+
+def test_an_unreferenceable_product_does_not_shift_the_rest(
+    conversation_db: TestClient,
+) -> None:
+    """The shopper counts what is on the screen, and nothing filters that.
+
+    The streamed list carries the number, unfiltered. This record drops a
+    product with no name, so counting what survived made every position after
+    it point one place too early: "the third" was handed the fourth garment,
+    with nothing to say it had happened.
+    """
+
+    products = [
+        {"product_id": "bag-1", "display_name": "First Bag"},
+        {"product_id": "bag-2", "display_name": ""},
+        {"product_id": "bag-3", "display_name": "Third Bag"},
+    ]
+    _, candidate_set_id = _present_products(
+        conversation_db,
+        "conversation-gap",
+        request_id="request-gap",
+        products=products,
+    )
+
+    def resolve(ordinal: int) -> dict:
+        return conversation_db.post(
+            "/conversations/conversation-gap/products/resolve",
+            json={
+                "references": [
+                    {
+                        "reference_id": f"n{ordinal}",
+                        "candidate_set_id": candidate_set_id,
+                        "ordinal": ordinal,
+                    }
+                ]
+            },
+        ).json()["results"][0]
+
+    third = resolve(3)
+    assert third["status"] == "resolved"
+    assert third["matches"][0]["product"]["product_id"] == "bag-3"
+
+    # The dropped one leaves a hole rather than pulling the next into its
+    # place. Nothing resolves there, which is the honest answer.
+    assert resolve(2)["status"] != "resolved"
+
+
+def test_product_resolution_deduplicates_repeated_ref_using_latest_occurrence(
+    conversation_db: TestClient,
+) -> None:
+    earlier = {
+        "product_id": "bag-1",
+        "display_name": "Structured Tote",
+        "price": {"amount": 59.99, "currency": "USD"},
+    }
+    latest = {
+        "product_id": "bag-1",
+        "display_name": "Structured Tote",
+        "price": {"amount": 49.99, "currency": "USD"},
+    }
+    _present_products(
+        conversation_db,
+        "conversation-repeated-ref",
+        request_id="request-earlier",
+        products=[earlier],
+    )
+    _, latest_set_id = _present_products(
+        conversation_db,
+        "conversation-repeated-ref",
+        request_id="request-latest",
+        products=[latest],
+    )
+
+    response = conversation_db.post(
+        "/conversations/conversation-repeated-ref/products/resolve",
+        json={"references": [{"reference_id": "bag", "product_ref": "bag-1"}]},
+    )
+
+    result = response.json()["results"][0]
+    assert response.status_code == 200
+    assert result["status"] == "resolved"
+    assert result["match_count"] == 1
+    assert result["matches"] == [
+        {
+            "product": latest,
+            "candidate_set_id": latest_set_id,
+            "turn_sequence": 2,
+            "position": 1,
+            "group": "",
+            "group_index": 0,
+            "catalog_revision": "catalog-v1",
+        }
+    ]
+
+
+def test_product_resolution_is_conversation_scoped(
+    conversation_db: TestClient,
+) -> None:
+    _, candidate_set_id = _present_products(
+        conversation_db,
+        "conversation-private",
+        request_id="request-private",
+        products=[{"product_id": "bag-private", "display_name": "Private Bag"}],
+    )
+
+    response = conversation_db.post(
+        "/conversations/conversation-other/products/resolve",
+        json={
+            "references": [
+                {
+                    "reference_id": "cross-conversation",
+                    "candidate_set_id": candidate_set_id,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["results"] == [
+        {
+            "reference_id": "cross-conversation",
+            "status": "not_found",
+            "matches": [],
+            "match_count": 0,
+            "blocking_field": None,
+            "corroboration_mismatch": [],
+        }
+    ]
+
+
+def test_product_resolution_reads_history_outside_recent_turn_window(
+    conversation_db: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEMORY_RECENT_TURNS", "1")
+    _present_products(
+        conversation_db,
+        "conversation-distant",
+        request_id="request-1",
+        products=[{"product_id": "bag-old", "display_name": "Earlier Bag"}],
+    )
+    _present_products(
+        conversation_db,
+        "conversation-distant",
+        request_id="request-2",
+        products=[{"product_id": "shoe-2", "display_name": "Second Turn Shoe"}],
+    )
+    _present_products(
+        conversation_db,
+        "conversation-distant",
+        request_id="request-3",
+        products=[{"product_id": "watch-3", "display_name": "Third Turn Watch"}],
+    )
+    next_turn = _start_turn(
+        conversation_db,
+        "conversation-distant",
+        request_id="request-4",
+    )
+
+    response = conversation_db.post(
+        "/conversations/conversation-distant/products/resolve",
+        json={
+            "references": [
+                {"reference_id": "old", "display_name": "Earlier Bag"}
+            ]
+        },
+    )
+
+    assert next_turn.status_code == 200
+    assert [turn["sequence"] for turn in next_turn.json()["recent_turns"]] == [3]
+    result = response.json()["results"][0]
+    assert result["status"] == "resolved"
+    assert result["matches"][0]["turn_sequence"] == 1
+    assert result["matches"][0]["product"]["product_id"] == "bag-old"
+
+
+def test_product_resolution_requires_selector_and_scoped_ordinal(
+    conversation_db: TestClient,
+) -> None:
+    path = "/conversations/conversation-validation/products/resolve"
+
+    missing_selector = conversation_db.post(
+        path,
+        json={"references": [{"reference_id": "missing"}]},
+    )
+    unscoped_ordinal = conversation_db.post(
+        path,
+        json={
+            "references": [
+                {"reference_id": "ordinal", "category": "bags", "ordinal": 2}
+            ]
+        },
+    )
+
+    assert missing_selector.status_code == 422
+    # An ordinal alone used to be rejected for naming no turn and no candidate
+    # set -- which is exactly what a shopper saying "the second one" gives you,
+    # and what the model would have had to invent. It now counts within the
+    # most recent showing, which is the one they are looking at.
+    assert unscoped_ordinal.status_code == 200
+
+
+def test_finalize_persists_ordered_events_and_replays_exactly(
+    conversation_db: TestClient,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-events",
+        request_id="request-events",
+    ).json()
+    events = [
+        {
+            "event_key": "candidate-set-1",
+            "event_type": "candidate_set_presented",
+            "source_kind": "catalog",
+            "source_ref": "search-1",
+            "payload": {
+                "products": [
+                    {"product_id": "bag-1", "display_name": "Bag One"}
+                ]
+            },
+        },
+        {
+            "event_key": "detail-1",
+            "event_type": "product_detail_confirmed",
+            "source_kind": "catalog",
+            "source_ref": "bag-1",
+            "payload": {"material": "cotton"},
+        },
+    ]
+    first = _finalize_turn(
+        conversation_db,
+        "conversation-events",
+        started["turn_id"],
+        request_id="request-events",
+        attempt_id=started["attempt_id"],
+        events=events,
+    )
+    replay = _finalize_turn(
+        conversation_db,
+        "conversation-events",
+        started["turn_id"],
+        request_id="request-events",
+        attempt_id=started["attempt_id"],
+        events=events,
+    )
+    conflict = _finalize_turn(
+        conversation_db,
+        "conversation-events",
+        started["turn_id"],
+        request_id="request-events",
+        attempt_id=started["attempt_id"],
+        assistant_text="A different answer.",
+        events=events,
+    )
+
+    assert first.status_code == 200
+    assert replay.json() == {**first.json(), "replayed": True}
+    assert conflict.status_code == 409
+    with memory_main.SessionLocal() as db:
+        stored_events = (
+            db.query(memory_main.ConversationEvent)
+            .order_by(memory_main.ConversationEvent.logical_order)
+            .all()
+        )
+        projection = db.query(memory_main.ConversationProjection).one()
+        assert [event.event_key for event in stored_events] == [
+            "candidate-set-1",
+            "detail-1",
+        ]
+        assert [event.logical_order for event in stored_events] == [1, 2]
+        assert projection.version == 1
+        assert projection.last_turn_id == started["turn_id"]
+        assert projection.product_reference_index_json == "[]"
+
+
+def test_finalize_rejects_extra_output_and_unlinked_cart_events(
+    conversation_db: TestClient,
+) -> None:
+    started = _start_turn(
+        conversation_db,
+        "conversation-invalid-finalize",
+        request_id="request-invalid-finalize",
+    ).json()
+    path = (
+        "/conversations/conversation-invalid-finalize/turns/"
+        f"{started['turn_id']}/finalize"
+    )
+    base_payload = {
+        "request_id": "request-invalid-finalize",
+        "attempt_id": started["attempt_id"],
+        "assistant_text": "Done.",
+        "status": "completed",
+        "termination_reason": "completed",
+        "events": [],
+    }
+
+    extra_output = conversation_db.post(
+        path,
+        json={
+            **base_payload,
+            "output": {
+                "product_results": [],
+                "retrieved": {},
+                "agent_diagnostics": {},
+                "unsupported": True,
+            },
+        },
+    )
+    forged_presented_products = conversation_db.post(
+        path,
+        json={
+            **base_payload,
+            "events": [
+                {
+                    "event_key": "runtime-presented-products",
+                    "event_type": "candidate_set_presented",
+                    "source_kind": "runtime",
+                    "payload": {
+                        "products": [
+                            {
+                                "product_id": "forged-product",
+                                "display_name": "Forged Product",
+                            }
+                        ]
+                    },
+                }
+            ],
+        },
+    )
+
+    assert extra_output.status_code == 422
+    assert forged_presented_products.status_code == 422
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationTurn).one().status == "started"
+        assert db.query(memory_main.ConversationEvent).count() == 0
+
+
+def test_an_unknown_event_type_is_dropped_and_the_turn_still_finalizes(
+    conversation_db,
+) -> None:
+    """A turn is authoritative; its events only enrich it.
+
+    `event_type` used to be a Literal, so one type this build had never heard
+    of failed validation of the whole finalize request. The turn stayed
+    `started` and the next turn was refused with "conversation is still
+    processing another request" -- a dead conversation, caused by an event
+    nobody needed. It also made the two services' deploy order load-bearing in
+    a way no amount of documentation makes safe.
+
+    The unknown event is dropped and named in the receipt, which is what keeps
+    a genuine typo as visible as a rejection was.
+    """
+
+    started = _start_turn(
+        conversation_db,
+        "conversation-unknown-event",
+        request_id="request-unknown-event",
+    ).json()
+
+    response = conversation_db.post(
+        (
+            "/conversations/conversation-unknown-event/turns/"
+            f"{started['turn_id']}/finalize"
+        ),
+        json={
+            "request_id": "request-unknown-event",
+            "attempt_id": started["attempt_id"],
+            "assistant_text": "Done.",
+            "status": "completed",
+            "termination_reason": "completed",
+            "events": [
+                {
+                    "event_key": "known-1",
+                    "event_type": "product_selected",
+                    "source_kind": "shopper",
+                    "payload": {},
+                },
+                {
+                    "event_key": "unknown-1",
+                    "event_type": "invented_by_a_newer_peer",
+                    "source_kind": "runtime",
+                    "payload": {"anything": True},
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["dropped_event_types"] == ["invented_by_a_newer_peer"]
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationTurn).one().status == "completed"
+        stored = [
+            row.event_type
+            for row in db.query(memory_main.ConversationEvent).all()
+            if row.event_key != "runtime-presented-products"
+        ]
+        assert stored == ["product_selected"]
+
+
+def test_start_reopens_exact_abandoned_request_in_place(
+    conversation_db: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEMORY_TURN_ABANDON_SECONDS", "10")
+    started = _start_turn(
+        conversation_db,
+        "conversation-stale-retry",
+        request_id="request-stale",
+    ).json()
+    with memory_main.SessionLocal() as db:
+        turn = (
+            db.query(memory_main.ConversationTurn)
+            .filter_by(turn_id=started["turn_id"])
+            .one()
+        )
+        turn.started_at = time.time() - 60
+        turn.completed_at = time.time() - 30
+        turn.assistant_text = "Partial answer"
+        turn.termination_reason = "partial_failure"
+        turn.finalize_digest = "partial-finalize"
+        turn.output_json = '{"partial":true}'
+        db.commit()
+    assert memory_main._sweep_abandoned_turns(timeout_seconds=10) == 1
+    with memory_main.SessionLocal() as db:
+        abandoned = db.query(memory_main.ConversationTurn).one()
+        assert abandoned.status == "abandoned"
+        assert abandoned.termination_reason == "startup_abandoned_turn_sweep"
+
+    retried = _start_turn(
+        conversation_db,
+        "conversation-stale-retry",
+        request_id="request-stale",
+    )
+
+    assert retried.status_code == 200
+    assert retried.json()["turn_id"] == started["turn_id"]
+    assert retried.json()["attempt_id"] != started["attempt_id"]
+    assert retried.json()["sequence"] == 1
+    assert retried.json()["replayed"] is False
+    assert retried.json()["status"] == "started"
+    assert retried.json()["assistant_text"] is None
+    assert retried.json()["termination_reason"] is None
+    assert retried.json()["output"] is None
+    with memory_main.SessionLocal() as db:
+        turn = db.query(memory_main.ConversationTurn).one()
+        assert turn.completed_at is None
+        assert turn.finalize_digest is None
+    stale_finalize = _finalize_turn(
+        conversation_db,
+        "conversation-stale-retry",
+        started["turn_id"],
+        request_id="request-stale",
+        attempt_id=started["attempt_id"],
+    )
+    current_finalize = _finalize_turn(
+        conversation_db,
+        "conversation-stale-retry",
+        started["turn_id"],
+        request_id="request-stale",
+        attempt_id=retried.json()["attempt_id"],
+    )
+
+    assert stale_finalize.status_code == 409
+    assert stale_finalize.json()["detail"] == "turn_attempt_superseded"
+    assert current_finalize.status_code == 200
+
+
+def test_start_abandons_stale_other_request_and_advances_sequence(
+    conversation_db: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEMORY_TURN_ABANDON_SECONDS", "10")
+    started = _start_turn(
+        conversation_db,
+        "conversation-stale-replacement",
+        request_id="request-stale",
+    ).json()
+    with memory_main.SessionLocal() as db:
+        turn = (
+            db.query(memory_main.ConversationTurn)
+            .filter_by(turn_id=started["turn_id"])
+            .one()
+        )
+        turn.started_at = time.time() - 60
+        db.commit()
+
+    replacement = _start_turn(
+        conversation_db,
+        "conversation-stale-replacement",
+        request_id="request-replacement",
+    )
+    assert (
+        _finalize_turn(
+            conversation_db,
+            "conversation-stale-replacement",
+            replacement.json()["turn_id"],
+            request_id="request-replacement",
+            attempt_id=replacement.json()["attempt_id"],
+        ).status_code
+        == 200
+    )
+    superseded_retry = _start_turn(
+        conversation_db,
+        "conversation-stale-replacement",
+        request_id="request-stale",
+    )
+
+    assert replacement.status_code == 200
+    assert replacement.json()["sequence"] == 2
+    assert replacement.json()["recent_turns"][0]["status"] == "abandoned"
+    assert superseded_retry.status_code == 409
+    assert superseded_retry.json()["detail"] == "turn_superseded"
+    with memory_main.SessionLocal() as db:
+        abandoned = (
+            db.query(memory_main.ConversationTurn)
+            .filter_by(turn_id=started["turn_id"])
+            .one()
+        )
+        assert abandoned.status == "abandoned"
+        assert abandoned.termination_reason == "turn_start_abandoned_timeout"
+
+
+def test_stale_retry_reuses_cart_mutation_idempotency_key(
+    conversation_db: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEMORY_TURN_ABANDON_SECONDS", "10")
+    request_id = "request-cart-crash"
+    started = _start_turn(
+        conversation_db,
+        "conversation-cart-crash",
+        request_id=request_id,
+    ).json()
+    mutation = {
+        "product_id": "bag-1",
+        "item": "Structured Bag",
+        "amount": 1,
+        "price": 45.0,
+        "idempotency_key": f"{request_id}:add:bag-1:1",
+    }
+    first_add = conversation_db.post("/user/7/cart/add", json=mutation)
+    with memory_main.SessionLocal() as db:
+        turn = (
+            db.query(memory_main.ConversationTurn)
+            .filter_by(turn_id=started["turn_id"])
+            .one()
+        )
+        turn.started_at = time.time() - 60
+        db.commit()
+
+    retried = _start_turn(
+        conversation_db,
+        "conversation-cart-crash",
+        request_id=request_id,
+    )
+    repeated_add = conversation_db.post("/user/7/cart/add", json=mutation)
+
+    assert first_add.status_code == 200
+    assert retried.status_code == 200
+    assert retried.json()["turn_id"] == started["turn_id"]
+    assert repeated_add.status_code == 200
+    assert repeated_add.json() == first_add.json()
+    assert conversation_db.get("/user/7/cart").json()["cart"][0]["amount"] == 1
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.CartMutation).count() == 1
+
+
+def test_memory_reads_what_the_next_turn_would_see_without_starting_it(
+    conversation_db: TestClient,
+) -> None:
+    conversation_db.post(
+        "/user/7/cart/add",
+        json={
+            "product_id": "bag-1",
+            "item": "Structured Tote",
+            "amount": 1,
+            "idempotency_key": "memory-cart",
+        },
+    )
+    _present_products(
+        conversation_db,
+        "conversation-memory",
+        request_id="request-memory",
+        products=[
+            {"product_id": "bag-1", "display_name": "Structured Tote"},
+            {"product_id": "bag-2", "display_name": "Cobalt Crossbody"},
+        ],
+    )
+
+    first = conversation_db.get("/conversations/conversation-memory/memory")
+    second = conversation_db.get("/conversations/conversation-memory/memory")
+
+    assert first.status_code == 200
+    assert second.json() == first.json()
+    body = first.json()
+    assert body["conversation_id"] == "conversation-memory"
+    assert [turn["shopper_text"] for turn in body["recent_turns"]] == [
+        "Show products for request-memory"
+    ]
+    assert body["wearer_audience"] == []
+    assert body["projection"]["version"] == 1
+    (showing,) = body["projection"]["product_reference_index"]
+    assert showing["turn_seq"] == 1
+    assert [(p["position"], p["name"]) for p in showing["products"]] == [
+        (1, "Structured Tote"),
+        (2, "Cobalt Crossbody"),
+    ]
+    # The cart belongs to the shopper, not to the conversation.
+    assert "cart" not in body
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationTurn).count() == 1
+
+
+def test_memory_of_an_unknown_conversation_is_not_found_and_creates_nothing(
+    conversation_db: TestClient,
+) -> None:
+    missing = conversation_db.get("/conversations/conversation-absent/memory")
+
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "conversation_not_found"
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationProjection).count() == 0
+
+
+def test_reset_hands_back_everything_it_deletes(
+    conversation_db: TestClient,
+) -> None:
+    """A session can be thrown away without throwing away the evidence.
+
+    `DELETE /conversations/{id}` deliberately leaves the cart, which is right
+    for deleting one conversation and wrong for resetting a session: the caller
+    then needs a second endpoint and a user id it may never have held.
+    """
+
+    conversation_db.post(
+        "/user/7/cart/add",
+        json={
+            "product_id": "bag-1",
+            "item": "Structured Bag",
+            "amount": 1,
+            "idempotency_key": "reset-cart",
+        },
+    )
+    started = _start_turn(
+        conversation_db,
+        "conversation-reset",
+        request_id="request-reset",
+    ).json()
+    _finalize_turn(
+        conversation_db,
+        "conversation-reset",
+        started["turn_id"],
+        request_id="request-reset",
+        attempt_id=started["attempt_id"],
+        events=[
+            {
+                "event_key": "event-reset",
+                "event_type": "candidate_set_presented",
+                "source_kind": "catalog",
+                "payload": {},
+            }
+        ],
+    )
+
+    reset = conversation_db.post("/conversations/conversation-reset/reset")
+
+    assert reset.status_code == 200
+    body = reset.json()
+    assert body["deleted"] == {
+        "turns": 1,
+        "events": 1,
+        "projection": True,
+        "cart_lines": 1,
+    }
+
+    # The archive is the debug record, so it has to carry what the rows held
+    # rather than a count of them.
+    archive = body["archive"]
+    assert archive["cart_user_ids"] == [7]
+    assert [turn["shopper_text"] for turn in archive["turns"]] == ["Show me a bag"]
+    assert [event["event_key"] for event in archive["events"]] == ["event-reset"]
+    assert archive["projection"]["conversation_id"] == "conversation-reset"
+    assert [item["item"] for item in archive["cart_items"]] == ["Structured Bag"]
+
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationTurn).count() == 0
+        assert db.query(memory_main.ConversationEvent).count() == 0
+        assert db.query(memory_main.CartItem).count() == 0
+
+
+def test_reset_of_an_unknown_conversation_deletes_nothing(
+    conversation_db: TestClient,
+) -> None:
+    reset = conversation_db.post("/conversations/conversation-absent/reset")
+
+    assert reset.status_code == 200
+    body = reset.json()
+    assert body["deleted"] == {
+        "turns": 0,
+        "events": 0,
+        "projection": False,
+        "cart_lines": 0,
+    }
+    assert body["archive"]["turns"] == []
+    assert body["archive"]["cart_user_ids"] == []
+
+
+def test_delete_cascades_conversation_rows_but_preserves_cart_and_context(
+    conversation_db: TestClient,
+) -> None:
+    with memory_main.SessionLocal() as db:
+        db.add(memory_main.User(id=7, context="legacy"))
+        db.commit()
+    conversation_db.post(
+        "/user/7/cart/add",
+        json={
+            "product_id": "bag-1",
+            "item": "Structured Bag",
+            "amount": 1,
+            "idempotency_key": "keep-cart",
+        },
+    )
+    started = _start_turn(
+        conversation_db,
+        "conversation-delete",
+        request_id="request-delete",
+    ).json()
+    _finalize_turn(
+        conversation_db,
+        "conversation-delete",
+        started["turn_id"],
+        request_id="request-delete",
+        attempt_id=started["attempt_id"],
+        events=[
+            {
+                "event_key": "event-delete",
+                "event_type": "candidate_set_presented",
+                "source_kind": "catalog",
+                "payload": {},
+            }
+        ],
+    )
+
+    deleted = conversation_db.delete("/conversations/conversation-delete")
+
+    assert deleted.status_code == 200
+    assert deleted.json() == {
+        "conversation_id": "conversation-delete",
+        "deleted_turns": 1,
+        "deleted_events": 1,
+        "deleted_projection": True,
+    }
+    with memory_main.SessionLocal() as db:
+        assert db.query(memory_main.ConversationTurn).count() == 0
+        assert db.query(memory_main.ConversationEvent).count() == 0
+        assert db.query(memory_main.ConversationProjection).count() == 0
+        assert db.query(memory_main.CartMutation).count() == 1
+    assert conversation_db.get("/user/7/cart").json()["cart"][0]["item"] == (
+        "Structured Bag"
+    )
+    with memory_main.SessionLocal() as db:
+        assert db.get(memory_main.User, 7).context == "legacy"
+
+
+def test_versioned_migrations_upgrade_legacy_schema_once_without_data_loss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    legacy_engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    with legacy_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE cart_items ("
+                "id INTEGER PRIMARY KEY, user_id INTEGER, item TEXT, amount INTEGER)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO cart_items (id, user_id, item, amount) "
+                "VALUES (1, 7, 'Legacy Bag', 1)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE conversation_turns ("
+                "turn_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, "
+                "sequence INTEGER NOT NULL, request_id TEXT NOT NULL, "
+                "request_digest TEXT NOT NULL, finalize_digest TEXT, "
+                "cart_user_id INTEGER NOT NULL, shopper_text TEXT NOT NULL, "
+                "assistant_text TEXT, status TEXT NOT NULL, "
+                "termination_reason TEXT, catalog_revision TEXT, "
+                "started_at REAL NOT NULL, completed_at REAL)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO conversation_turns ("
+                "turn_id, conversation_id, sequence, request_id, "
+                "request_digest, cart_user_id, shopper_text, status, started_at"
+                ") VALUES ("
+                "'legacy-turn', 'legacy-conversation', 1, 'legacy-request', "
+                "'legacy-digest', 7, 'Remember this', 'completed', 1.0)"
+            )
+        )
+    monkeypatch.setattr(memory_main, "engine", legacy_engine)
+    monkeypatch.setattr(
+        memory_main,
+        "SessionLocal",
+        sessionmaker(bind=legacy_engine, expire_on_commit=False),
+    )
+
+    memory_main._run_schema_migrations()
+    memory_main._run_schema_migrations()
+
+    with legacy_engine.connect() as connection:
+        versions = (
+            connection.execute(
+                text("SELECT version FROM schema_migrations ORDER BY version")
+            )
+            .scalars()
+            .all()
+        )
+        row = connection.execute(
+            text(
+                "SELECT item, cart_line_id, product_id, price "
+                "FROM cart_items WHERE id = 1"
+            )
+        ).one()
+        attempt_id = connection.execute(
+            text(
+                "SELECT attempt_id FROM conversation_turns "
+                "WHERE turn_id = 'legacy-turn'"
+            )
+        ).scalar_one()
+        shopper_profile_id = connection.execute(
+            text(
+                "SELECT shopper_profile_id FROM conversation_turns "
+                "WHERE turn_id = 'legacy-turn'"
+            )
+        ).scalar_one_or_none()
+        profile_foreign_key = next(
+            row
+            for row in connection.execute(
+                text("PRAGMA foreign_key_list('conversation_turns')")
+            ).mappings()
+            if row["from"] == "shopper_profile_id"
+        )
+        tables = set(
+            connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type = 'table'")
+            ).scalars()
+        )
+
+    assert versions == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert row[0] == "Legacy Bag"
+    assert len(row[1]) == 32
+    assert row[2:] == (None, None)
+    assert len(attempt_id) == 32
+    assert shopper_profile_id is None
+    assert profile_foreign_key["table"] == "shopper_profiles"
+    assert profile_foreign_key["to"] == "shopper_profile_id"
+    assert profile_foreign_key["on_delete"] == "RESTRICT"
+    assert profile_foreign_key["on_update"] == "RESTRICT"
+    assert {
+        "conversation_turns",
+        "conversation_events",
+        "conversation_projection",
+        "shopper_profiles",
+    } <= tables
+    legacy_engine.dispose()
+
+
+def test_file_database_reopens_with_sqlite_safety_settings(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "memory.db"
+    database_url = f"sqlite:///{database_path}"
+    first_engine = memory_main.build_engine(database_url, busy_timeout_ms=2500)
+    monkeypatch.setattr(memory_main, "engine", first_engine)
+    monkeypatch.setattr(
+        memory_main,
+        "SessionLocal",
+        sessionmaker(bind=first_engine, expire_on_commit=False),
+    )
+    memory_main._run_schema_migrations()
+    with memory_main.SessionLocal() as db:
+        db.add(
+            memory_main.ConversationTurn(
+                turn_id="durable-turn",
+                conversation_id="durable-conversation",
+                sequence=1,
+                request_id="durable-request",
+                request_digest="durable-digest",
+                cart_user_id=7,
+                shopper_text="Remember this",
+                status="completed",
+                assistant_text="Remembered.",
+                started_at=1.0,
+                completed_at=2.0,
+            )
+        )
+        db.commit()
+    first_engine.dispose()
+
+    reopened_engine = memory_main.build_engine(database_url, busy_timeout_ms=2500)
+    monkeypatch.setattr(memory_main, "engine", reopened_engine)
+    monkeypatch.setattr(
+        memory_main,
+        "SessionLocal",
+        sessionmaker(bind=reopened_engine, expire_on_commit=False),
+    )
+    memory_main._run_schema_migrations()
+
+    with reopened_engine.connect() as connection:
+        assert connection.exec_driver_sql("PRAGMA journal_mode").scalar_one() == "wal"
+        assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+        assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one() == 2500
+        assert (
+            connection.execute(
+                text("SELECT assistant_text FROM conversation_turns")
+            ).scalar_one()
+            == "Remembered."
+        )
+        assert (
+            connection.execute(
+                text("SELECT COUNT(*) FROM schema_migrations")
+            ).scalar_one()
+            == len(_MIGRATIONS)
+        )
+    reopened_engine.dispose()
+
+
+class TestProductReferenceResolutionIsForgivingButNeverGuesses:
+    """A reference the model quoted is still the reference it named.
+
+    Reproduces a live failure: the assistant showed three bags, then for four
+    consecutive turns told the shopper their listings were "not available to
+    me". It had sent `<generated:add69d96c548b4a3>` -- the correct id, wrapped
+    in angle brackets -- and the exact comparison missed.
+    """
+
+    def _occurrence(self):
+        from memory_retriever.src.product_references import ProductReferenceMatch
+
+        return ProductReferenceMatch(
+            product={
+                "product_id": "generated:add69d96c548b4a3",
+                "display_name": "Ravenna Crossbody Bag",
+                "category": "crossbody_bags",
+                "price": {"amount": 49.99, "currency": "USD"},
+            },
+            turn_sequence=1,
+            position=3,
+            candidate_set_id="f088dc105e0f4bd896ca9eaa018329f3",
+        )
+
+    def _descriptor(self, **overrides):
+        from memory_retriever.src.product_references import ProductReferenceDescriptor
+
+        fields = {
+            "reference_id": "bag1",
+            "product_ref": "generated:add69d96c548b4a3",
+            "display_name": "Ravenna Crossbody Bag",
+            "category": "crossbody_bags",
+            "turn_sequence": 1,
+            "candidate_set_id": "f088dc105e0f4bd896ca9eaa018329f3",
+            "ordinal": 3,
+        }
+        fields.update(overrides)
+        return ProductReferenceDescriptor(**fields)
+
+    def test_a_wrapped_reference_still_resolves(self) -> None:
+        from memory_retriever.src.product_references import _matches_descriptor
+
+        for wrapped in (
+            "<generated:add69d96c548b4a3>",
+            "`generated:add69d96c548b4a3`",
+            '"generated:add69d96c548b4a3"',
+            "  generated:add69d96c548b4a3  ",
+        ):
+            assert _matches_descriptor(
+                self._occurrence(), self._descriptor(product_ref=wrapped)
+            ), wrapped
+
+    def test_a_different_reference_still_does_not_resolve(self) -> None:
+        """Normalising punctuation must not make unrelated ids match."""
+
+        from memory_retriever.src.product_references import _matches_descriptor
+
+        assert not _matches_descriptor(
+            self._occurrence(), self._descriptor(product_ref="generated:0000000000")
+        )
+
+    def test_the_one_wrong_field_is_named(self) -> None:
+        from memory_retriever.src.product_references import _blocking_field
+
+        assert (
+            _blocking_field(
+                self._descriptor(product_ref="generated:0000000000"),
+                [self._occurrence()],
+            )
+            == "product_ref"
+        )
+
+    def test_two_wrong_fields_name_nothing(self) -> None:
+        """Naming one of several wrong fields would send the model the wrong way."""
+
+        from memory_retriever.src.product_references import _blocking_field
+
+        assert (
+            _blocking_field(
+                self._descriptor(
+                    product_ref="generated:0000000000", category="satchels"
+                ),
+                [self._occurrence()],
+            )
+            is None
+        )
+
+    def test_a_correct_ref_survives_a_department_named_the_other_way(self) -> None:
+        """The exact call that lost a sale, recorded from the conversation.
+
+        The assistant asked for a dress by ref, name, set, turn and position --
+        all five correct -- and added category "apparel", the catalog's word for
+        the department where this index stores the subcategory. Matching was
+        conjunctive, so the sixth field cancelled the other five, the answer was
+        not_found, and the turn was spent asking the shopper to name a product
+        the assistant had itself named a turn earlier.
+        """
+
+        from memory_retriever.src.product_references import _resolve_descriptor
+
+        result = _resolve_descriptor(
+            self._descriptor(category="apparel"),
+            [self._occurrence()],
+        )
+
+        assert result.status == "resolved"
+        assert result.matches[0].product["display_name"] == "Ravenna Crossbody Bag"
+        # Relaxed, never silently: the odd field is named back to the model.
+        assert result.corroboration_mismatch == ["category"]
+
+    def test_a_wrong_position_or_turn_no_longer_hides_the_product(self) -> None:
+        """Where it was seen describes a product; it does not identify one."""
+
+        from memory_retriever.src.product_references import _resolve_descriptor
+
+        result = _resolve_descriptor(
+            self._descriptor(turn_sequence=9, ordinal=1),
+            [self._occurrence()],
+        )
+
+        assert result.status == "resolved"
+        assert result.corroboration_mismatch == ["turn_sequence", "ordinal"]
+
+    def test_the_showing_the_assistant_named_is_the_one_reported(self) -> None:
+        """A product shown twice has an occurrence per showing.
+
+        Relaxing then taking the newest reported four wrong fields when one was
+        wrong, and returned facts from a showing the assistant never referred
+        to. The occurrence the descriptor describes best is the one meant.
+        """
+
+        from memory_retriever.src.product_references import (
+            ProductReferenceMatch,
+            _resolve_descriptor,
+        )
+
+        later = ProductReferenceMatch(
+            product=self._occurrence().product,
+            turn_sequence=7,
+            position=2,
+            candidate_set_id="99999999999999999999999999999999",
+        )
+
+        result = _resolve_descriptor(
+            self._descriptor(category="apparel"),
+            [self._occurrence(), later],
+        )
+
+        assert result.status == "resolved"
+        assert result.matches[0].turn_sequence == 1
+        assert result.corroboration_mismatch == ["category"]
+
+    def test_a_name_that_contradicts_the_ref_still_refuses(self) -> None:
+        """The cross-check this gate exists for is kept.
+
+        A ref pointing at one product while the assistant calls it another is
+        the confusion worth failing on -- unlike a department named in the
+        wrong vocabulary, which describes the same product correctly.
+        """
+
+        from memory_retriever.src.product_references import _resolve_descriptor
+
+        result = _resolve_descriptor(
+            self._descriptor(display_name="Black Satin Lace-Up Dress"),
+            [self._occurrence()],
+        )
+
+        assert result.status == "not_found"
+        assert result.matches == []
+        assert result.corroboration_mismatch == []
+
+    def test_the_catalog_s_own_name_identifies_as_well_as_the_ref(self) -> None:
+        """Relaxation is earned by an identifier -- and a name is one.
+
+        Neither a ref nor a display_name is the model's reading of the
+        shopper: one this system minted, the other the catalog's own. So the
+        name carries a descriptor with no ref exactly as far, and the
+        department named in the other vocabulary is set aside either way.
+        """
+
+        from memory_retriever.src.product_references import _resolve_descriptor
+
+        result = _resolve_descriptor(
+            self._descriptor(product_ref=None, category="apparel"),
+            [self._occurrence()],
+        )
+
+        assert result.status == "resolved"
+        assert result.matches[0].product["display_name"] == "Ravenna Crossbody Bag"
+        assert result.corroboration_mismatch == ["category"]
+
+    def test_diagnosis_never_resolves_the_product_it_found(self) -> None:
+        from memory_retriever.src.product_references import _resolve_descriptor
+
+        result = _resolve_descriptor(
+            self._descriptor(product_ref="generated:0000000000"),
+            [self._occurrence()],
+        )
+        assert result.status == "not_found"
+        assert result.matches == []
+        assert result.blocking_field == "product_ref"
+
+
+def test_start_carries_forward_the_most_recently_declared_wearer(
+    conversation_db: TestClient,
+) -> None:
+    """A wearer named one turn ago must still have standing on the next.
+
+    Live: turn 3 bought sunglasses for a husband and returned four
+    adult_all_genders products; turn 4 asked for a suit and returned four
+    womens ones. The dialogue was carried in full and simply had no standing,
+    because dialogue establishes intent and never fact.
+    """
+
+    conversation_id = "conversation-wearer"
+    first = _start_turn(
+        conversation_db,
+        conversation_id,
+        request_id="request-wearer-1",
+        shopper_text="Sunglasses for my husband.",
+    ).json()
+    _finalize_turn(
+        conversation_db,
+        conversation_id,
+        first["turn_id"],
+        request_id="request-wearer-1",
+        attempt_id=first["attempt_id"],
+        events=[
+            {
+                "event_key": "wearer-audience:request-wearer-1",
+                "event_type": "wearer_audience_declared",
+                "source_kind": "runtime",
+                "payload": {"audience": ["adult_all_genders"]},
+            }
+        ],
+    )
+
+    second = _start_turn(
+        conversation_db,
+        conversation_id,
+        request_id="request-wearer-2",
+        shopper_text="Do you have a suit as well?",
+    ).json()
+
+    assert second["wearer_audience"] == ["adult_all_genders"]
+
+    # A turn that declares nothing leaves it standing: silence is how the
+    # model forgets, not how a shopper changes their mind.
+    _finalize_turn(
+        conversation_db,
+        conversation_id,
+        second["turn_id"],
+        request_id="request-wearer-2",
+        attempt_id=second["attempt_id"],
+    )
+    third = _start_turn(
+        conversation_db,
+        conversation_id,
+        request_id="request-wearer-3",
+        shopper_text="And shoes for him?",
+    ).json()
+
+    assert third["wearer_audience"] == ["adult_all_genders"]
+
+
+def test_two_sizes_of_one_product_are_two_cart_lines(conversation_db) -> None:
+    """The merge key and the idempotency digest both have to know the size.
+
+    Without the merge key, a 6 and an 8 collapse into one line of quantity two.
+    Without the digest, the second add replays as the first and vanishes
+    entirely -- silently, since a replay is a success.
+    """
+
+    for size in ("6", "8"):
+        added = conversation_db.post(
+            "/user/9911/cart/add",
+            json={
+                "item": "The Office A-line Dress",
+                "amount": 1,
+                "price": 179.99,
+                "product_id": "dress-1",
+                "idempotency_key": f"key-{size}",
+                "size": size,
+            },
+        )
+        assert added.status_code == 200, added.text
+
+    cart = conversation_db.get("/user/9911/cart").json()["cart"]
+
+    assert len(cart) == 2
+    assert sorted(line["size"] for line in cart) == ["6", "8"]
+    assert all(line["amount"] == 1 for line in cart)
+
+    started = _start_turn(
+        conversation_db, "conversation-sizes", request_id="request-sizes", cart_user_id=9911
+    )
+    assert started.status_code == 200, started.text
+    assert sorted(line["size"] for line in started.json()["cart"]) == ["6", "8"]
+
+
+def test_the_same_size_added_twice_merges_into_one_line(conversation_db) -> None:
+    """Quantity, not a second line."""
+
+    for key in ("a", "b"):
+        conversation_db.post(
+            "/user/9912/cart/add",
+            json={
+                "item": "The Office A-line Dress",
+                "amount": 1,
+                "price": 179.99,
+                "product_id": "dress-1",
+                "idempotency_key": f"key-{key}",
+                "size": "8",
+            },
+        )
+
+    cart = conversation_db.get("/user/9912/cart").json()["cart"]
+
+    assert len(cart) == 1
+    assert cart[0]["amount"] == 2
+    assert cart[0]["size"] == "8"
+
+
+def test_a_one_size_product_records_no_size(conversation_db) -> None:
+    conversation_db.post(
+        "/user/9913/cart/add",
+        json={
+            "item": "Classic Black Patent Leather Purse",
+            "amount": 1,
+            "price": 49.90,
+            "product_id": "bag-1",
+            "idempotency_key": "bag-key",
+        },
+    )
+
+    cart = conversation_db.get("/user/9913/cart").json()["cart"]
+
+    assert len(cart) == 1
+    assert "size" not in cart[0]
+
+
+def test_one_key_reused_with_a_different_size_is_not_a_replay(
+    conversation_db,
+) -> None:
+    """The digest is what stops a second size disappearing into a replay.
+
+    Replay detection matches on the idempotency key; the digest is what proves
+    the request behind that key is the same request. Leave the size out of it
+    and "add an 8" under a reused key returns the 6 that was added before --
+    reported as success, with nothing added.
+    """
+
+    first = conversation_db.post(
+        "/user/9914/cart/add",
+        json={
+            "item": "The Office A-line Dress",
+            "amount": 1,
+            "price": 179.99,
+            "product_id": "dress-1",
+            "idempotency_key": "same-key",
+            "size": "6",
+        },
+    )
+    assert first.status_code == 200
+
+    second = conversation_db.post(
+        "/user/9914/cart/add",
+        json={
+            "item": "The Office A-line Dress",
+            "amount": 1,
+            "price": 179.99,
+            "product_id": "dress-1",
+            "idempotency_key": "same-key",
+            "size": "8",
+        },
+    )
+
+    # Whatever the service decides to do here, it must not quietly report the
+    # size-6 line as though the size-8 request had been honoured.
+    if second.status_code == 200:
+        assert second.json()["cart_line"].get("size") != "6"
+    else:
+        assert second.status_code == 409
+
+
+def test_a_choice_is_filed_against_the_showing_it_was_made_from(
+    conversation_db: TestClient,
+) -> None:
+    """And is retired by the next showing, because that is where it lives.
+
+    Live, a shopper chose "the first pairing" and was asked to choose again on
+    every turn that followed: establishment was scoped to the message that made
+    it. Filing the choice against the set it was made from is what lets a later
+    turn honour it -- and what stops it honouring a set nobody is looking at
+    any more.
+    """
+
+    conversation = "conversation-durable-choice"
+    products = [
+        {"product_id": "bag-1", "display_name": "Structured Tote"},
+        {"product_id": "bag-2", "display_name": "Cobalt Crossbody"},
+    ]
+
+    shown = _start_turn(conversation_db, conversation, request_id="request-shown")
+    assert shown.status_code == 200
+    shown = shown.json()
+    _finalize_turn(
+        conversation_db,
+        conversation,
+        shown["turn_id"],
+        request_id="request-shown",
+        attempt_id=shown["attempt_id"],
+        output={"product_results": products, "retrieved": {}, "agent_diagnostics": {}},
+    )
+
+    chose = _start_turn(conversation_db, conversation, request_id="request-chose").json()
+    _finalize_turn(
+        conversation_db,
+        conversation,
+        chose["turn_id"],
+        request_id="request-chose",
+        attempt_id=chose["attempt_id"],
+        events=[
+            {
+                "event_key": "system-identified:request-chose",
+                "event_type": "historical_reference_resolved",
+                "source_kind": "runtime",
+                "payload": {"product_refs": ["bag-1"]},
+            }
+        ],
+    )
+
+    after = _start_turn(conversation_db, conversation, request_id="request-after")
+    index = after.json()["projection"]["product_reference_index"]
+    assert [entry.get("system_identified") for entry in index] == [["bag-1"]]
+    after = after.json()
+    _finalize_turn(
+        conversation_db,
+        conversation,
+        after["turn_id"],
+        request_id="request-after",
+        attempt_id=after["attempt_id"],
+    )
+
+    # A new showing is a new choice to make.
+    again = _start_turn(conversation_db, conversation, request_id="request-again")
+    again = again.json()
+    _finalize_turn(
+        conversation_db,
+        conversation,
+        again["turn_id"],
+        request_id="request-again",
+        attempt_id=again["attempt_id"],
+        output={"product_results": products, "retrieved": {}, "agent_diagnostics": {}},
+    )
+
+    latest = _start_turn(conversation_db, conversation, request_id="request-latest")
+    index = latest.json()["projection"]["product_reference_index"]
+    newest = max(index, key=lambda entry: entry["turn_seq"])
+    assert "system_identified" not in newest
+
+
+def test_empty_settings_are_the_code_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Compose passes these through empty when they are unset.
+    from memory_retriever.src import conversations, database
+
+    for name in (
+        "MEMORY_SQLITE_BUSY_TIMEOUT_MS",
+        "MEMORY_TURN_ABANDON_SECONDS",
+        "MEMORY_RECENT_TURNS",
+    ):
+        monkeypatch.setenv(name, "")
+
+    assert database._configured_busy_timeout_ms() == database.DEFAULT_BUSY_TIMEOUT_MS
+    assert (
+        conversations.abandoned_timeout_seconds()
+        == conversations.DEFAULT_ABANDONED_SECONDS
+    )
+    assert (
+        conversations._recent_turns_limit() == conversations.DEFAULT_RECENT_TURNS_LIMIT
+    )

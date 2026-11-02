@@ -1,0 +1,1152 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Replay frozen shopper conversations and check what the assistant did.
+
+The challenger writes the shopper's words fresh every run, which is what makes
+it good at finding a bug and useless for confirming one -- it invented aprons on
+one run and bath towels on the next. This is the other half: the words never
+change, and the checks read state rather than prose.
+
+Reading prose is how a run reported "no failed turns" while a size 6 nobody
+asked for sat in the cart, and again while a dress went missing entirely. So
+every assertion here is answered by the cart the service returns, the products
+it streamed, or the tools it called.
+
+    python -m tests.evaluation.src.replay --label 2026-08-14
+    python -m tests.evaluation.src.replay --only cart_two_sizes --repeat 8
+    python -m tests.evaluation.src.replay --label nightly --concurrency 4
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import concurrent.futures
+import hashlib
+import json
+import subprocess
+import time
+import uuid
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import requests
+import yaml
+
+from .config import EvalConfig, load_eval_config
+
+EVAL_ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS_ROOT = EVAL_ROOT / "datasets" / "val"
+RESULTS_ROOT = EVAL_ROOT / "results" / "val"
+
+#: Distinct per run, scenario and repeat. The cart is keyed on user_id, so two
+#: conversations sharing one would write to the same cart and every cart
+#: assertion in both would be meaningless while still reporting pass or fail.
+#: The memory service keeps carts and dialogue across runs, so a second run
+#: under a reused label would otherwise resume the first one's cart and turns.
+_USER_ID_BASE = 700_000_000
+
+#: The ceiling for --parallel. One turn is mostly model round trips, so beyond
+#: a handful of conversations nothing finishes sooner -- they all just take
+#: longer, and the timings stop meaning anything at all.
+_MAX_PARALLEL = 6
+
+
+@dataclass
+class Check:
+    """One assertion and what actually happened."""
+
+    name: str
+    outcome: str  # pass | fail | error
+    detail: str = ""
+
+
+@dataclass
+class TurnResult:
+    index: int
+    said: str
+    reply: str
+    products: list[dict[str, Any]]
+    cart: list[dict[str, Any]]
+    tools: list[str]
+    seconds: float
+    scopes: list[dict[str, Any]] = field(default_factory=list)
+    attached: str = ""
+    checks: list[Check] = field(default_factory=list)
+    #: What the turn cost the model. The stream has always carried this and this
+    #: harness has always dropped it, so a change made to reduce input tokens
+    #: could be replayed twenty-one times and still not be measured. Kept per
+    #: turn rather than summed, because the turns that grow are the ones with
+    #: many tool calls and an average hides them.
+    token_usage: dict[str, Any] = field(default_factory=dict)
+    #: Why the turn stopped, and what it spent getting there. Declared here
+    #: because the artifact is `vars(turn)`: a key the stream carries and this
+    #: class does not declare is computed and then silently dropped, which is
+    #: how `token_usage` above went twenty-one runs unmeasured.
+    ended: str = ""
+    rejected: list[str] = field(default_factory=list)
+    repeated: dict[str, int] = field(default_factory=dict)
+    #: The memory the turn was read against: the dialogue window and the
+    #: product index, exactly as the server rendered them. Reading a journey
+    #: means asking why a turn answered as it did, and half of that answer is
+    #: what it could see.
+    memory: dict[str, str] = field(default_factory=dict)
+    #: What each tool was actually asked for, in order. `tools` gives the names
+    #: and answers "did it resolve or search"; it cannot answer "which product
+    #: did it add", and that is the question the cart failures turn on. A turn
+    #: put the wrong dress in the cart and diagnosing it meant inferring the
+    #: ref from the prose of the reply and the set the turn happened to show,
+    #: because the argument itself was captured, used for `scopes`, and then
+    #: dropped. Skill activation is here for the same reason: the name says
+    #: skills were chosen, not which ones.
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+
+def scenario_identity(
+    label: str, run_id: str, scenario_id: str, repeat: int
+) -> dict[str, Any]:
+    """Derive ids that are distinct within a run and never shared with another.
+
+    The label names the results folder and may be reused; `run_id` is fresh
+    for every invocation, so a reused label still starts every scenario with an
+    empty cart and no remembered dialogue. The conversation id keeps the
+    `<label>-` prefix and the `-<scenario>-<repeat>` suffix that trace capture
+    matches on.
+    """
+
+    seed = f"{label}|{run_id}|{scenario_id}|{repeat}".encode()
+    digest = int(hashlib.sha256(seed).hexdigest()[:12], 16)
+    conversation = f"{label}-{run_id}-{scenario_id}-{repeat}"
+    return {
+        "user_id": _USER_ID_BASE + digest % 90_000_000,
+        "session_id": conversation,
+        "conversation_id": conversation,
+        "cart_id": f"{conversation}-cart",
+    }
+
+
+def load_scenarios(only: str | None = None) -> list[dict[str, Any]]:
+    # Hidden directories only ever hold editor copies, and a copy loaded as a
+    # scenario is a second run of the same conversation reported as its own.
+    scripts = sorted(
+        path
+        for path in (SCRIPTS_ROOT / "scripts").rglob("*.yaml")
+        if not any(part.startswith(".") for part in path.parts)
+    )
+    loaded = []
+    for path in scripts:
+        data = yaml.safe_load(path.read_text()) or {}
+        data.setdefault("id", path.stem)
+        # By number, by name, or by either half, and several at once:
+        # --only J01,J02,J13 is the point of numbering them.
+        if only and not any(
+            want.strip().casefold() in data["id"].casefold()
+            for want in only.split(",")
+            if want.strip()
+        ):
+            continue
+        loaded.append(data)
+    if only and not loaded:
+        raise SystemExit(f"No scenario named {only!r} in {SCRIPTS_ROOT / 'scripts'}")
+    return loaded
+
+
+class Assistant:
+    """One turn against the running assistant, media included."""
+
+    def __init__(self, config: EvalConfig) -> None:
+        base = config.target_agent.base_url.rstrip("/")
+        self._url = f"{base}/query/stream"
+        self._cart_url = f"{base}/cart"
+        self._timeout = config.target_agent.timeout_seconds
+        self._guardrails = config.target_agent.guardrails
+
+    def say(
+        self,
+        identity: Mapping[str, Any],
+        text: str,
+        attachment: Path | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            **identity,
+            "query": text,
+            "guardrails": self._guardrails,
+        }
+        if attachment is not None:
+            encoded = base64.b64encode(attachment.read_bytes()).decode()
+            if attachment.suffix.lower() == ".mp4":
+                payload["media"] = [{
+                    "type": "video",
+                    "data": encoded,
+                    "mime_type": "video/mp4",
+                    "filename": attachment.name,
+                }]
+            else:
+                payload["image"] = encoded
+                payload["image_bool"] = True
+
+        started = time.monotonic()
+        first_token: float | None = None
+        reply, products, diagnostics = "", [], {}
+        token_usage: dict[str, Any] = {}
+        with requests.post(
+            self._url, json=payload, timeout=self._timeout, stream=True
+        ) as response:
+            response.raise_for_status()
+            for raw in response.iter_lines():
+                line = raw.decode() if isinstance(raw, bytes) else raw
+                if not line.startswith("data: ") or "[DONE]" in line:
+                    continue
+                event = json.loads(line[6:])
+                body = event.get("payload")
+                if event.get("type") == "content":
+                    # First words on screen, which is what a shopper waiting at
+                    # the page actually experiences. The turn keeps running long
+                    # after this -- tools, the grounding pass, the cart -- so
+                    # total seconds describes the system's work and this
+                    # describes the wait. Under load they diverge sharply, and
+                    # sizing against the wrong one either wastes hardware or
+                    # promises a page that sits blank.
+                    if first_token is None and body:
+                        first_token = time.monotonic() - started
+                    reply = body or ""
+                elif event.get("type") == "products" and isinstance(body, list):
+                    products = body
+                if isinstance(body, dict) and body.get("agent_diagnostics"):
+                    diagnostics = body["agent_diagnostics"]
+                if isinstance(body, dict) and body.get("token_usage"):
+                    token_usage = dict(body["token_usage"])
+        return {
+            "reply": reply,
+            "products": products,
+            # The cart service's own answer, never the reply's account of it.
+            # A reply once said "added" over an empty cart, and once reported a
+            # size nobody had asked for.
+            "cart": self.cart(identity["cart_id"]),
+            "tools": [
+                str(call.get("tool_name") or "")
+                for call in (diagnostics.get("tool_calls") or [])
+            ],
+            "calls": [
+                {
+                    "tool_name": str(call.get("tool_name") or ""),
+                    "arguments": call.get("arguments") or {},
+                }
+                for call in (diagnostics.get("tool_calls") or [])
+            ],
+            **_how_the_turn_ended(diagnostics),
+            # What the turn asked the catalog for, not only what came back. A
+            # filter the shopper never gave returns nothing and is then reported
+            # as though the shop were empty, so the request is the thing to
+            # assert on.
+            "scopes": [
+                scope
+                for call in (diagnostics.get("tool_calls") or [])
+                if call.get("tool_name") == "search_catalog_tool"
+                for scope in ((call.get("arguments") or {}).get("scopes") or [])
+            ],
+            "token_usage": token_usage,
+            "memory": {
+                lane: text
+                for lane, text in (diagnostics.get("context_lanes") or {}).items()
+                if text
+            },
+            "seconds": round(time.monotonic() - started, 1),
+            # None if the turn produced no content at all, which is a failure
+            # worth telling apart from a fast one rather than recording as 0.
+            "ttft": round(first_token, 2) if first_token is not None else None,
+        }
+
+    def cart(self, cart_id: str) -> list[dict[str, Any]]:
+        response = requests.get(
+            self._cart_url, params={"cart_id": cart_id}, timeout=20
+        )
+        response.raise_for_status()
+        return [_memory_shaped_line(line) for line in response.json().get("lines", [])]
+
+
+def _how_the_turn_ended(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
+    """What a failed turn needs said about it, beyond a list of tool names.
+
+    A turn that hit the graph's recursion limit recorded 24 tool names, a
+    generic apology and nothing else, so it read as an ordinary quality
+    failure. The reason had been computed and was dropped here, and diagnosing
+    it meant opening the database.
+
+    Rejections are read off `tool_calls`, which carries the name and the
+    reason. `rejected_tool_calls` holds sequence numbers pointing back into
+    that list and nothing else, so it cannot answer "rejected why".
+    """
+
+    calls = [
+        call
+        for call in (diagnostics.get("tool_calls") or [])
+        if isinstance(call, Mapping)
+    ]
+    return {
+        "ended": str(diagnostics.get("final_termination_reason") or ""),
+        "rejected": [
+            f"{call.get('tool_name') or '?'}"
+            f" ({call.get('rejection_reason') or 'no reason given'})"
+            for call in calls
+            if call.get("status") == "rejected"
+        ],
+        "repeated": _identical_repeats(calls),
+    }
+
+
+#: Endings that mean the turn ran out of something rather than finished.
+#: `recursion_limit` is the graph's step ceiling and `agent_timeout` the clock;
+#: both leave the shopper a generic apology in place of an answer.
+_RAN_OUT = frozenset({"recursion_limit", "agent_timeout"})
+
+
+def _the_turn_reached_an_end(turn: TurnResult) -> list[Check]:
+    """Assert the turn finished, on every turn, whatever the script asked.
+
+    Not declared per scenario, because the failure it catches is the one nobody
+    thinks to write an expectation for. J01 reported 24 passing checks on a run
+    where turn 17 sent 21 identical searches and died on the graph's recursion
+    limit, and again on a run where the same turn showed the shopper *zero*
+    products. The scripted checks read the final reply, and "This request took
+    too long to complete. Please retry." satisfied them.
+
+    So a scenario can go green while a turn is comprehensively broken, which is
+    how three separate loops survived a passing suite. A turn that ran out of
+    steps or time did not answer, and that is a failure regardless of what the
+    text looks like.
+    """
+
+    if turn.ended not in _RAN_OUT:
+        return []
+    repeats = sum(turn.repeated.values())
+    return [
+        Check(
+            "turn_completed",
+            "fail",
+            f"ended on {turn.ended}"
+            + (f" after {repeats} identical repeated calls" if repeats else ""),
+        )
+    ]
+
+
+def _identical_repeats(calls: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    """How many calls repeated an earlier call's name *and* arguments, by name.
+
+    A retry with different arguments is the model working. A retry with the same
+    arguments is the model stuck, and only the second kind is worth a line in a
+    transcript.
+    """
+
+    seen: set[tuple[str, str]] = set()
+    repeats: dict[str, int] = {}
+    for call in calls:
+        name = str(call.get("tool_name") or "")
+        key = (
+            name,
+            json.dumps(call.get("arguments"), sort_keys=True, default=str),
+        )
+        if key in seen:
+            repeats[name] = repeats.get(name, 0) + 1
+        seen.add(key)
+    return repeats
+
+
+def _memory_shaped_line(line: Mapping[str, Any]) -> dict[str, Any]:
+    """A `/cart` line under the memory service's keys, which the checks read."""
+
+    shaped = {
+        "cart_line_id": line.get("cart_line_id"),
+        "item": line.get("display_name"),
+        "amount": line.get("quantity"),
+        "price": line.get("unit_price"),
+        "product_id": line.get("product_id"),
+    }
+    if line.get("size"):
+        shaped["size"] = line["size"]
+    return shaped
+
+
+#: Every expectation `check_turn` implements. An unknown key is a scenario
+#: asserting nothing, silently.
+_SUPPORTED_EXPECTATIONS = {
+    "any_of",
+    "cart",
+    "cart_holds_shown",
+    "cart_lines",
+    "cart_unchanged",
+    "every_product",
+    "every_product.primary_color",
+    "no_constraint",
+    "no_product_named",
+    "product_named",
+    "products_max",
+    "products_min",
+    "products_new_since",
+    "products_within",
+    "reply_asks",
+    "reply_must_not_say",
+    "same_kinds_as",
+    "tools_not_used",
+    "tools_used",
+    "unsized_scopes",
+}
+
+
+def check_turn(
+    expect: Mapping[str, Any],
+    turn: TurnResult,
+    previous_cart: Sequence[Mapping[str, Any]],
+    earlier_turns: Sequence[TurnResult] = (),
+) -> list[Check]:
+    """Every assertion answered from state, never from the reply's wording."""
+
+    checks: list[Check] = []
+
+    def record(name: str, ok: bool, detail: str = "") -> None:
+        checks.append(Check(name, "pass" if ok else "fail", detail))
+
+    if "cart_holds_shown" in expect:
+        # What an ordinal resolved to, which nothing else here asserts. The
+        # only ordinal add in the suite is checked by counting cart lines,
+        # because a script cannot name the product: "add the second one" points
+        # at whatever retrieval ranked second that run.
+        #
+        # The run knows, though. The turn that showed them recorded them in the
+        # order the shopper saw, so the product is looked up there rather than
+        # pinned here -- which is the difference between asserting that a
+        # reference resolved and asserting that something reached the cart.
+        wanted = expect["cart_holds_shown"] or {}
+        shown_on = int(wanted.get("turn") or 0)
+        position = int(wanted.get("position") or 0)
+        # Numbered from one under each heading, so a number alone names one
+        # product per group. Read off the product's own recorded group and
+        # position rather than counted along the list, which is the same
+        # arithmetic the shopper is not doing.
+        group = str(wanted.get("group") or "")
+        showing = next(
+            (earlier.products for earlier in earlier_turns if earlier.index == shown_on),
+            [],
+        )
+        expected_name = next(
+            (
+                str(product.get("display_name") or "")
+                for product in showing
+                if int(product.get("position") or 0) == position
+                and (not group or str(product.get("group") or "") == group)
+            ),
+            "",
+        )
+        in_cart = [str(line.get("item") or "") for line in turn.cart]
+        record(
+            "cart_holds_shown",
+            bool(expected_name) and expected_name in in_cart,
+            f"turn {shown_on} {group + ' ' if group else ''}position {position} was "
+            f"{expected_name or '(nothing shown there)'}, cart holds {in_cart}",
+        )
+
+    if "products_new_since" in expect:
+        # Whether "show me more" moved. A search repeated with the same query
+        # and the same filters returns the same ranked products, so a turn
+        # asking for more can show four the shopper has already seen and read,
+        # in a transcript, as an ordinary turn that showed four products.
+        #
+        # Compared by product_id rather than name, because the catalog gives
+        # two products the same display name and a name comparison would call
+        # a genuinely new product a repeat.
+        wanted = expect["products_new_since"] or {}
+        shown_on = int(wanted.get("turn") or 0)
+        earlier_ids = {
+            str(product.get("product_id") or "")
+            for earlier in earlier_turns
+            if earlier.index == shown_on
+            for product in earlier.products
+            if product.get("product_id")
+        }
+        now_ids = {
+            str(product.get("product_id") or "")
+            for product in turn.products
+            if product.get("product_id")
+        }
+        repeated = now_ids & earlier_ids
+        record(
+            "products_new_since",
+            bool(now_ids) and not repeated,
+            f"{len(repeated)} of {len(now_ids)} already shown on turn {shown_on}"
+            if now_ids
+            else "no products shown",
+        )
+
+    if "same_kinds_as" in expect:
+        # "Show me more" after a showing of several kinds owes more of each,
+        # and nothing else. Kinds are the catalog's subcategories, read from
+        # the catalog rather than from the heading the model wrote.
+        wanted = expect["same_kinds_as"] or {}
+        shown_on = int(wanted.get("turn") or 0)
+
+        def kinds(products: Sequence[Mapping[str, Any]]) -> set[str]:
+            return {
+                str(_attribute(product, "subcategory") or "?") for product in products
+            }
+
+        earlier_kinds = kinds(
+            next(
+                (earlier.products for earlier in earlier_turns if earlier.index == shown_on),
+                [],
+            )
+        )
+        now_kinds = kinds(turn.products)
+        record(
+            "same_kinds_as",
+            bool(earlier_kinds) and now_kinds == earlier_kinds,
+            f"turn {shown_on} showed {sorted(earlier_kinds)}, this turn {sorted(now_kinds)}",
+        )
+
+    if "any_of" in expect:
+        # A turn with more than one right answer. "Add the black one in a 2"
+        # may resolve to the black thing the shopper was last shown, or ask
+        # which of several they meant; both are correct, and a script that
+        # names one of them scores the other wrong. Each branch is a whole
+        # expectation, checked as if it were the turn's own, and one branch
+        # passing is the turn passing.
+        branches = expect["any_of"] or []
+        outcomes = [
+            check_turn(branch, turn, previous_cart, earlier_turns)
+            for branch in branches
+        ]
+        passed = [
+            index
+            for index, branch in enumerate(outcomes)
+            if branch and all(check.outcome == "pass" for check in branch)
+        ]
+        record(
+            "any_of",
+            bool(passed),
+            f"branch {passed[0] + 1} of {len(branches)}"
+            if passed
+            else "; ".join(
+                f"branch {index + 1}: "
+                + ", ".join(
+                    check.detail or check.name
+                    for check in branch
+                    if check.outcome == "fail"
+                )
+                for index, branch in enumerate(outcomes)
+            ),
+        )
+
+    if "reply_asks" in expect:
+        # Whether the assistant put a question to the shopper. Wording, which
+        # every other check here avoids -- but a clarification is a speech act
+        # and leaves no other trace: the cart is unchanged either way, and so
+        # is everything else this harness can read.
+        asked = "?" in (turn.reply or "")
+        record(
+            "reply_asks",
+            asked is bool(expect["reply_asks"]),
+            f"reply {'asks' if asked else 'does not ask'} a question",
+        )
+
+    if "cart" in expect:
+        wanted = expect["cart"] or []
+        got = [
+            {
+                "name": str(line.get("item") or ""),
+                "size": str(line.get("size") or ""),
+                "qty": int(line.get("amount") or 0),
+            }
+            for line in turn.cart
+        ]
+        missing = [w for w in wanted if not _matches_line(w, got)]
+        record(
+            "cart",
+            not missing and len(got) == len(wanted),
+            f"wanted {wanted}, cart holds {got}",
+        )
+
+    if "cart_lines" in expect:
+        # For an add the script cannot name. "Add the first one" points at
+        # whatever the search returned, which varies by run, so pinning a
+        # product makes the check brittle -- and leaving it out made the only
+        # ordinal add in the suite assert nothing at all.
+        record(
+            "cart_lines",
+            len(turn.cart) == int(expect["cart_lines"]),
+            f"wanted {expect['cart_lines']} lines, cart holds {len(turn.cart)}",
+        )
+
+    if expect.get("cart_unchanged"):
+        record(
+            "cart_unchanged",
+            _cart_key(turn.cart) == _cart_key(previous_cart),
+            f"cart went from {_cart_key(previous_cart)} to {_cart_key(turn.cart)}",
+        )
+
+    if "products_min" in expect:
+        record(
+            "products_min",
+            len(turn.products) >= int(expect["products_min"]),
+            f"{len(turn.products)} products shown",
+        )
+
+    if "products_max" in expect:
+        record(
+            "products_max",
+            len(turn.products) <= int(expect["products_max"]),
+            f"{len(turn.products)} products shown",
+        )
+
+    if "every_product" in expect:
+        for attribute, value in (expect["every_product"] or {}).items():
+            offenders = [
+                str(product.get("name") or product.get("display_name") or "?")
+                for product in turn.products
+                if _attribute(product, attribute) != value
+            ]
+            record(
+                f"every_product.{attribute}={value}",
+                not offenders,
+                f"not {value}: {offenders[:4]}",
+            )
+
+    if "products_within" in expect:
+        # A role this shop cannot cover is disclosed and then answered anyway,
+        # with whatever ranked nearest presented as the closest version of the
+        # thing asked for. Every check a turn like that runs stays true --
+        # the covered roles are found, the uncovered one is named -- so the
+        # substitution has never been able to fail a journey. Naming the
+        # subcategories a turn is allowed to show is what makes it able to.
+        allowed = {
+            " ".join(str(value).casefold().split())
+            for value in expect["products_within"] or []
+        }
+        offenders = sorted(
+            {
+                f"{_attribute(product, 'subcategory')}:"
+                f" {product.get('display_name') or product.get('name') or '?'}"
+                for product in turn.products
+                if " ".join(
+                    str(_attribute(product, "subcategory") or "")
+                    .casefold()
+                    .split()
+                )
+                not in allowed
+            }
+        )
+        record(
+            "products_within",
+            not offenders,
+            f"outside {sorted(allowed)}: {offenders[:5]}",
+        )
+
+    for name in expect.get("no_product_named", []) or []:
+        shown = [
+            str(product.get("name") or product.get("display_name") or "")
+            for product in turn.products
+        ]
+        record(f"no_product_named.{name}", name not in shown, f"shown: {shown[:6]}")
+
+    # A size the shopper gave for one kind of product must not be applied to
+    # another. "A dress in size 2 and shoes" put size 2 on the shoes scope in
+    # every recorded attempt, and footwear is sold in 5-9, so the search could
+    # only come back empty -- and the miss was then reported as though the shop
+    # had no shoes.
+    for product_type in expect.get("unsized_scopes", []) or []:
+        wanted = str(product_type).casefold()
+        offenders = [
+            {
+                "scope": scope.get("requested_product_type"),
+                "sizes": (scope.get("required_constraints") or {}).get("sizes"),
+            }
+            for scope in turn.scopes
+            if wanted in str(scope.get("requested_product_type") or "").casefold()
+            and (scope.get("required_constraints") or {}).get("sizes")
+        ]
+        record(
+            f"unsized_scopes.{product_type}",
+            not offenders,
+            f"a size was applied: {offenders}",
+        )
+
+    # Reading the reply, which this suite otherwise refuses to do. It is here
+    # because some defects ARE the wording: "the most expensive item in the
+    # catalog is the $199.99 crossbody bag" is false in a shop that reaches
+    # $269.99, and no assertion about products or the cart can see it.
+    #
+    # Scenario-local and explicit: the phrases sit in the yaml beside the turn
+    # they judge, so nothing general is matched anywhere.
+    for phrase in expect.get("reply_must_not_say", []) or []:
+        record(
+            f"reply_must_not_say.{phrase}",
+            phrase.casefold() not in (turn.reply or "").casefold(),
+            f"said: {(turn.reply or '')[:160]}",
+        )
+
+    for tool in expect.get("tools_used", []) or []:
+        record(f"tools_used.{tool}", tool in turn.tools, f"called: {turn.tools}")
+
+    for tool in expect.get("tools_not_used", []) or []:
+        record(f"tools_not_used.{tool}", tool not in turn.tools, f"called: {turn.tools}")
+
+    # An expectation this harness does not implement asserted nothing, and the
+    # scenario passed while proving whatever its author assumed. R08 was
+    # written with reply_must_not_say before that check existed here, and went
+    # green on a reply naming the wrong product.
+    unknown = sorted(set(expect) - _SUPPORTED_EXPECTATIONS)
+    if unknown:
+        record("expectation.unknown", False, f"not implemented: {unknown}")
+
+    return checks
+
+
+def _matches_line(wanted: Mapping[str, Any], got: Sequence[Mapping[str, Any]]) -> bool:
+    for line in got:
+        if str(wanted.get("name", line["name"])).casefold() != line["name"].casefold():
+            continue
+        if "size" in wanted and str(wanted["size"]) != line["size"]:
+            continue
+        if "qty" in wanted and int(wanted["qty"]) != line["qty"]:
+            continue
+        return True
+    return False
+
+
+def _cart_key(cart: Iterable[Mapping[str, Any]]) -> list[tuple[str, str, int]]:
+    return sorted(
+        (
+            str(line.get("item") or ""),
+            str(line.get("size") or ""),
+            int(line.get("amount") or 0),
+        )
+        for line in cart
+    )
+
+
+_CATALOG_PATH = Path(__file__).resolve().parents[3] / "shared/data/enriched_products.jsonl"
+
+
+def _catalog_by_name() -> dict[str, dict[str, Any]]:
+    """The catalog, keyed by display name.
+
+    A product card carries price, image and a prose blob; the attribute a
+    script asserts on -- colour, sizes, subcategory -- is in the catalog. So the
+    check reads the catalog rather than the card, and never the reply.
+    """
+
+    index: dict[str, dict[str, Any]] = {}
+    if not _CATALOG_PATH.exists():
+        return index
+    for line in _CATALOG_PATH.read_text().splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        name = str(record.get("display_name") or record.get("name") or "")
+        if name:
+            index[" ".join(name.casefold().split())] = record
+    return index
+
+
+_CATALOG = _catalog_by_name()
+
+
+def _attribute(product: Mapping[str, Any], name: str) -> Any:
+    display = str(product.get("display_name") or product.get("name") or "")
+    record = _CATALOG.get(" ".join(display.casefold().split()), {})
+    if name in record:
+        return record[name]
+    if name in product:
+        return product[name]
+    attributes = product.get("attributes")
+    if isinstance(attributes, dict):
+        return attributes.get(name)
+    return None
+
+
+def run_scenario(
+    scenario: Mapping[str, Any],
+    assistant: Assistant,
+    label: str,
+    run_id: str,
+    repeat: int,
+) -> dict[str, Any]:
+    identity = scenario_identity(label, run_id, scenario["id"], repeat)
+    turns: list[TurnResult] = []
+    previous_cart: list[dict[str, Any]] = []
+    error: str | None = None
+
+    for index, step in enumerate(scenario.get("turns") or [], start=1):
+        attachment = None
+        if step.get("attach"):
+            attachment = SCRIPTS_ROOT / "assets" / str(step["attach"])
+        try:
+            answered = assistant.say(identity, str(step["say"]), attachment)
+        except Exception as exc:  # noqa: BLE001 - reported, never counted as a failure
+            error = f"turn {index}: {type(exc).__name__}: {exc}"
+            break
+        turn = TurnResult(
+            attached=str(step["attach"]) if step.get("attach") else "",
+            index=index,
+            said=str(step["say"]),
+            reply=answered["reply"],
+            products=answered["products"],
+            cart=answered["cart"],
+            tools=answered["tools"],
+            scopes=answered.get("scopes") or [],
+            seconds=answered["seconds"],
+            token_usage=answered.get("token_usage") or {},
+            ended=str(answered.get("ended") or ""),
+            rejected=answered.get("rejected") or [],
+            repeated=answered.get("repeated") or {},
+            memory=answered.get("memory") or {},
+            calls=answered.get("calls") or [],
+        )
+        turn.checks = [
+            *check_turn(step.get("expect") or {}, turn, previous_cart, turns),
+            *_the_turn_reached_an_end(turn),
+        ]
+        previous_cart = turn.cart
+        turns.append(turn)
+
+    failed = [
+        f"turn {turn.index} {check.name}: {check.detail}"
+        for turn in turns
+        for check in turn.checks
+        if check.outcome == "fail"
+    ]
+    return {
+        "id": scenario["id"],
+        "repeat": repeat,
+        "covers": scenario.get("covers") or [],
+        "outcome": "error" if error else ("fail" if failed else "pass"),
+        "error": error,
+        "failed_checks": failed,
+        "checks_run": sum(len(turn.checks) for turn in turns),
+        "identity": identity,
+        "turns": [vars(turn) | {"checks": [vars(c) for c in turn.checks]} for turn in turns],
+    }
+
+
+def write_transcript(
+    path: Path,
+    scenario: Mapping[str, Any],
+    result: Mapping[str, Any],
+    build: str,
+) -> None:
+    """Write the conversation as something a person or a judge can read.
+
+    The cart appears after every turn, which is the point. A transcript of
+    replies alone is judged on prose, and prose is what reported "no failed
+    turns" over a size nobody asked for and again over a dress that had gone
+    missing. Whoever reads this -- a person or a model -- sees what the words
+    claimed and what the cart actually held, side by side.
+    """
+
+    lines = [
+        f"# {result['id']}",
+        "",
+        f"Build: {build}",
+        f"Covers: {', '.join(result['covers']) or '—'}",
+        f"Conversation: `{result['identity']['conversation_id']}`",
+        "",
+    ]
+    why = " ".join((scenario.get("why") or "").split())
+    if why:
+        lines += [f"> {why}", ""]
+    lines += ["---", ""]
+
+    for turn in result["turns"]:
+        lines += [f"## {turn['index']}. {turn['said']}", ""]
+        if turn.get("attached"):
+            lines += [f"*[attached {turn['attached']}]*", ""]
+        lines += [turn["reply"] or "*(no reply)*", ""]
+        cart = turn["cart"]
+        if cart:
+            held = "; ".join(
+                f"{line.get('amount')} x {line.get('item')}"
+                + (f" (size {line['size']})" if line.get("size") else "")
+                for line in cart
+            )
+        else:
+            held = "empty"
+        lines.append(f"> **Cart: {held}**")
+        lines.append(
+            f"> {turn['seconds']}s · {len(turn['products'])} products · "
+            f"tools {turn['tools'] or '—'}"
+        )
+        # Only when abnormal. A line on every turn saying "completed" is a line
+        # every reader learns to skip, and then misses the one that says
+        # recursion_limit.
+        if turn.get("ended") and turn["ended"] != "completed":
+            lines.append(f"> ended: **{turn['ended']}**")
+        if turn.get("repeated"):
+            lines.append(
+                "> identical repeats: "
+                + "; ".join(
+                    f"{name} x{count}" for name, count in turn["repeated"].items()
+                )
+            )
+        if turn.get("rejected"):
+            lines.append(f"> rejected: {turn['rejected']}")
+        # Named, not counted. A turn answering "do you have a tote bag in a
+        # size 8" wrote four tote bags into its reply and handed the shopper
+        # eight products: two ankle boots and two pairs of heels came along
+        # with them, on the screen and into the index that resolves "the red
+        # one" later. The reply disowned them and the transcript said "8
+        # products", so every human who read that turn read it as correct.
+        if turn["products"]:
+            by_type: dict[str, list[str]] = {}
+            for product in turn["products"]:
+                kind = str(_attribute(product, "subcategory") or "?")
+                name = (
+                    product.get("display_name") or product.get("name") or "?"
+                )
+                by_type.setdefault(kind, []).append(str(name))
+            lines.append(
+                "> shown: "
+                + "; ".join(
+                    f"{kind} — {', '.join(names)}"
+                    for kind, names in by_type.items()
+                )
+            )
+        for check in turn["checks"]:
+            mark = {"pass": "ok", "fail": "**FAILED**", "error": "error"}[check["outcome"]]
+            detail = f" — {check['detail']}" if check["outcome"] != "pass" else ""
+            lines.append(f"> {mark} `{check['name']}`{detail}")
+        lines += _what_the_tools_were_asked(turn.get("calls") or [])
+        lines += _memory_the_turn_read(turn.get("memory") or {})
+        lines.append("")
+
+    path.write_text("\n".join(lines))
+
+
+def _what_the_tools_were_asked(calls: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Render each call's arguments, folded, in the order they were made.
+
+    The summary line above already names the tools. What it cannot say is what
+    they were asked for, and the cart failures all turn on that: a turn that
+    adds the wrong product calls exactly the tools a turn that adds the right
+    one calls.
+    """
+
+    if not calls:
+        return []
+    lines = [
+        "",
+        f"<details><summary>what the tools were asked — {len(calls)} calls</summary>",
+        "",
+        "```",
+    ]
+    for index, call in enumerate(calls, start=1):
+        lines.append(f"{index}. {call.get('tool_name') or '?'}")
+        lines.append(
+            json.dumps(call.get("arguments") or {}, indent=2, default=str)
+        )
+    lines += ["```", "", "</details>"]
+    return lines
+
+
+def _memory_the_turn_read(memory: Mapping[str, str]) -> list[str]:
+    """Render the lanes folded away, with their sizes on the outside.
+
+    Folded because these are long and every turn has them, and a transcript
+    that opens on twenty screens of dialogue window is one nobody reads to the
+    end. Sizes on the summary line because that is the number a reduction is
+    judged by, and it should not need a click.
+    """
+
+    if not memory:
+        return []
+    total = sum(len(text) for text in memory.values())
+    lines = [
+        "",
+        f"<details><summary>memory read this turn — {total:,} chars</summary>",
+        "",
+    ]
+    for lane, text in memory.items():
+        lines += [
+            f"**{lane}** ({len(text):,} chars)",
+            "",
+            "```",
+            text,
+            "```",
+            "",
+        ]
+    lines.append("</details>")
+    return lines
+
+
+def preflight(config: EvalConfig, scenarios: list[dict[str, Any]]) -> None:
+    """Refuse to run against a stack that is down, or assets that are absent.
+
+    A dead memory service answers every turn with "I cannot safely load this
+    conversation", which is not a behaviour to fix -- and twice it was read as
+    one. And a client that gives up before the server does silently cuts a
+    conversation short, which once made a run score a bug that never happened.
+
+    Absent assets are the same class of lie: checked out on a branch without
+    them, a media scenario dies on turn 1 and the report says the scenario
+    errored. Say so before the run, not twenty minutes into it.
+    """
+
+    base = config.target_agent.base_url.rstrip("/")
+    response = requests.get(f"{base}/health", timeout=10)
+    response.raise_for_status()
+    print(f"  assistant healthy at {base}")
+
+    missing = sorted({
+        str(step["attach"])
+        for scenario in scenarios
+        for step in scenario.get("turns") or []
+        if step.get("attach")
+        and not (SCRIPTS_ROOT / "assets" / str(step["attach"])).is_file()
+    })
+    if missing:
+        raise SystemExit(
+            f"  missing assets in {SCRIPTS_ROOT / 'assets'}: {', '.join(missing)}\n"
+            "  the media scenarios cannot run; check out the branch that carries them."
+        )
+    print(f"  assets present in {SCRIPTS_ROOT / 'assets'}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--label", default=time.strftime("%Y-%m-%d-%H%M"))
+    parser.add_argument(
+        "--only",
+        default=None,
+        help="scenario numbers or names, comma separated: J01,J02,J13",
+    )
+    parser.add_argument("--repeat", type=int, default=1)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--sequential",
+        action="store_true",
+        help="one conversation at a time (the default)",
+    )
+    mode.add_argument(
+        "--parallel",
+        action="store_true",
+        help=f"all of them at once, up to {_MAX_PARALLEL}",
+    )
+    mode.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="an exact number of conversations at once",
+    )
+    args = parser.parse_args()
+
+    if args.parallel:
+        # Capped: the bottleneck is the model endpoint, and past that point
+        # every conversation just waits longer for the same total.
+        args.concurrency = _MAX_PARALLEL
+    if args.sequential:
+        args.concurrency = 1
+
+    config = load_eval_config()
+    scenarios = load_scenarios(args.only)
+    preflight(config, scenarios)
+    assistant = Assistant(config)
+
+    jobs = [
+        (scenario, repeat)
+        for scenario in scenarios
+        for repeat in range(args.repeat)
+    ]
+    run_id = uuid.uuid4().hex[:8]
+    identities = {
+        json.dumps(
+            scenario_identity(args.label, run_id, scenario["id"], repeat),
+            sort_keys=True,
+        )
+        for scenario, repeat in jobs
+    }
+    if len(identities) != len(jobs):
+        raise SystemExit("derived identities collide; refusing to run")
+
+    out = RESULTS_ROOT / args.label
+    (out / "raw").mkdir(parents=True, exist_ok=True)
+    (out / "transcripts").mkdir(parents=True, exist_ok=True)
+    # Which build produced this. A transcript that cannot say what it was run
+    # against is worth little, and that was learned by having several.
+    build = subprocess.run(
+        ["git", "log", "--oneline", "-1"],
+        capture_output=True, text=True, cwd=EVAL_ROOT,
+    ).stdout.strip() or "unknown"
+    how = "one at a time" if args.concurrency == 1 else f"{args.concurrency} at once"
+    print(f"  {len(jobs)} runs, {how}, label {args.label}")
+
+    results: list[dict[str, Any]] = []
+
+    def execute(job: tuple[Mapping[str, Any], int]) -> dict[str, Any]:
+        scenario, repeat = job
+        result = run_scenario(scenario, assistant, args.label, run_id, repeat)
+        stem = f"{result['id']}-{repeat}"
+        (out / "raw" / f"{stem}.json").write_text(
+            json.dumps(result, indent=1, default=str)
+        )
+        write_transcript(out / "transcripts" / f"{stem}.md", scenario, result, build)
+        mark = {"pass": "ok  ", "fail": "FAIL", "error": "ERR "}[result["outcome"]]
+        print(f"  {mark} {result['id']}", flush=True)
+        for line in result["failed_checks"]:
+            print(f"       {line}", flush=True)
+        return result
+
+    if args.concurrency > 1:
+        with concurrent.futures.ThreadPoolExecutor(args.concurrency) as pool:
+            futures = []
+            for job in jobs:
+                futures.append(pool.submit(execute, job))
+                time.sleep(2)  # stagger submission, never the work
+            results = [future.result() for future in futures]
+    else:
+        results = [execute(job) for job in jobs]
+
+    (out / "report.md").write_text(_report(args, results))
+    counts = {
+        outcome: sum(1 for r in results if r["outcome"] == outcome)
+        for outcome in ("pass", "fail", "error")
+    }
+    print(f"\n  pass {counts['pass']}  fail {counts['fail']}  error {counts['error']}")
+    print(f"  -> {out / 'report.md'}")
+    print(f"  -> {out / 'transcripts'}/  ({len(results)} conversations to read)")
+
+
+def _report(args: argparse.Namespace, results: Sequence[Mapping[str, Any]]) -> str:
+    errors = [r for r in results if r["outcome"] == "error"]
+    lines = [
+        f"# val replay — {args.label}",
+        "",
+        f"Concurrency {args.concurrency}. Timings are not comparable across "
+        "concurrency levels.",
+        "",
+    ]
+    if errors:
+        lines += [
+            f"**{len(errors)} scenario(s) could not run.** These are stack "
+            "failures, not behaviour: see `error` below before reading anything "
+            "else.",
+            "",
+        ]
+    lines += ["| scenario | outcome | checks | covers |", "|---|---|---|---|"]
+    for result in results:
+        lines.append(
+            f"| `{result['id']}` | {result['outcome']} | {result['checks_run']} | "
+            f"{', '.join(result['covers'])} |"
+        )
+    for result in results:
+        if result["outcome"] == "pass":
+            continue
+        lines += ["", f"### {result['id']}"]
+        if result["error"]:
+            lines.append(f"- error: {result['error']}")
+        for failure in result["failed_checks"]:
+            lines.append(f"- {failure}")
+    return "\n".join(lines) + "\n"
+
+
+if __name__ == "__main__":
+    main()

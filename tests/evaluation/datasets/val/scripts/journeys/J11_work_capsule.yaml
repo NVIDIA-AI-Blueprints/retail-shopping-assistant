@@ -1,0 +1,31 @@
+id: J11_work_capsule
+covers: [outfit-styling, budget-shopping, cart-management, sizes]
+why: >
+  A capsule built over many turns against a budget. Several roles, each with
+  its own filters -- a heel type chosen for the shoes must not delete the bags.
+turns:
+  - say: I need a work wardrobe, nothing over $150 a piece
+    expect: {}
+  - say: start with skirts
+    expect: {products_min: 2}
+  - say: something to wear with them on top
+    expect: {products_min: 1}
+  - say: shoes that work with all of it
+    expect: {products_min: 1}
+  - say: and a bag for the office
+    expect: {products_min: 1}
+  - say: put the whole thing together for me
+    expect: {products_min: 2}
+  - say: add the Ombre Canvas Tote Bag
+    expect:
+      cart: [{name: Ombre Canvas Tote Bag, qty: 1}]
+  - say: and the Navy Fitted Skirt in an 8
+    expect:
+      cart:
+        - {name: Ombre Canvas Tote Bag, qty: 1}
+        - {name: Navy Fitted Skirt, size: "8", qty: 1}
+  - say: what's in my cart and what does it come to
+    expect:
+      cart:
+        - {name: Ombre Canvas Tote Bag, qty: 1}
+        - {name: Navy Fitted Skirt, size: "8", qty: 1}

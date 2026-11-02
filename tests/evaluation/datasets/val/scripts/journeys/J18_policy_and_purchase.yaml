@@ -1,0 +1,25 @@
+id: J18_policy_and_purchase
+covers: [store-policy-answers, honesty, cart-management]
+why: >
+  Policy questions mixed into shopping. Shipping dates, tax and stock are the
+  facts an assistant is most tempted to invent, and the temptation is highest
+  when a shopper is about to buy.
+turns:
+  - say: what's your returns policy
+    expect: {products_max: 0, cart_unchanged: true}
+  - say: how long does delivery take
+    expect: {cart_unchanged: true}
+  - say: ok show me some tote bags
+    expect: {products_min: 2}
+  - say: add the Linen Canvas Tote Bag
+    expect:
+      cart: [{name: Linen Canvas Tote Bag, qty: 1}]
+  - say: when would that arrive if I order now
+    expect: {}
+  - say: is it in stock
+    expect: {}
+  - say: what's the tax on that
+    expect: {}
+  - say: what's in my cart
+    expect:
+      cart: [{name: Linen Canvas Tote Bag, qty: 1}]

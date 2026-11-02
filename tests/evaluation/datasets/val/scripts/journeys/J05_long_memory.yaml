@@ -1,0 +1,39 @@
+id: J05_long_memory
+covers: [memory, references, cart-management, sizes]
+why: >
+  A product shown early and bought late. The durable record is what makes turn
+  fifteen able to name what turn two put on screen; without it the shopper is
+  asked to name something they were already shown.
+  Names Jade Suede Heels, not Polished Pearl Pumps: this catalog gives that
+  second name to two products, so every assertion pinned to it measured
+  whether the model guessed rather than what this journey is for. The
+  assistant asking which pair is correct, and was scored as a failure.
+
+turns:
+  - say: show me some bracelets
+    expect: {products_min: 2}
+  - say: now show me sunglasses
+    expect: {products_min: 2}
+  - say: and tote bags
+    expect: {products_min: 2}
+  - say: and some heels
+    expect: {products_min: 2}
+  - say: and skirts
+    expect: {products_min: 2}
+  - say: and black dresses
+    expect: {products_min: 2}
+  - say: what were those bracelets again
+    expect: {}
+  - say: add the Southwest Bracelet
+    expect:
+      cart: [{name: Southwest Bracelet, qty: 1}]
+  - say: and the Jade Suede Heels in a 7
+    expect:
+      cart:
+        - {name: Southwest Bracelet, qty: 1}
+        - {name: Jade Suede Heels, size: "7", qty: 1}
+  - say: what's in my cart
+    expect:
+      cart:
+        - {name: Southwest Bracelet, qty: 1}
+        - {name: Jade Suede Heels, size: "7", qty: 1}

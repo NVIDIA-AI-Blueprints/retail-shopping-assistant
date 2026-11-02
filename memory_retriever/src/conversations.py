@@ -1,0 +1,916 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Durable conversation-turn API for the memory service."""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from hashlib import sha256
+from typing import Any, Literal
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    model_validator,
+)
+from sqlalchemy import func
+
+from .database import begin_write_transaction
+from .models import (
+    CartItem,
+    ConversationEvent,
+    ConversationProjection,
+    ConversationTurn,
+)
+from .product_references import (
+    PRESENTED_PRODUCTS_EVENT_KEY,
+    ProductResolutionRequest,
+    append_presented_products_event,
+    rebuild_product_reference_index,
+    resolve_product_references,
+)
+
+DEFAULT_ABANDONED_SECONDS = 300
+DEFAULT_RECENT_TURNS_LIMIT = 8
+MAX_RECENT_TURNS_LIMIT = 50
+REQUEST_INPUT_CONFLICT = "request_id was already used for different turn input"
+
+
+class TurnStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(..., min_length=1, max_length=128)
+    shopper_text: str = Field(..., min_length=1, max_length=100_000)
+    cart_user_id: int = Field(..., ge=0)
+    request_digest: str = Field(..., min_length=1, max_length=128)
+    catalog_revision: str | None = Field(default=None, max_length=512)
+
+
+EventType = Literal[
+    "candidate_set_presented",
+    "product_detail_confirmed",
+    "historical_reference_resolved",
+    "reference_clarification_required",
+    "product_selected",
+    "product_rejected",
+    "preference_added",
+    "preference_superseded",
+    "catalog_scope_no_match",
+    "wearer_audience_declared",
+    "audience_assumption_disclosed",
+]
+
+
+#: Deliberately `str`, not `EventType`. A Literal here fails validation of the
+#: whole finalize request, so one event type this build has never heard of
+#: discarded the entire turn: it stayed `started`, and the next turn was
+#: refused with "conversation is still processing another request". A turn
+#: record is authoritative and events enrich it, so an unrecognised event is
+#: dropped and named in the response while the turn finalizes normally. That
+#: also makes the deploy order of the two services irrelevant in both
+#: directions, which a Literal never can be.
+class ConversationEventInput(BaseModel):
+    event_key: str = Field(..., min_length=1, max_length=256)
+    event_type: str = Field(..., min_length=1, max_length=128)
+    source_kind: Literal["shopper", "compiler", "catalog", "cart", "runtime"]
+    source_ref: str | None = Field(default=None, max_length=512)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class TurnReplayOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_results: list[dict[str, Any]]
+    retrieved: dict[str, str]
+    agent_diagnostics: dict[str, Any]
+    guardrails_enabled: bool = False
+    guardrail_results: list[dict[str, Any]] = Field(default_factory=list, max_length=2)
+    selected_skill_names: list[str] = Field(default_factory=list, max_length=5)
+    #: How the products divide into the groups the shopper saw. Optional, so a
+    #: turn finalized by an older runtime still records its products.
+    product_groups: list[dict[str, Any]] = Field(default_factory=list, max_length=16)
+
+
+class TurnFinalizeRequest(BaseModel):
+    request_id: str = Field(..., min_length=1, max_length=128)
+    attempt_id: str = Field(..., min_length=1, max_length=128)
+    assistant_text: str = Field(..., max_length=100_000)
+    status: Literal["completed", "failed", "blocked"]
+    termination_reason: str | None = Field(default=None, max_length=1024)
+    events: list[ConversationEventInput] = Field(
+        default_factory=list,
+        max_length=128,
+    )
+    output: TurnReplayOutput | None = None
+
+    @model_validator(mode="after")
+    def _event_keys_are_unique(self):
+        keys = [event.event_key for event in self.events]
+        if len(keys) != len(set(keys)):
+            raise ValueError("event_key values must be unique within a turn")
+        if PRESENTED_PRODUCTS_EVENT_KEY in keys:
+            raise ValueError("event_key is reserved for runtime product cards")
+        return self
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _finalize_digest(request: TurnFinalizeRequest) -> str:
+    payload = request.model_dump(mode="json")
+    return sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def _validate_conversation_id(conversation_id: str) -> None:
+    if (
+        not conversation_id
+        or len(conversation_id) > 256
+        or conversation_id != conversation_id.strip()
+        or any(ord(character) < 32 for character in conversation_id)
+    ):
+        raise HTTPException(status_code=422, detail="Invalid conversation_id")
+
+
+def _projection_dict(projection: ConversationProjection) -> dict[str, Any]:
+    return {
+        "version": projection.version,
+        "active_anchors": json.loads(projection.active_anchors_json),
+        "effective_preferences": json.loads(projection.effective_preferences_json),
+        "product_reference_index": json.loads(projection.product_reference_index_json),
+        "last_turn_id": projection.last_turn_id,
+    }
+
+
+def _get_or_create_projection(
+    db,
+    conversation_id: str,
+) -> ConversationProjection:
+    projection = (
+        db.query(ConversationProjection)
+        .filter_by(conversation_id=conversation_id)
+        .first()
+    )
+    if projection is None:
+        projection = ConversationProjection(conversation_id=conversation_id)
+        db.add(projection)
+        db.flush()
+    return projection
+
+
+def _cart_item_dict(item: CartItem) -> dict[str, Any]:
+    result = {
+        "cart_line_id": item.cart_line_id,
+        "item": item.item,
+        "amount": item.amount,
+        "price": item.price,
+    }
+    if item.product_id:
+        result["product_id"] = item.product_id
+    if item.size:
+        result["size"] = item.size
+    return result
+
+
+def _cart_for_user(db, user_id: int) -> list[dict[str, Any]]:
+    items = (
+        db.query(CartItem)
+        .filter(CartItem.user_id == user_id)
+        .order_by(CartItem.id)
+        .all()
+    )
+    return [_cart_item_dict(item) for item in items]
+
+
+def _recent_turns_limit() -> int:
+    configured = int(
+        os.environ.get("MEMORY_RECENT_TURNS") or DEFAULT_RECENT_TURNS_LIMIT
+    )
+    return min(MAX_RECENT_TURNS_LIMIT, max(1, configured))
+
+
+def _latest_audience(db, conversation_id: str, event_type: str) -> list[str]:
+    """Return the audience carried by the newest event of one type."""
+
+    row = (
+        db.query(ConversationEvent)
+        .join(ConversationTurn, ConversationEvent.turn_id == ConversationTurn.turn_id)
+        .filter(
+            ConversationTurn.conversation_id == conversation_id,
+            ConversationTurn.status == "completed",
+            ConversationEvent.event_type == event_type,
+        )
+        .order_by(
+            ConversationTurn.sequence.desc(),
+            ConversationEvent.logical_order.desc(),
+        )
+        .first()
+    )
+    if row is None:
+        return []
+    try:
+        payload = json.loads(row.payload_json) if row.payload_json else {}
+    except (TypeError, ValueError):
+        return []
+    values = payload.get("audience")
+    if not isinstance(values, list):
+        return []
+    return [str(value) for value in values if isinstance(value, str)][:8]
+
+
+def _latest_wearer_audience(db, conversation_id: str) -> list[str]:
+    """Return the audience most recently declared for who is being shopped for.
+
+    Dialogue carries who a shopper named, but by contract it establishes intent
+    rather than fact, so a wearer stated one turn ago has no standing on the
+    next. This is the same fact recorded as data: the newest declaration wins,
+    and a turn that simply does not mention a wearer leaves it alone -- silence
+    is how the model forgets, not how a shopper changes their mind.
+    """
+
+    return _latest_audience(db, conversation_id, "wearer_audience_declared")
+
+
+def _latest_assumed_audience(db, conversation_id: str) -> list[str]:
+    """Return an audience this conversation already owned up to assuming.
+
+    Unlike a declaration, this is not a fact about the shopper and never
+    narrows a search. It exists so the shop states its assumption once. A
+    conversation that has already been told does not need telling again, and
+    three consecutive replies opening "assuming you're looking for women's
+    clothes" is a tic rather than a disclosure.
+    """
+
+    return _latest_audience(db, conversation_id, "audience_assumption_disclosed")
+
+
+def _recent_turns(db, conversation_id: str) -> list[dict[str, Any]]:
+    """Return bounded prior turns eligible for downstream context filtering."""
+
+    rows = (
+        db.query(ConversationTurn)
+        .filter(
+            ConversationTurn.conversation_id == conversation_id,
+            ConversationTurn.status.notin_(("started", "blocked")),
+        )
+        .order_by(ConversationTurn.sequence.desc())
+        .limit(_recent_turns_limit())
+        .all()
+    )
+    return [
+        {
+            "sequence": row.sequence,
+            "shopper_text": row.shopper_text,
+            "assistant_text": row.assistant_text,
+            "status": row.status,
+        }
+        for row in reversed(rows)
+    ]
+
+
+def _turn_selected_skill_names(turn: ConversationTurn) -> list[str]:
+    """Read the typed skill-selection hint from one finalized turn."""
+
+    if not turn.output_json:
+        return []
+    try:
+        output = json.loads(turn.output_json)
+    except (TypeError, ValueError):
+        return []
+    names = output.get("selected_skill_names") if isinstance(output, dict) else None
+    if not isinstance(names, list):
+        return []
+    return [
+        name
+        for name in names[:5]
+        if isinstance(name, str) and name.strip()
+    ]
+
+
+def _previous_selected_skill_names(
+    db,
+    turn: ConversationTurn,
+) -> list[str]:
+    """Return only the immediately preceding eligible turn's skill hint."""
+
+    if turn.sequence <= 1:
+        return []
+    previous = (
+        db.query(ConversationTurn)
+        .filter_by(
+            conversation_id=turn.conversation_id,
+            sequence=turn.sequence - 1,
+        )
+        .first()
+    )
+    if previous is None or previous.status in {"started", "blocked", "abandoned"}:
+        return []
+    return _turn_selected_skill_names(previous)
+
+
+def _start_response(
+    db,
+    turn: ConversationTurn,
+    projection: ConversationProjection,
+    *,
+    replayed: bool,
+) -> dict[str, Any]:
+    return {
+        "turn_id": turn.turn_id,
+        "attempt_id": turn.attempt_id,
+        "sequence": turn.sequence,
+        "replayed": replayed,
+        "status": turn.status,
+        "recent_turns": _recent_turns(db, turn.conversation_id),
+        "wearer_audience": _latest_wearer_audience(db, turn.conversation_id),
+        "assumed_audience": _latest_assumed_audience(db, turn.conversation_id),
+        "previous_selected_skill_names": _previous_selected_skill_names(db, turn),
+        "projection": _projection_dict(projection),
+        "cart": _cart_for_user(db, turn.cart_user_id),
+        "assistant_text": turn.assistant_text,
+        "termination_reason": turn.termination_reason,
+        "output": json.loads(turn.output_json) if turn.output_json else None,
+    }
+
+
+def _finalize_response(
+    turn: ConversationTurn,
+    *,
+    replayed: bool,
+    dropped_event_types: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        # Always present, so a replay and a first finalize have one shape.
+        "dropped_event_types": list(dropped_event_types or []),
+        "turn_id": turn.turn_id,
+        "attempt_id": turn.attempt_id,
+        "sequence": turn.sequence,
+        "replayed": replayed,
+        "status": turn.status,
+        "assistant_text": turn.assistant_text,
+        "termination_reason": turn.termination_reason,
+    }
+
+
+def _mark_stale_started_turns(
+    db,
+    *,
+    current_time: float,
+    timeout_seconds: int,
+    termination_reason: str,
+    conversation_id: str | None = None,
+) -> int:
+    query = db.query(ConversationTurn).filter(
+        ConversationTurn.status == "started",
+        ConversationTurn.started_at < current_time - timeout_seconds,
+    )
+    if conversation_id is not None:
+        query = query.filter(ConversationTurn.conversation_id == conversation_id)
+    turns = query.all()
+    for turn in turns:
+        turn.status = "abandoned"
+        turn.termination_reason = termination_reason
+        turn.completed_at = current_time
+    return len(turns)
+
+
+def _restart_abandoned_turn(
+    turn: ConversationTurn,
+    request: TurnStartRequest,
+    *,
+    started_at: float,
+) -> None:
+    turn.status = "started"
+    turn.attempt_id = uuid4().hex
+    turn.started_at = started_at
+    turn.completed_at = None
+    turn.assistant_text = None
+    turn.termination_reason = None
+    turn.finalize_digest = None
+    turn.output_json = None
+    turn.catalog_revision = request.catalog_revision
+
+
+def _start_turn(db, conversation_id: str, request: TurnStartRequest) -> dict[str, Any]:
+    begin_write_transaction(db, f"conversation:{conversation_id}")
+    current_time = time.time()
+    _mark_stale_started_turns(
+        db,
+        current_time=current_time,
+        timeout_seconds=abandoned_timeout_seconds(),
+        termination_reason="turn_start_abandoned_timeout",
+        conversation_id=conversation_id,
+    )
+    existing = (
+        db.query(ConversationTurn)
+        .filter_by(
+            conversation_id=conversation_id,
+            request_id=request.request_id,
+        )
+        .first()
+    )
+    if existing is not None:
+        if (
+            existing.request_digest != request.request_digest
+            or existing.shopper_text != request.shopper_text
+            or existing.cart_user_id != request.cart_user_id
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=REQUEST_INPUT_CONFLICT,
+            )
+        if existing.status == "started":
+            raise HTTPException(status_code=409, detail="turn_in_progress")
+        if existing.status == "abandoned":
+            latest_sequence = (
+                db.query(func.max(ConversationTurn.sequence))
+                .filter(ConversationTurn.conversation_id == conversation_id)
+                .scalar()
+            )
+            if existing.sequence != latest_sequence:
+                raise HTTPException(status_code=409, detail="turn_superseded")
+            active = (
+                db.query(ConversationTurn)
+                .filter_by(
+                    conversation_id=conversation_id,
+                    status="started",
+                )
+                .first()
+            )
+            if active is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="conversation_turn_in_progress",
+                )
+            _restart_abandoned_turn(existing, request, started_at=current_time)
+            projection = _get_or_create_projection(db, conversation_id)
+            response = _start_response(
+                db,
+                existing,
+                projection,
+                replayed=False,
+            )
+            db.commit()
+            return response
+        projection = _get_or_create_projection(db, conversation_id)
+        response = _start_response(
+            db,
+            existing,
+            projection,
+            replayed=True,
+        )
+        db.commit()
+        return response
+
+    active = (
+        db.query(ConversationTurn)
+        .filter_by(
+            conversation_id=conversation_id,
+            status="started",
+        )
+        .first()
+    )
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="conversation_turn_in_progress",
+        )
+
+    sequence = (
+        db.query(func.max(ConversationTurn.sequence))
+        .filter(ConversationTurn.conversation_id == conversation_id)
+        .scalar()
+        or 0
+    ) + 1
+    turn = ConversationTurn(
+        turn_id=uuid4().hex,
+        conversation_id=conversation_id,
+        sequence=sequence,
+        request_id=request.request_id,
+        request_digest=request.request_digest,
+        attempt_id=uuid4().hex,
+        cart_user_id=request.cart_user_id,
+        shopper_text=request.shopper_text,
+        status="started",
+        catalog_revision=request.catalog_revision,
+        started_at=current_time,
+    )
+    db.add(turn)
+    db.flush()
+    projection = _get_or_create_projection(db, conversation_id)
+    response = _start_response(
+        db,
+        turn,
+        projection,
+        replayed=False,
+    )
+    db.commit()
+    return response
+
+
+def _append_events(
+    db,
+    turn: ConversationTurn,
+    events: list[ConversationEventInput],
+    now: float,
+) -> list[str]:
+    """Store the events this build understands; return the types it does not.
+
+    Dropping is not silent: the caller reports the dropped types back to the
+    writer, so a genuine typo is as visible as it was before while a newer
+    peer's event costs nothing but the enrichment it carried.
+    """
+
+    next_order = (
+        db.query(func.max(ConversationEvent.logical_order))
+        .filter(ConversationEvent.turn_id == turn.turn_id)
+        .scalar()
+        or 0
+    ) + 1
+    existing_keys = {
+        row[0]
+        for row in db.query(ConversationEvent.event_key)
+        .filter(ConversationEvent.turn_id == turn.turn_id)
+        .all()
+    }
+    if existing_keys.intersection(event.event_key for event in events):
+        raise HTTPException(status_code=409, detail="event_key already exists")
+    known = set(EventType.__args__)
+    dropped = [
+        event.event_type for event in events if event.event_type not in known
+    ]
+    events = [event for event in events if event.event_type in known]
+    for offset, event in enumerate(events):
+        db.add(
+            ConversationEvent(
+                event_id=uuid4().hex,
+                turn_id=turn.turn_id,
+                event_key=event.event_key,
+                logical_order=next_order + offset,
+                event_type=event.event_type,
+                source_kind=event.source_kind,
+                source_ref=event.source_ref,
+                payload_json=_canonical_json(event.payload),
+                created_at=now,
+            )
+        )
+    return list(dict.fromkeys(dropped))
+
+
+def _finalize_turn(
+    db,
+    conversation_id: str,
+    turn_id: str,
+    request: TurnFinalizeRequest,
+) -> dict[str, Any]:
+    begin_write_transaction(db, f"conversation:{conversation_id}")
+    turn = (
+        db.query(ConversationTurn)
+        .filter_by(
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+        )
+        .first()
+    )
+    if turn is None:
+        raise HTTPException(status_code=404, detail="Conversation turn not found")
+    if turn.request_id != request.request_id:
+        raise HTTPException(
+            status_code=409,
+            detail="request_id does not match the conversation turn",
+        )
+    if turn.attempt_id != request.attempt_id:
+        raise HTTPException(status_code=409, detail="turn_attempt_superseded")
+
+    digest = _finalize_digest(request)
+    if turn.finalize_digest is not None:
+        if turn.finalize_digest != digest:
+            raise HTTPException(
+                status_code=409,
+                detail="Conversation turn was finalized with different data",
+            )
+        response = _finalize_response(turn, replayed=True)
+        db.commit()
+        return response
+    if turn.status != "started":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Conversation turn cannot be finalized from {turn.status}",
+        )
+
+    now = time.time()
+    dropped_event_types = _append_events(db, turn, request.events, now)
+    db.flush()
+    append_presented_products_event(
+        db,
+        turn,
+        request.output.product_results if request.output is not None else [],
+        product_groups=(
+            request.output.product_groups if request.output is not None else []
+        ),
+        created_at=now,
+    )
+    db.flush()
+    projection = _get_or_create_projection(db, conversation_id)
+    rebuild_product_reference_index(db, projection)
+    projection.version += 1
+    projection.last_turn_id = turn.turn_id
+    turn.assistant_text = request.assistant_text
+    turn.output_json = (
+        _canonical_json(request.output.model_dump(mode="json"))
+        if request.output is not None
+        else None
+    )
+    turn.status = request.status
+    turn.termination_reason = request.termination_reason
+    turn.finalize_digest = digest
+    turn.completed_at = now
+    db.flush()
+    response = _finalize_response(
+        turn,
+        replayed=False,
+        dropped_event_types=dropped_event_types,
+    )
+    db.commit()
+    return response
+
+
+def _conversation_memory(db, conversation_id: str) -> dict[str, Any]:
+    """What the next turn of this conversation would read, without starting one.
+
+    The cart is absent on purpose: it belongs to the shopper, not to the
+    conversation, and is read from `/user/{user_id}/cart`.
+    """
+
+    projection = (
+        db.query(ConversationProjection).filter_by(conversation_id=conversation_id).first()
+    )
+    has_turns = (
+        db.query(ConversationTurn.turn_id).filter_by(conversation_id=conversation_id).first()
+        is not None
+    )
+    if projection is None and not has_turns:
+        raise HTTPException(status_code=404, detail="conversation_not_found")
+    return {
+        "conversation_id": conversation_id,
+        "recent_turns": _recent_turns(db, conversation_id),
+        "wearer_audience": _latest_wearer_audience(db, conversation_id),
+        "assumed_audience": _latest_assumed_audience(db, conversation_id),
+        "projection": _projection_dict(projection) if projection else None,
+    }
+
+
+def _delete_conversation(db, conversation_id: str) -> dict[str, Any]:
+    begin_write_transaction(db, f"conversation:{conversation_id}")
+    turn_ids = db.query(ConversationTurn.turn_id).filter_by(
+        conversation_id=conversation_id
+    )
+    event_count = (
+        db.query(ConversationEvent)
+        .filter(ConversationEvent.turn_id.in_(turn_ids))
+        .count()
+    )
+    projection_count = (
+        db.query(ConversationProjection)
+        .filter_by(conversation_id=conversation_id)
+        .delete(synchronize_session=False)
+    )
+    turn_count = (
+        db.query(ConversationTurn)
+        .filter_by(conversation_id=conversation_id)
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {
+        "conversation_id": conversation_id,
+        "deleted_turns": turn_count,
+        "deleted_events": event_count,
+        "deleted_projection": bool(projection_count),
+    }
+
+
+def _conversation_archive(db, conversation_id: str) -> dict[str, Any]:
+    """Everything this conversation holds, as one readable snapshot.
+
+    Returned rather than written anywhere, because the point of a reset is to
+    get this out of the operational tables, and an archive table in the same
+    database is not out. The caller decides where it lives.
+    """
+
+    turns = (
+        db.query(ConversationTurn)
+        .filter_by(conversation_id=conversation_id)
+        .order_by(ConversationTurn.sequence)
+        .all()
+    )
+    turn_ids = [turn.turn_id for turn in turns]
+    events = (
+        db.query(ConversationEvent)
+        .filter(ConversationEvent.turn_id.in_(turn_ids))
+        .order_by(ConversationEvent.turn_id, ConversationEvent.logical_order)
+        .all()
+        if turn_ids
+        else []
+    )
+    projection = (
+        db.query(ConversationProjection).filter_by(conversation_id=conversation_id).first()
+    )
+    # One conversation is one shopper, so the cart is reachable from the turns
+    # and the caller does not have to know the id to reset what it started.
+    cart_user_ids = sorted({turn.cart_user_id for turn in turns})
+    cart_items = (
+        db.query(CartItem).filter(CartItem.user_id.in_(cart_user_ids)).all()
+        if cart_user_ids
+        else []
+    )
+    return {
+        "conversation_id": conversation_id,
+        "archived_at": time.time(),
+        "cart_user_ids": cart_user_ids,
+        "turns": [
+            {
+                column.name: getattr(turn, column.name)
+                for column in ConversationTurn.__table__.columns
+            }
+            for turn in turns
+        ],
+        "events": [
+            {
+                column.name: getattr(event, column.name)
+                for column in ConversationEvent.__table__.columns
+            }
+            for event in events
+        ],
+        "projection": (
+            {
+                column.name: getattr(projection, column.name)
+                for column in ConversationProjection.__table__.columns
+            }
+            if projection
+            else None
+        ),
+        "cart_items": [
+            {
+                column.name: getattr(item, column.name)
+                for column in CartItem.__table__.columns
+            }
+            for item in cart_items
+        ],
+    }
+
+
+def _reset_conversation(db, conversation_id: str) -> dict[str, Any]:
+    """Hand back everything this conversation held, then delete all of it.
+
+    One call, because a reset spread over three endpoints is a reset that half
+    happens: `DELETE /conversations/{id}` leaves the cart, and the cart endpoint
+    needs a user id the caller may not have kept.
+
+    The snapshot is taken before anything is deleted and returned to the caller,
+    so a session can be thrown away without throwing away the means to work out
+    what it did.
+    """
+
+    archive = _conversation_archive(db, conversation_id)
+    begin_write_transaction(db, f"conversation:{conversation_id}")
+    deleted_cart_lines = 0
+    if archive["cart_user_ids"]:
+        deleted_cart_lines = (
+            db.query(CartItem)
+            .filter(CartItem.user_id.in_(archive["cart_user_ids"]))
+            .delete(synchronize_session=False)
+        )
+    # Counted before the turns go, because the rows leave by cascade and there
+    # is nothing left to count afterwards.
+    deleted_events = len(archive["events"])
+    deleted_projection = (
+        db.query(ConversationProjection)
+        .filter_by(conversation_id=conversation_id)
+        .delete(synchronize_session=False)
+    )
+    deleted_turns = (
+        db.query(ConversationTurn)
+        .filter_by(conversation_id=conversation_id)
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {
+        "conversation_id": conversation_id,
+        "deleted": {
+            "turns": deleted_turns,
+            "events": deleted_events,
+            "projection": bool(deleted_projection),
+            "cart_lines": deleted_cart_lines,
+        },
+        "archive": archive,
+    }
+
+
+def abandoned_timeout_seconds() -> int:
+    timeout = int(
+        os.environ.get("MEMORY_TURN_ABANDON_SECONDS") or DEFAULT_ABANDONED_SECONDS
+    )
+    if timeout < 1:
+        raise ValueError("MEMORY_TURN_ABANDON_SECONDS must be positive")
+    return timeout
+
+
+def sweep_abandoned_turns(
+    session_factory,
+    *,
+    now: float | None = None,
+    timeout_seconds: int | None = None,
+) -> int:
+    """Release turns left active by a stopped memory-service process."""
+
+    current_time = time.time() if now is None else now
+    timeout = (
+        abandoned_timeout_seconds() if timeout_seconds is None else timeout_seconds
+    )
+    with session_factory() as db:
+        try:
+            # No conversation to name: the sweep looks at every one of them,
+            # so two sweeps running together must exclude each other.
+            begin_write_transaction(db, "sweep:abandoned-turns")
+            abandoned_count = _mark_stale_started_turns(
+                db,
+                current_time=current_time,
+                timeout_seconds=timeout,
+                termination_reason="startup_abandoned_turn_sweep",
+            )
+            db.commit()
+            return abandoned_count
+        except Exception:
+            db.rollback()
+            raise
+
+
+def create_conversation_router(get_db) -> APIRouter:
+    router = APIRouter()
+
+    @router.post("/conversations/{conversation_id}/turn/start")
+    def start_conversation_turn(
+        conversation_id: str,
+        request: TurnStartRequest,
+        db=Depends(get_db),
+    ):
+        _validate_conversation_id(conversation_id)
+        try:
+            return _start_turn(db, conversation_id, request)
+        except Exception:
+            db.rollback()
+            raise
+
+    @router.post("/conversations/{conversation_id}/turns/{turn_id}/finalize")
+    def finalize_conversation_turn(
+        conversation_id: str,
+        turn_id: str,
+        request: TurnFinalizeRequest,
+        db=Depends(get_db),
+    ):
+        _validate_conversation_id(conversation_id)
+        try:
+            return _finalize_turn(db, conversation_id, turn_id, request)
+        except Exception:
+            db.rollback()
+            raise
+
+    @router.post("/conversations/{conversation_id}/products/resolve")
+    def resolve_conversation_products(
+        conversation_id: str,
+        request: ProductResolutionRequest,
+        db=Depends(get_db),
+    ):
+        _validate_conversation_id(conversation_id)
+        return resolve_product_references(db, conversation_id, request)
+
+    @router.get("/conversations/{conversation_id}/memory")
+    def read_conversation_memory(conversation_id: str, db=Depends(get_db)):
+        _validate_conversation_id(conversation_id)
+        return _conversation_memory(db, conversation_id)
+
+    @router.delete("/conversations/{conversation_id}")
+    def delete_conversation(conversation_id: str, db=Depends(get_db)):
+        _validate_conversation_id(conversation_id)
+        try:
+            return _delete_conversation(db, conversation_id)
+        except Exception:
+            db.rollback()
+            raise
+
+    @router.post("/conversations/{conversation_id}/reset")
+    def reset_conversation(conversation_id: str, db=Depends(get_db)):
+        _validate_conversation_id(conversation_id)
+        try:
+            return _reset_conversation(db, conversation_id)
+        except Exception:
+            db.rollback()
+            raise
+
+    return router

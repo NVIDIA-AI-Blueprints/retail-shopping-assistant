@@ -10,7 +10,7 @@ Developers
 
 ### See also
 
-- [Issues](maintainers/work-management/issues.md)
+- [Issues](REF-issues.md)
 
 ## Create a pull request
 
@@ -49,7 +49,7 @@ The description should NOT reword the issue description.
 
 ### Comments
 
-All comments and reviews to pull requests must follow the [Code of Conduct]({CODE_OF_CONDUCT.md)
+All comments and reviews to pull requests must follow the [Contributing Guide](../../CONTRIBUTING.md)
 
 ## Lifecycle
 

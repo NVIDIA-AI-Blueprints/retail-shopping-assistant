@@ -1,0 +1,39 @@
+# Operator-managed policy content. Replace all placeholder values before production.
+# Set configured to true only after every placeholder has been replaced.
+configured: false
+policies:
+  returns:
+    title: "Return Policy"
+    body: >
+      [Operator placeholder] Items may be returned within 30 days of purchase
+      with a receipt. Final sale items are non-returnable.
+    last_updated: "2026-07-01"
+  shipping:
+    title: "Shipping Policy"
+    body: >
+      [Operator placeholder] Standard shipping is 5–7 business days.
+      Free shipping on orders over $50.
+    last_updated: "2026-07-01"
+  sizing:
+    title: "Sizing Guide"
+    body: >
+      [Operator placeholder] Size charts are available on each product page
+      in both inches and centimeters.
+    last_updated: "2026-07-01"
+  payment:
+    title: "Payment Methods"
+    body: >
+      [Operator placeholder] We accept Visa, Mastercard, Amex, Discover,
+      PayPal, gift cards, and store credit.
+    last_updated: "2026-07-01"
+  price_match:
+    title: "Price Match Policy"
+    body: >
+      [Operator placeholder] We do not currently offer price matching.
+    last_updated: "2026-07-01"
+  gift_cards:
+    title: "Gift Cards"
+    body: >
+      [Operator placeholder] Gift cards are available in store and online.
+      They do not expire and carry no fees.
+    last_updated: "2026-07-01"

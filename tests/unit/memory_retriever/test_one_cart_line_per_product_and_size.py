@@ -15,7 +15,7 @@ keeping it rather than about the add path being careful.
 
 from __future__ import annotations
 
-from typing import Iterator
+from collections.abc import Iterator
 
 import pytest
 from memory_retriever.src.migrations import run_schema_migrations
@@ -146,12 +146,11 @@ def test_the_migration_adds_the_index_to_a_database_that_predates_it() -> None:
     assert {"uq_cart_line_sized", "uq_cart_line_unsized"} <= after
 
     # And it is enforced, on the row that was already there.
-    with pytest.raises(IntegrityError):
-        with engine.begin() as connection:
-            connection.execute(
-                text(
-                    "INSERT INTO cart_items (user_id, product_id, item, size,"
-                    " amount) VALUES (1, 'p1', 'A Dress', '8', 1)"
-                )
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO cart_items (user_id, product_id, item, size,"
+                " amount) VALUES (1, 'p1', 'A Dress', '8', 1)"
             )
+        )
     engine.dispose()

@@ -32,7 +32,7 @@ class DialogueTurn(BaseModel):
 class Cart(BaseModel):
     """
     Shopping cart model for storing user's selected items.
-    
+
     Attributes:
         contents: List of cart items with their quantities and metadata
     """

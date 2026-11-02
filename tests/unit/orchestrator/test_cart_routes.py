@@ -12,7 +12,8 @@ a retry of a request that can only fail the same way.
 
 import importlib
 import sys
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient

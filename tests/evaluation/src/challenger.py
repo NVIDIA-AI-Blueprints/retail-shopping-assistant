@@ -14,11 +14,11 @@ import random
 import re
 import shutil
 import sys
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
 from collections.abc import Mapping, Sequence
-from typing import Any, Optional, Protocol
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import requests
@@ -64,7 +64,7 @@ class ScenarioContext:
     dataset: str
     dataset_dir: Path
     scenario: dict[str, Any]
-    image_asset: Optional[ImageAsset] = None
+    image_asset: ImageAsset | None = None
 
 
 @dataclass(frozen=True)
@@ -87,7 +87,7 @@ class Challenger(Protocol):
         *,
         scenario: Mapping[str, Any],
         dataset: str,
-        image_asset: Optional[ImageAsset],
+        image_asset: ImageAsset | None,
         transcript: list[dict[str, Any]],
         turn_number: int,
         target_turns: int,
@@ -146,7 +146,7 @@ class OpenAICompatibleChallenger:
         *,
         scenario: Mapping[str, Any],
         dataset: str,
-        image_asset: Optional[ImageAsset],
+        image_asset: ImageAsset | None,
         transcript: list[dict[str, Any]],
         turn_number: int,
         target_turns: int,
@@ -245,9 +245,9 @@ def _recorded_diagnostics(
 def load_scenario_contexts(
     config: EvalConfig,
     *,
-    datasets: Optional[list[str]] = None,
-    scenario_ids: Optional[set[str]] = None,
-    scenario_limit_per_dataset: Optional[int] = None,
+    datasets: list[str] | None = None,
+    scenario_ids: set[str] | None = None,
+    scenario_limit_per_dataset: int | None = None,
 ) -> list[ScenarioContext]:
     """Load scenario YAML and resolve image sidecars without duplicating them."""
 
@@ -340,12 +340,12 @@ def load_image_asset(dataset_dir: Path, image_id: str) -> ImageAsset:
 def run_challenger(
     config: EvalConfig,
     *,
-    datasets: Optional[list[str]] = None,
-    scenario_ids: Optional[set[str]] = None,
-    scenario_limit_per_dataset: Optional[int] = None,
-    output_root: Optional[Path] = None,
-    challenger: Optional[Challenger] = None,
-    target: Optional[TargetAgent] = None,
+    datasets: list[str] | None = None,
+    scenario_ids: set[str] | None = None,
+    scenario_limit_per_dataset: int | None = None,
+    output_root: Path | None = None,
+    challenger: Challenger | None = None,
+    target: TargetAgent | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Run selected scenarios and persist a ``run.yaml`` plus reports."""
@@ -558,7 +558,7 @@ def _next_challenger_turn(
     challenger: Challenger,
     scenario: Mapping[str, Any],
     dataset: str,
-    image_asset: Optional[ImageAsset],
+    image_asset: ImageAsset | None,
     transcript: list[dict[str, Any]],
     turn_number: int,
     target_turns: int,
@@ -604,7 +604,7 @@ def _build_challenger_prompt(
     *,
     scenario: Mapping[str, Any],
     dataset: str,
-    image_asset: Optional[ImageAsset],
+    image_asset: ImageAsset | None,
     transcript: list[dict[str, Any]],
     turn_number: int,
     target_turns: int,
@@ -655,7 +655,7 @@ def _parse_model_mapping(content: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         object_start = stripped.find("{")
         if object_start < 0:
-            raise ValueError("Model response did not contain a JSON object.")
+            raise ValueError("Model response did not contain a JSON object.") from None
         parsed, _ = decoder.raw_decode(stripped[object_start:])
     if not isinstance(parsed, dict):
         raise ValueError("Model response JSON must be an object.")
@@ -762,23 +762,23 @@ def _required_scenario_id(scenario: Mapping[str, Any]) -> str:
 
 
 def _scenario_user_id(run_id: str, scenario_id: str) -> int:
-    digest = hashlib.sha256(f"{run_id}:{scenario_id}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{run_id}:{scenario_id}".encode()).hexdigest()
     return int(digest[:8], 16) % 900000000 + 100000
 
 
 def _new_run_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _join_url(base_url: str, endpoint: str) -> str:
     return f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
 
 
-def _image_asset_record(image_asset: Optional[ImageAsset]) -> Optional[dict[str, Any]]:
+def _image_asset_record(image_asset: ImageAsset | None) -> dict[str, Any] | None:
     if not image_asset:
         return None
     return {
@@ -848,7 +848,7 @@ def _copy_data_uri(data_uri: str, safe_name: str, run_dir: Path, turn_number: in
     return {"name": safe_name, "source": "data_uri", "copied_to": _relative_to_run(destination, run_dir)}
 
 
-def _resolve_local_image_source(value: str, run_dir: Path) -> Optional[Path]:
+def _resolve_local_image_source(value: str, run_dir: Path) -> Path | None:
     parsed = urlparse(value)
     if parsed.scheme in {"http", "https"}:
         return None

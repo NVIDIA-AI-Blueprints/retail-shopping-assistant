@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import html
 import re
-from pathlib import Path
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import yaml

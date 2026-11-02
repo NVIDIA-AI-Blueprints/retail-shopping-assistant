@@ -32,7 +32,7 @@ class _Request:
     def __init__(self, args: dict[str, Any]) -> None:
         self.tool_call = {"name": "search_catalog_tool", "args": args}
 
-    def override(self, tool_call: dict[str, Any]) -> "_Request":
+    def override(self, tool_call: dict[str, Any]) -> _Request:
         replacement = _Request({})
         replacement.tool_call = tool_call
         return replacement

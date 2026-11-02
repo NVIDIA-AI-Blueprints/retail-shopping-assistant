@@ -8,7 +8,7 @@ import json
 import os
 from collections import Counter
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import yaml
 from openai import OpenAI
@@ -57,7 +57,7 @@ def _write_quality_summary(output_path: str, result_directory: str) -> None:
     per_file = {}
 
     for filename in sorted(f for f in os.listdir(output_path) if f.endswith(".yaml")):
-        with open(os.path.join(output_path, filename), "r") as result_file:
+        with open(os.path.join(output_path, filename)) as result_file:
             entries = yaml.safe_load(result_file) or []
         file_scores = [int(entry["score"]) for entry in entries]
         if not file_scores:
@@ -89,7 +89,7 @@ def _write_quality_summary(output_path: str, result_directory: str) -> None:
         "result_directory": result_directory,
         "commit": os.environ.get("GITHUB_SHA", ""),
         "ref": os.environ.get("GITHUB_REF", ""),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "judge_model": LLM_NAME,
         "judge_base_url": BASE_URL,
         "count": len(scores),
@@ -140,7 +140,7 @@ def judge_test(
         verbose: bool = True,
         prior_turns: Sequence[dict[str, str]] | None = None,
         ) -> dict[str, str]:
-    
+
     if verbose:
         print("judge_test() | Starting judgement.")
 
@@ -236,9 +236,9 @@ if __name__ == "__main__":
     assert query_files == res_files, "Mismatch between query and result filenames!"
 
     for filename in query_files:
-        with open(os.path.join(QUERY_DIR, filename), 'r') as qf:
+        with open(os.path.join(QUERY_DIR, filename)) as qf:
             query_data = yaml.safe_load(qf)
-        with open(os.path.join(RES_DIR, filename), 'r') as rf:
+        with open(os.path.join(RES_DIR, filename)) as rf:
             res_data = yaml.safe_load(rf)
 
         queries = query_data["queries"]

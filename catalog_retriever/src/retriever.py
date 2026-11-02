@@ -1344,9 +1344,7 @@ class Retriever:
             return False
         if bounds.get("min") is not None and metadata_value < bounds["min"]:
             return False
-        if bounds.get("max") is not None and metadata_value > bounds["max"]:
-            return False
-        return True
+        return not (bounds.get("max") is not None and metadata_value > bounds["max"])
 
     @classmethod
     def _normalize_number_filter(cls, value: Any) -> dict[str, float]:

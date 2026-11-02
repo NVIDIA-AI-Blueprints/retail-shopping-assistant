@@ -12,7 +12,7 @@ flow end-to-end with a stubbed Milvus layer.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, Dict, List, Tuple
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -131,7 +131,7 @@ def _doc(
 
 class TestMilvusAdapter:
     def test_catalog_match_requires_every_record_to_have_the_fingerprint(self) -> None:
-        calls: Dict[str, Any] = {}
+        calls: dict[str, Any] = {}
 
         class _Collection:
             num_entities = 2
@@ -152,10 +152,10 @@ class TestMilvusAdapter:
     def test_add_and_search_uses_pymilvus_boundary(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        calls: Dict[str, Any] = {}
+        calls: dict[str, Any] = {}
 
         class _Embeddings:
-            def embed_query(self, text: str) -> List[float]:
+            def embed_query(self, text: str) -> list[float]:
                 calls["query"] = text
                 return [1.0, 0.0]
 
@@ -172,7 +172,7 @@ class TestMilvusAdapter:
         class _FakeCollection:
             def __init__(self, name: str, schema=None, using: str | None = None) -> None:
                 calls["collection"] = {"name": name, "schema": schema, "using": using}
-                self.records: List[Dict[str, Any]] = []
+                self.records: list[dict[str, Any]] = []
 
             def create_index(self, **kwargs) -> None:
                 calls["index"] = kwargs
@@ -180,7 +180,7 @@ class TestMilvusAdapter:
             def load(self) -> None:
                 calls["loaded"] = True
 
-            def insert(self, records: List[Dict[str, Any]]) -> None:
+            def insert(self, records: list[dict[str, Any]]) -> None:
                 self.records.extend(records)
                 calls["records"] = records
 
@@ -451,7 +451,7 @@ class TestApplyStructuredFilters:
         ],
     )
     def test_invalid_numeric_bound_rejects_the_entire_filter(
-        self, retriever: Retriever, filters: Dict[str, Any]
+        self, retriever: Retriever, filters: dict[str, Any]
     ) -> None:
         with pytest.raises(CatalogFilterError, match="invalid bound"):
             retriever._apply_structured_filters(
@@ -466,7 +466,7 @@ class TestApplyStructuredFilters:
         ],
     )
     def test_duplicate_numeric_bound_aliases_are_rejected(
-        self, retriever: Retriever, bounds: Dict[str, Any]
+        self, retriever: Retriever, bounds: dict[str, Any]
     ) -> None:
         with pytest.raises(CatalogFilterError, match="cannot combine bound aliases"):
             retriever._apply_structured_filters(
@@ -483,7 +483,7 @@ class TestApplyStructuredFilters:
         ],
     )
     def test_nested_and_top_level_numeric_bound_aliases_are_rejected(
-        self, retriever: Retriever, filters: Dict[str, Any]
+        self, retriever: Retriever, filters: dict[str, Any]
     ) -> None:
         with pytest.raises(
             CatalogFilterError,
@@ -617,7 +617,7 @@ class TestTextEmbeddings:
 
 class TestEmbedChunk:
     def test_calls_client_with_query_type(self, retriever: Retriever) -> None:
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
 
         def _create(**kwargs):
             captured.update(kwargs)
@@ -650,7 +650,7 @@ class TestImageEmbeddings:
     def test_base64_inputs_passed_through_to_client(
         self, retriever: Retriever
     ) -> None:
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
 
         def _create(**kwargs):
             captured.update(kwargs)
@@ -748,7 +748,7 @@ class TestImageEmbeddings:
             "resize_base64_image",
             lambda *a, **k: resized,
         )
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
 
         def _create(**kwargs):
             captured.update(kwargs)
@@ -1203,11 +1203,11 @@ class TestRetrieve:
     async def test_blank_query_replaced_with_dummy(
         self, retriever: Retriever
     ) -> None:
-        captured: Dict[str, Any] = {}
+        captured: dict[str, Any] = {}
 
         def _search(
             query: str, k: int = 4, expr: str = ""
-        ) -> List[Tuple[Any, float]]:
+        ) -> list[tuple[Any, float]]:
             captured["query"] = query
             captured["expr"] = expr
             return [(_doc("A"), 0.9)]

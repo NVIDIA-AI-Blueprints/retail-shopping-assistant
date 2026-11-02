@@ -11,11 +11,17 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_memory_service_host_port_is_loopback_only() -> None:
+def test_internal_service_host_ports_are_loopback_only() -> None:
     compose = yaml.safe_load((REPO_ROOT / "docker-compose.yaml").read_text())
+    services = compose["services"]
 
-    assert compose["services"]["memory-retriever"]["ports"] == [
-        "127.0.0.1:8011:8011"
+    assert services["orchestrator"]["ports"] == ["127.0.0.1:8009:8009"]
+    assert services["catalog-retriever"]["ports"] == ["127.0.0.1:8010:8010"]
+    assert services["memory-retriever"]["ports"] == ["127.0.0.1:8011:8011"]
+    assert services["rails"]["ports"] == ["127.0.0.1:8012:8012"]
+    assert services["milvus"]["ports"] == [
+        "127.0.0.1:19530:19530",
+        "127.0.0.1:9091:9091",
     ]
 
 

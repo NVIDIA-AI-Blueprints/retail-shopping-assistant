@@ -13,7 +13,7 @@ services:
         INSTALL_RELAY: ${INSTALL_RELAY:-false}
     container_name: orchestrator
     ports:
-      - "8009:8009"
+      - "127.0.0.1:8009:8009"
     environment:
       - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
@@ -120,7 +120,7 @@ services:
       context: ./catalog_retriever
     container_name: catalog-retriever
     ports:
-      - "8010:8010"
+      - "127.0.0.1:8010:8010"
     environment:
       - EMBED_API_KEY=${EMBED_API_KEY:-}
       - TEXT_EMBED_BASE_URL=${TEXT_EMBED_BASE_URL:-}
@@ -202,7 +202,7 @@ services:
       - GUARDRAILS_TIMEOUT_SECONDS=${GUARDRAILS_TIMEOUT_SECONDS:-}
     container_name: rails
     ports:
-      - "8012:8012"
+      - "127.0.0.1:8012:8012"
     volumes:
       - ./shared:/app/shared
     networks:
@@ -286,8 +286,8 @@ services:
     security_opt:
       - seccomp:unconfined
     ports:
-      - "19530:19530"
-      - "9091:9091"
+      - "127.0.0.1:19530:19530"
+      - "127.0.0.1:9091:9091"
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: seaweedfs:9010

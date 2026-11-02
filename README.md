@@ -242,7 +242,7 @@ GOVERNING DOWNLOAD TERMS: Use of this blueprint software is governed by the [Apa
 
 | Dataset | Location | License |
 |---|---|---|
-| Product catalog and product images | `shared/data/`, `shared/images/` | [NVIDIA Asset License (v. August 15, 2025)](LICENSE-assets.txt). Adobe images are also subject to the Adobe Generative AI User Guidelines, the Adobe Generative AI Product Specific Terms and the Adobe General Terms of Use, as listed in that license |
+| Product catalog and product images | `shared/data/`, `shared/images/` | [NVIDIA Data License for Retail Shopping Assistant (15Aug2025)](LICENSE-assets.txt). Adobe images are also subject to the Adobe Generative AI User Guidelines, the Adobe Generative AI Product Specific Terms and the Adobe General Terms of Use, as listed in that license |
 
 ### Notices and Disclaimers
 

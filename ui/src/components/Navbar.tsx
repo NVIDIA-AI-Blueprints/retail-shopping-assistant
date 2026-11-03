@@ -20,24 +20,28 @@
  */
 
 import React from "react";
-import MenuIcon from "@mui/icons-material/Menu";
-import { config, isFashionMode } from "../config/config";
+import {
+  Menu as MenuIcon,
+  RestartAlt as RestartAltIcon,
+} from "@mui/icons-material";
+import { config } from "../config/config";
+import CartPanel from "./CartPanel";
 
-const Navbar: React.FC = () => {
+interface NavbarProps {
+  isResetDisabled: boolean;
+  onReset: () => void;
+  cart: React.ComponentProps<typeof CartPanel>;
+}
+
+const Navbar: React.FC<NavbarProps> = ({
+  isResetDisabled,
+  onReset,
+  cart,
+}) => {
   const categories = config.ui.categories;
 
-  const getCategoryLink = (categoryKey: keyof typeof categories): string => {
-    // Remove all mode switching logic
-    return "#";
-  };
-
-  const isCategoryActive = (categoryKey: keyof typeof categories): boolean => {
-    // Only fashion is active
-    return categoryKey === 'fashion';
-  };
-
   return (
-    <div>
+    <div className="shopper-nav">
       {/* Main navigation bar */}
       <div className="bg-[#FFFFFF] h-[48px] px-3 py-2 lg:px-5 text-white flex justify-between items-center">
         {/* Left side - Menu and Brand */}
@@ -48,11 +52,9 @@ const Navbar: React.FC = () => {
           </p>
         </div>
         
-        {/* Right side - Welcome message */}
+        {/* Right side - Cart */}
         <div className="flex items-center gap-x-2">
-          <div className="flex items-center gap-2 p-3 rounded-full">
-            <p className="text-[14px] text-[#202020]">Welcome!</p>
-          </div>
+          <CartPanel {...cart} />
         </div>
       </div>
 
@@ -119,6 +121,18 @@ const Navbar: React.FC = () => {
             {categories.lastCall}
           </p>
         </div>
+
+        <button
+          type="button"
+          className="shopper-nav__reset"
+          onClick={onReset}
+          disabled={isResetDisabled}
+          aria-label="Reset conversation"
+          title="Clear this conversation and start a new session"
+        >
+          <RestartAltIcon fontSize="small" />
+          <span>Reset</span>
+        </button>
       </div>
     </div>
   );

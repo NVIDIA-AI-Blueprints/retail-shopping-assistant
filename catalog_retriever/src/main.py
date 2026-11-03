@@ -1,23 +1,27 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from fastapi import FastAPI
-from pydantic import BaseModel, Field, field_validator
-from typing import List, Dict, Any
-import time
-import os
-import yaml
 import logging
+import os
 import sys
+import time
+from typing import Any
+
+import yaml
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from shared.model_config import resolve_model_config, validate_model_config
 
 try:
-    from app.retriever import Retriever, RetrieverConfig
-    from app.utils import normalize_runtime_image_input
+    from app.catalog import build_product_detail, load_catalog
+    from app.retriever import CatalogFilterError, Retriever, RetrieverConfig
+    from app.vector_index import VectorIndexSettings
 except ModuleNotFoundError:
-    from .retriever import Retriever, RetrieverConfig
-    from .utils import normalize_runtime_image_input
+    from .catalog import build_product_detail, load_catalog
+    from .retriever import CatalogFilterError, Retriever, RetrieverConfig
+    from .vector_index import VectorIndexSettings
 
-# Set up logging 
+# Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -33,122 +37,297 @@ for entry in os.listdir("."):
     dir_contents.append(entry)
 logging.info(f"CATALOG RETRIEVER | startup | Directory contents: {dir_contents}")
 
-# Get our configuration from config.yaml with optional override support
-def load_config_with_override(base_config_path: str):
-    """Load configuration from YAML file with optional override support."""
-    # Load base config
+# Get service behavior from config.yaml. Model endpoints come from the environment
+# variables models.yaml names.
+def load_config(base_config_path: str):
+    """Load service configuration from YAML file."""
+
     if not os.path.exists(base_config_path):
         logging.error(f"Base config file not found at {base_config_path}")
         raise FileNotFoundError(f"Base config file not found at {base_config_path}")
 
-    with open(base_config_path, "r") as f:
+    with open(base_config_path) as f:
         config = yaml.safe_load(f)
-    
-    # Check for override config
-    override_file = os.environ.get("CONFIG_OVERRIDE")
-    if override_file:
-        # Construct override path (same directory as base config)
-        base_dir = os.path.dirname(base_config_path)
-        override_path = os.path.join(base_dir, override_file)
-        
-        if os.path.exists(override_path):
-            logging.info(f"Loading override config from {override_path}")
-            with open(override_path, "r") as f:
-                override_config = yaml.safe_load(f)
-            
-            # Merge override config into base config
-            config.update(override_config)
-            logging.info(f"Config override applied from {override_file}")
-        else:
-            logging.warning(f"Override config file not found at {override_path}")
-    else:
-        logging.info("No config override specified, using base config only")
-    
+
     return config
 
+
+def env_flag(name: str, *, default: bool) -> bool:
+    """Read a boolean environment flag, falling back to a configured default.
+
+    ``default`` is required and keyword-only so that a caller cannot silently
+    inherit a default declared here rather than in config.yaml. An unset or
+    empty value counts as absent, which is what lets compose and the env
+    profiles pass the variable straight through without overriding config.
+    """
+
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be true or false.")
+
+
+def load_vector_index(configured: dict[str, Any] | None) -> VectorIndexSettings:
+    """Read the vector index from config.yaml, with environment overrides."""
+
+    settings = dict(configured or {})
+    index_type = os.environ.get("CATALOG_VECTOR_INDEX_TYPE", "").strip()
+    if index_type:
+        settings["type"] = index_type.upper()
+    settings["gpu_search"] = env_flag(
+        "CATALOG_GPU_SEARCH", default=bool(settings.get("gpu_search", False))
+    )
+    return VectorIndexSettings(**settings)
+
 shared_config_root = os.environ.get("SHARED_CONFIG_ROOT", "/app/shared/configs")
-data = load_config_with_override(os.path.join(shared_config_root, "catalog_retriever", "config.yaml"))
+data = load_config(os.path.join(shared_config_root, "catalog_retriever", "config.yaml"))
+data.update(
+    {
+        key: value
+        for key, value in {
+            "db_port": os.environ.get("CATALOG_DB_PORT"),
+            "data_source": os.environ.get("CATALOG_DATA_SOURCE"),
+            "schema_source": os.environ.get("CATALOG_SCHEMA_SOURCE"),
+        }.items()
+        if value
+    }
+)
+model_config = resolve_model_config(config_root=shared_config_root)
+validate_model_config(model_config, roles=("text_embedding",))
+text_embedding = model_config.require("text_embedding")
+image_embedding = model_config.get("image_embedding")
+image_enabled = bool(
+    image_embedding
+    and not image_embedding.disabled
+    and env_flag(
+        "CATALOG_IMAGE_EMBEDDING_ENABLED",
+        default=bool(data.get("image_embedding_enabled", False)),
+    )
+)
+data.update(
+    {
+        "text_embed_port": text_embedding.base_url,
+        "text_model_name": text_embedding.model,
+        "text_api_key_env": text_embedding.api_key_env,
+        "image_enabled": image_enabled,
+        "image_embed_port": image_embedding.base_url if image_enabled else None,
+        "image_model_name": image_embedding.model if image_enabled else None,
+        "image_api_key_env": image_embedding.api_key_env if image_enabled else None,
+    }
+)
+vector_index = load_vector_index(data.get("vector_index"))
+snapshot = load_catalog(
+    data["data_source"],
+    data["schema_source"],
+    catalog_id=str(data.get("catalog_id") or "default"),
+    image_enabled=image_enabled,
+    text_model_name=text_embedding.model,
+    image_model_name=image_embedding.model if image_enabled and image_embedding else None,
+    vector_index_signature=vector_index.signature,
+    shared_root=os.environ.get("SHARED_ROOT", "/app/shared"),
+)
+capabilities = snapshot.capabilities
 
 
 # Setup Retriever once when app starts
-config = RetrieverConfig(  
+config = RetrieverConfig(
     text_embed_port=data["text_embed_port"],
     image_embed_port=data["image_embed_port"],
     text_model_name=data["text_model_name"],
     image_model_name=data["image_model_name"],
+    text_api_key_env=data["text_api_key_env"],
+    image_api_key_env=data["image_api_key_env"],
+    image_enabled=data["image_enabled"],
     db_port=data["db_port"],
     db_name=data["db_name"],
     sim_threshold=data["sim_threshold"],
     text_collection=data["text_collection"],
-    image_collection=data["image_collection"]
+    image_collection=data["image_collection"],
+    filter_capabilities=capabilities.filters,
+    catalog_size=snapshot.product_count,
+    product_id_field=snapshot.schema.record.product_id,
+    name_field=snapshot.schema.record.name,
+    description_field=snapshot.schema.record.description,
+    fallback_description_field=snapshot.schema.record.fallback_description,
+    image_field=snapshot.schema.record.image,
+    price_field=snapshot.schema.record.price,
+    taxonomy_fields=snapshot.schema.taxonomy.fields,
+    detail_fields=snapshot.schema.detail_fields,
+    vector_index=vector_index,
 )
 
 logging.info("CATALOG RETRIEVER | startup | config.yaml ingested.")
 logging.info("CATALOG RETRIEVER | startup | Initializing Retriever object.")
 retriever = Retriever(config=config)
-logging.info("CATALOG RETRIEVER | startup | Checking and populating Milvus database if needed.")
-retriever.milvus_from_csv(csv_path=data["data_source"], verbose=True)
-logging.info("CATALOG RETRIEVER | startup | Milvus database ready.")
+
+# A serving pod never builds the index. Building starts by dropping the
+# collection, so it is the one operation here that must happen exactly once, and
+# a pod cannot know whether it is the only one doing it. There is no flag for
+# this and deliberately no second code path: a switch that lets a pod index
+# would be the error-prone case, and it would only ever be wrong in the
+# deployment that has more than one.
+#
+# `python -m app.index_catalog` is what builds, run once before the pods that
+# read it -- a Job in Kubernetes, a run-once service in compose. Until it has,
+# this pod is alive and unready, which is exactly what it is.
+logging.info(
+    "CATALOG RETRIEVER | startup | Serving only; the index is built by "
+    "`python -m app.index_catalog` as a deployment step."
+)
+retriever.describe_snapshot(snapshot)
+
+
+#: `matches_catalog` flushes the collection, which is too expensive to do on
+#: every probe, and the answer only ever changes once: the index a pod is
+#: waiting for either arrives or the pod is replaced when the catalog changes.
+#: So the positive answer is cached and never asked again.
+_index_ready = False
+
+
+def index_is_ready() -> bool:
+    """Whether Milvus holds the index for the catalog this pod loaded."""
+
+    global _index_ready
+    if _index_ready:
+        return True
+    try:
+        _index_ready = retriever.matches_snapshot(snapshot)
+    except Exception as exc:  # pragma: no cover - Milvus may still be starting
+        logging.warning("CATALOG RETRIEVER | readiness | index check failed: %s", exc)
+        return False
+    return _index_ready
 
 # Request bodies
+
+#: Milvus's own ceiling on a search's top-k.
+MAX_CANDIDATE_K = 16384
+#: Products a search may be asked to leave out.
+MAX_EXCLUDE_IDS = 200
+
 class TextQueryRequest(BaseModel):
-    text: List[str] = []
-    categories: List[str] = []
-    filters: Dict[str, Any] = Field(default_factory=dict)
-    k: int = 4
+    model_config = ConfigDict(extra="forbid")
+
+    text: list[str] = Field(default_factory=list)
+    categories: list[str] = Field(default_factory=list)
+    filters: dict[str, Any] = Field(default_factory=dict)
+    k: int = Field(default=4, ge=1, le=50)
+    candidate_k: int | None = Field(default=None, ge=1, le=MAX_CANDIDATE_K)
+    exclude_ids: list[str] = Field(default_factory=list, max_length=MAX_EXCLUDE_IDS)
 
 class ImageQueryRequest(BaseModel):
-    text: List[str] = []
-    image_base64: str
-    categories: List[str] = []
-    filters: Dict[str, Any] = Field(default_factory=dict)
-    k: int = 4
+    model_config = ConfigDict(extra="forbid")
+
+    text: list[str] = Field(default_factory=list)
+    image_base64: str = ""
+    categories: list[str] = Field(default_factory=list)
+    filters: dict[str, Any] = Field(default_factory=dict)
+    k: int = Field(default=4, ge=1, le=50)
+    candidate_k: int | None = Field(default=None, ge=1, le=MAX_CANDIDATE_K)
+    exclude_ids: list[str] = Field(default_factory=list, max_length=MAX_EXCLUDE_IDS)
 
     @field_validator("image_base64")
     @classmethod
-    def validate_image_base64(cls, value: str) -> str:
-        return normalize_runtime_image_input(value)
+    def _image_not_a_url(cls, value: str) -> str:
+        if value.strip().lower().startswith(("http://", "https://")):
+            raise ValueError("image_base64 must be image data, not a URL")
+        return value
 
 # Handles queries only containing text.
 @app.post("/query/text")
 async def query_text(req: TextQueryRequest):
     logging.info(f"CATALOG RETRIEVER | query_text() | Received POST: {req}.")
-    texts, ids, sims, names, images = await retriever.retrieve(
-        query=req.text,
-        categories=req.categories,
-        filters=req.filters,
-        k=req.k,
-        image_bool=False,
-        verbose=True
-    )
+    try:
+        result = await retriever.retrieve(
+            query=req.text,
+            categories=req.categories,
+            filters=req.filters,
+            k=req.k,
+            candidate_k=req.candidate_k,
+            image_bool=False,
+            verbose=True,
+            exclude_ids=req.exclude_ids,
+        )
+    except CatalogFilterError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
-        "texts": texts,
-        "ids": ids,
-        "similarities": sims,
-        "names": names,
-        "images": images
+        "texts": result.texts,
+        "ids": result.ids,
+        "similarities": result.similarities,
+        "names": result.names,
+        "images": result.images,
+        "products": result.products,
+        "diagnostics": result.diagnostics,
+        "no_result_reason": result.no_result_reason,
+        "excluded_near_miss": result.excluded_near_miss,
     }
 
 # Handles queries containing text and b64 images.
 @app.post("/query/image")
 async def query_image(req: ImageQueryRequest):
-    logging.info(f"CATALOG RETRIEVER | query_image() | Received POST.")
-    texts, ids, sims, names, images = await retriever.retrieve(
-        query=req.text,
-        image=req.image_base64,
-        categories=req.categories,
-        filters=req.filters,
-        k=req.k,
-        image_bool=True,
-        verbose=True
-    )
+    logging.info("CATALOG RETRIEVER | query_image() | Received POST.")
+    try:
+        result = await retriever.retrieve(
+            query=req.text,
+            image=req.image_base64,
+            categories=req.categories,
+            filters=req.filters,
+            k=req.k,
+            candidate_k=req.candidate_k,
+            image_bool=True,
+            verbose=True,
+            exclude_ids=req.exclude_ids,
+        )
+    except CatalogFilterError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
-        "texts": texts,
-        "ids": ids,
-        "similarities": sims,
-        "names": names,
-        "images": images
+        "texts": result.texts,
+        "ids": result.ids,
+        "similarities": result.similarities,
+        "names": result.names,
+        "images": result.images,
+        "products": result.products,
+        "diagnostics": result.diagnostics,
+        "no_result_reason": result.no_result_reason,
+        "excluded_near_miss": result.excluded_near_miss,
     }
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness: has this pod got a catalog to answer from?
+
+    Indexing runs at import, before uvicorn binds the port, so a pod cannot
+    reach the point of answering this without having finished. That makes the
+    check cheap on purpose -- it reads the snapshot already in memory rather
+    than asking Milvus, because a probe that runs every ten seconds must not
+    flush a collection to answer.
+
+    It deliberately does not check the embedding service or any other
+    dependency. Readiness that fails on a dependency removes every pod at once,
+    which turns a partial outage into a total one.
+    """
+
+    if not snapshot.product_count:
+        raise HTTPException(status_code=503, detail="catalog snapshot is empty")
+    if not index_is_ready():
+        # The usual reason is that the indexing Job has not finished. Saying so
+        # keeps the pod out of rotation instead of serving empty searches, which
+        # is what it would otherwise do -- a search against a missing index
+        # returns no products rather than an error.
+        raise HTTPException(
+            status_code=503,
+            detail="catalog index is not built for this snapshot yet",
+        )
+    return {
+        "status": "ready",
+        "catalog_id": capabilities.catalog_id,
+        "products": snapshot.product_count,
+    }
+
 
 @app.get("/health")
 async def health_check():
@@ -158,3 +337,25 @@ async def health_check():
         "timestamp": time.time(),
         "version": "1.0.0"
     }
+
+
+@app.get("/capabilities")
+async def get_capabilities():
+    """Return catalog-owned search and filter capabilities."""
+    return capabilities.model_dump()
+
+
+@app.get("/products/{product_id}")
+async def get_product(product_id: str):
+    """Return deterministic details for one product, read from the index.
+
+    The index stores every field the catalog declares, so this does not need a
+    copy of the catalog in the process to answer. Shaped by the same
+    `build_product_detail` as the loader, so the response cannot drift from what
+    a snapshot read would have produced -- verified equal for every product.
+    """
+
+    record = retriever.product_record(product_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Product not found in active catalog")
+    return build_product_detail(record, snapshot.schema).model_dump(mode="json")

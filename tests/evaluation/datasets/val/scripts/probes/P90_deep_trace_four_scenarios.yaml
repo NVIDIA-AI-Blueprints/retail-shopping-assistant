@@ -1,0 +1,22 @@
+id: P90_deep_trace_four_scenarios
+covers: [catalog-search, product-reference, cart-management]
+why: >
+  A trace probe, not a pass/fail one. These four turns are the shapes we keep
+  re-debugging: a search with a taxonomy filter and a size, a comparison of
+  something shown a turn ago, a cart add naming no size, and an availability
+  question about the second of several. Recorded so the filter construction and
+  the reference resolution can be read rather than guessed at.
+
+  The wording is deliberately the shopper's, ambiguities included: "compare the
+  first" names one product for a two-sided verb, and "add the first one" names
+  no size. What the assistant does with each is the point.
+turns:
+  - say: find me green dresses in size 2
+    expect:
+      products_min: 1
+  - say: compare the first
+    expect: {}
+  - say: Add the first one to cart
+    expect: {}
+  - say: Is the second one available in Size 2
+    expect: {}

@@ -1,0 +1,43 @@
+---
+description: A failing test is a question about intended behaviour, not an instruction to change the code
+alwaysApply: true
+---
+
+# A failing test is a question, not an instruction
+
+Never edit production code to make a test pass. Decide first which of the two
+is wrong, and say which before changing either.
+
+## Establish before touching anything
+
+- Does the test still describe behaviour we want? Read its docstring and name.
+- Does it fail on `staging` too, or only here? Only here means this branch
+  caused it; on both means it was already broken.
+- Is a *sibling* test asserting the opposite? Two tests in tension mean the
+  code has to tell two situations apart, and neither test is simply wrong.
+
+## Then choose, out loud
+
+- **Real bug.** Fix the code. Say which shopper-visible behaviour was wrong.
+- **Stale test.** Update it, and say what contract replaced the old one.
+  A mechanism we deliberately removed is stale; the outcome it protected
+  usually is not.
+- **Neither.** The contract itself is undecided. Raise it rather than picking
+  whichever edit turns the suite green.
+
+## Deleting a test
+
+Count its assertions first. A test that fails on one stale assertion is often
+the only coverage for several live guarantees, and deleting it retires all of
+them. Prefer correcting its setup.
+
+## Worked example from this repo
+
+`test_compiled_agent_executes_capability_valid_repair` failed after refusals
+stopped inviting a repair. It would have been easy to restore the invitation
+and go green -- but a sibling,
+`test_the_uncarried_refusal_does_not_invite_a_wider_selection`, forbids exactly
+that, because inviting a retry is how one turn spent 22 refusals walking the
+subcategory enum. Both tests were right. The code had to distinguish a word the
+shop covers under other names ("shoes" -> flats, heels) from one it does not
+sell at all ("jeans"), which no test had asked it to do.

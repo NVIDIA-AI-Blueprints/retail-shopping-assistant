@@ -1,0 +1,13 @@
+id: P04_cart_quantity
+covers: [cart-management]
+why: >
+  One is what "add it" means; any more is a number the shopper chose. Quantity
+  had no provenance guard at all - the size at least had to be sold.
+turns:
+  - say: show me some sunglasses
+    expect:
+      products_min: 2
+  - say: add two of the Xenial Aviator Sunglasses
+    expect:
+      cart:
+        - {name: Xenial Aviator Sunglasses, qty: 2}

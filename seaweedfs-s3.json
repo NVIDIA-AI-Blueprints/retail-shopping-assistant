@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "milvus",
+      "credentials": [
+        {
+          "accessKey": "seaweedfsadmin",
+          "secretKey": "seaweedfsadmin"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

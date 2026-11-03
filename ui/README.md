@@ -28,7 +28,7 @@ src/
 ├── utils/
 │   └── index.ts                 # Utility functions
 ├── hooks/
-│   └── useChat.ts               # Custom chat hook (WIP)
+│   └── useChat.ts               # Custom chat hook
 └── assets/                      # Static assets
 ```
 
@@ -37,7 +37,7 @@ src/
 - **Type Safety**: Full TypeScript implementation with proper type definitions
 - **Configuration Management**: Centralized config for easy customization
 - **Error Handling**: Comprehensive error handling with user feedback
-- **Image Upload**: Secure image upload with validation
+- **Media Upload**: Capability-driven image upload and optional video upload with validation
 - **Real-time Streaming**: Live message streaming from the backend
 - **Responsive Design**: Mobile-friendly interface
 - **Accessibility**: ARIA labels and semantic HTML
@@ -46,8 +46,8 @@ src/
 
 ### Prerequisites
 
-- Node.js 16+
-- npm or yarn
+- Node.js 22.12+
+- npm
 
 ### Setup
 
@@ -68,9 +68,10 @@ src/
 
 ### Available Scripts
 
-- `npm start` - Start development server
+- `npm start` - Start the Vite dev server on port 3000, proxying `/api` to `ORCHESTRATOR_URL` (default `http://localhost:8009`)
 - `npm run build` - Build for production
-- `npm test` - Run tests
+- `npm test` - Run tests (Vitest)
+- `npm run preview` - Serve the production build locally
 - `npm run lint` - Run ESLint
 - `npm run lint:fix` - Fix ESLint issues
 - `npm run format` - Format code with Prettier
@@ -81,7 +82,7 @@ The application uses a centralized configuration system in `src/config/config.ts
 
 - **API Settings**: Backend URLs and endpoints
 - **UI Settings**: Default images, categories, and styling
-- **Feature Flags**: Enable/disable features like guardrails and image upload
+- **Feature Flags**: Enable/disable features like guardrails and media upload
 - **File Upload**: Size limits and allowed file types
 
 ## Type Definitions
@@ -162,4 +163,4 @@ Enable debug logging by setting `NODE_ENV=development` in your environment.
 
 ## License
 
-Apache 2.0 License - see LICENSE file for details. 
+Apache 2.0 License - see LICENSE file for details.

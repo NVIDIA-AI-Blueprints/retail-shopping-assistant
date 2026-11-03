@@ -1,0 +1,781 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Two-phase shopper-skill activation for the Deep Agents runtime."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from threading import Lock
+from typing import Any
+
+from langchain.agents.middleware.types import (
+    AgentMiddleware,
+    ModelRequest,
+    ModelResponse,
+)
+from langchain_core.messages import (
+    AIMessage,
+    ContentBlock,
+    SystemMessage,
+    ToolMessage,
+)
+from langgraph.prebuilt.tool_node import ToolCallRequest
+
+from .policy import (
+    SHOPPING_TOOL_POLICIES,
+    granted_tools_for_skills,
+    tool_is_granted,
+    validate_skill_tool_grants,
+)
+
+SKILL_ACTIVATION_TOOL_NAME = "activate_shopper_skills_tool"
+SKILL_ACTIVATION_COMPLETE = "SHOPPER_SKILL_ACTIVATION_COMPLETE:"
+SKILL_ACTIVATION_INVALID = "SHOPPER_SKILL_ACTIVATION_INVALID:"
+SKILL_ACTIVATION_CLARIFICATION_REQUIRED = (
+    "SHOPPER_SKILL_ACTIVATION_CLARIFICATION_REQUIRED:"
+)
+SKILL_ACTIVATION_MULTIPLE_PRIMARY = "multiple_primary_procedures"
+SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY = "modifier_requires_primary"
+SKILL_ACTIVATION_REQUIRED = (
+    "SKILL_ACTIVATION_REQUIRED: Shopper skills must be selected and loaded "
+    "before any shopping tool can run. Retry after activation completes."
+)
+#: Kept as the prefix of every not-granted message, because four readers
+#: recognise the outcome by it.
+#: Selections allowed in one turn. One to open it, and room to correct the
+#: opening when the shopper turns out to want something else.
+_MAX_TURN_ACTIVATIONS = 3
+
+SKILL_TOOL_NOT_GRANTED = (
+    "SHOPPER_SKILL_TOOL_NOT_GRANTED: The active shopper skills do not grant "
+    "this tool."
+)
+
+
+def _tool_not_granted(tool_name: str, selected_skills: Sequence[str]) -> str:
+    """Say which skill grants the tool, and that asking for it is allowed.
+
+    Telling the model to carry on without the tool forbids the one recovery
+    that works, and invites a reply claiming the call succeeded.
+
+    The skill that grants the tool is known here, so the message names it. The
+    last line matters as much as the first: a refused call is not a thing that
+    happened, and the reply is written by the same model that reads this.
+    """
+
+    granting = sorted(
+        SHOPPING_TOOL_POLICIES[tool_name].allowed_skills_any_of
+    )
+    active = ", ".join(sorted(selected_skills)) or "none"
+    return (
+        f"{SKILL_TOOL_NOT_GRANTED} '{tool_name}' is granted by "
+        f"{' or '.join(granting)}; this turn activated {active}. If the "
+        "shopper asked for what this tool does, call "
+        f"{SKILL_ACTIVATION_TOOL_NAME} again with the skill that grants it, "
+        "keeping the primary procedure you already selected if it still "
+        "applies, and then call the tool again. Nothing has been done yet: do "
+        "not tell the shopper it has."
+    )
+
+
+def _cart_change_not_requested(tool_name: str, opening_skills: Sequence[str]) -> str:
+    """Refuse a cart change the turn did not open by asking for.
+
+    Unlike a tool that is merely not granted, re-activating is not the
+    recovery: the turn's first selection is read from the shopper's words
+    before any tool result, and a later one is not. So the message closes that
+    path and names the one that is honest, offering what the turn found.
+    """
+
+    opening = ", ".join(sorted(opening_skills)) or "none"
+    return (
+        f"{SKILL_TOOL_NOT_GRANTED} '{tool_name}' changes the cart, and a cart "
+        "change runs only on a turn that opened with a skill granting it, "
+        f"chosen from what the shopper asked. This turn opened with {opening}, "
+        "so the call was not run and the cart is unchanged. Do not activate "
+        "skills again to retry it, and do not tell the shopper it was done: "
+        "recommend the items and offer to add them."
+    )
+
+
+class ShopperSkillActivationError(RuntimeError):
+    """Raised when a turn tries to finish before required skill activation."""
+
+
+class SpeculativeToolExecutionBlocked(RuntimeError):
+    """Raised when speculative agent work reaches a tool before input approval."""
+
+
+class InputGuardrailToolGate:
+    """Keep every tool behind the input-guardrail decision.
+
+    The speculative path may run the first model step while input guardrails are
+    still pending. Deep Agents must execute the activation tool before it can
+    take a second model step, so gating all tools bounds ordinary speculative
+    work to that first model request. A denied gate never calls the wrapped
+    handler, including for activation, catalog, and cart tools.
+    """
+
+    def __init__(self) -> None:
+        self._decision = "pending"
+        self._ready = asyncio.Event()
+
+    def allow(self) -> None:
+        if self._decision == "pending":
+            self._decision = "allow"
+            self._ready.set()
+
+    def deny(self) -> None:
+        if self._decision == "pending":
+            self._decision = "deny"
+            self._ready.set()
+
+    async def wait(self) -> None:
+        await self._ready.wait()
+        if self._decision != "allow":
+            raise SpeculativeToolExecutionBlocked(
+                "Input guardrails did not approve tool execution."
+            )
+
+    def require_allowed(self) -> None:
+        if self._decision != "allow":
+            raise SpeculativeToolExecutionBlocked(
+                "Input guardrails have not approved tool execution."
+            )
+
+
+_ACTIVATION_PROMPT = f"""## Required Shopper Skill Selection
+
+Before answering this turn or using any shopping tool, call
+`{SKILL_ACTIVATION_TOOL_NAME}` exactly once. Select the smallest set of
+registered skills that fully covers the shopper's current intent. Use the
+registered descriptions below and the full conversation context; this is
+semantic selection, not keyword matching. Do not attempt another tool in the
+same response. The runtime will load the complete selected instructions before
+the next model step. Read every registered description before choosing: the
+right primary is the one whose description names what this turn is actually
+asking for, not the one you reached for last time. Keep the primary procedure
+aligned with the active conversation task -- an outfit-building or styling
+thread continues with the styling procedure for piece-by-piece searches until
+the shopper changes tasks. Do not switch procedures merely because the current
+turn asks for one product type; a terse item-only follow-up does not by itself
+end an active outfit task. Do not mention this activation step or skill names
+to the shopper."""
+
+_ACTIVATION_FAILED_PROMPT = """## Shopper Skill Activation Failed
+
+Shopper skill instructions could not be loaded for this turn, so no shopping
+tools are available. Tell the shopper that the assistant cannot complete the
+request right now and ask them to try again. Do not invent catalog, cart,
+policy, or availability information."""
+
+
+class ShopperSkillActivationMiddleware(AgentMiddleware):
+    """Require selected skill content before exposing or executing tools."""
+
+    def __init__(
+        self,
+        *,
+        request_id: str,
+        skill_descriptions: Mapping[str, str],
+        skill_tool_grants: Mapping[str, Collection[str]],
+        previous_selected_skills: Collection[str] = (),
+        granted_tool_context: Mapping[str, str] | None = None,
+        spent_tool_context: Callable[[], Collection[str]] | None = None,
+        widen_for_tool: (
+            Callable[
+                [str, Collection[str]],
+                tuple[Sequence[str], Mapping[str, str]] | None,
+            ]
+            | None
+        ) = None,
+        activation_system_prompt: str = "",
+        input_guardrail_tool_gate: InputGuardrailToolGate | None = None,
+    ) -> None:
+        self._request_id = request_id
+        self._skill_descriptions = dict(skill_descriptions)
+        self._granted_tool_context = dict(granted_tool_context or {})
+        # Read at each model call rather than at construction: what a turn can
+        # still act on changes as the turn runs, and the answer is only correct
+        # for the request being prepared.
+        self._spent_tool_context = spent_tool_context or (lambda: ())
+        # Which skill grants a tool, and whether adding it to this selection
+        # is a legal selection, is answered where the registry and the
+        # selection model live. This asks the question; it does not answer it.
+        self._widen_for_tool = widen_for_tool or (lambda _tool, _selected: None)
+        self._activation_system_prompt = activation_system_prompt
+        self._skill_tool_grants = {
+            name: frozenset(tool_names)
+            for name, tool_names in skill_tool_grants.items()
+        }
+        validate_skill_tool_grants(self._skill_tool_grants)
+        self._status = "pending"
+        self._skill_files: dict[str, str] = {}
+        self._selected_skills: frozenset[str] = frozenset()
+        # The selection made from the shopper's words alone, before any tool
+        # result is in the context. Only it can authorise a cart change.
+        self._opening_skills: frozenset[str] = frozenset()
+        self._granted_tools: frozenset[str] = frozenset()
+        self._activation_validation_failures = 0
+        self._activations = 0
+        self._clarification_response = ""
+        self._previous_selected_skills = tuple(
+            dict.fromkeys(
+                name
+                for name in previous_selected_skills
+                if name in self._skill_descriptions
+            )
+        )
+        self._input_guardrail_tool_gate = input_guardrail_tool_gate
+        self._lock = Lock()
+
+    def activate(
+        self,
+        skill_files: Mapping[str, str],
+        selected_skills: Collection[str],
+    ) -> bool:
+        """Store complete selected skill files for later model steps."""
+
+        if not skill_files or any(
+            not content.strip() for content in skill_files.values()
+        ):
+            raise ValueError("Activated skill files must contain instructions.")
+        selected = frozenset(selected_skills)
+        if not selected:
+            raise ValueError("At least one shopper skill must be selected.")
+        granted_tools = granted_tools_for_skills(
+            selected,
+            self._skill_tool_grants,
+        )
+        with self._lock:
+            # A later call replaces the selection and re-grants through the
+            # same validation, so an early selection stays correctable. The cap
+            # stops a model from spinning; past it the answer is an honest no.
+            if self._status not in {"pending", "active"}:
+                return False
+            if self._activations >= _MAX_TURN_ACTIVATIONS:
+                return False
+            self._skill_files = dict(skill_files)
+            self._selected_skills = selected
+            if self._activations == 0:
+                self._opening_skills = selected
+            self._granted_tools = granted_tools
+            self._status = "active"
+            self._activations += 1
+        return True
+
+    def fail(self) -> None:
+        """Fail closed when selected skill instructions cannot be loaded."""
+
+        with self._lock:
+            if self._status == "pending":
+                self._status = "failed"
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        """Apply the activation phase to a synchronous model request."""
+
+        clarification = self._clarification_model_response()
+        if clarification is not None:
+            return clarification
+        response = handler(self._prepare_model_request(request))
+        return self._validate_model_response(response)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        """Apply the activation phase to an asynchronous model request."""
+
+        clarification = self._clarification_model_response()
+        if clarification is not None:
+            return clarification
+        response = await handler(self._prepare_model_request(request))
+        return self._validate_model_response(response)
+
+    def handle_activation_validation_error(self, error: Any) -> str:
+        """Return bounded model feedback for an invalid skill selection."""
+
+        issue = _activation_validation_issue(error)
+        feedback = _activation_validation_feedback(error, issue)
+        with self._lock:
+            if self._status != "pending":
+                return f"{SKILL_ACTIVATION_INVALID} {feedback}"
+            self._activation_validation_failures += 1
+            if self._activation_validation_failures == 1:
+                return (
+                    f"{SKILL_ACTIVATION_INVALID} Retry the activation once "
+                    f"with a valid skill set: {feedback}"
+                )
+            self._status = "clarification"
+            self._clarification_response = _activation_clarification(issue)
+        return (
+            f"{SKILL_ACTIVATION_CLARIFICATION_REQUIRED} {feedback} "
+            "No shopping tool was run."
+        )
+
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Any],
+    ) -> Any:
+        """Reject a synchronous shopping call without prior activation."""
+
+        if self._input_guardrail_tool_gate is not None:
+            self._input_guardrail_tool_gate.require_allowed()
+
+        rejection = self._tool_call_rejection(request)
+        if rejection is None:
+            return handler(request)
+        return _tool_rejection_message(request, rejection)
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[Any]],
+    ) -> Any:
+        """Reject an asynchronous shopping call without prior activation."""
+
+        if self._input_guardrail_tool_gate is not None:
+            await self._input_guardrail_tool_gate.wait()
+
+        rejection = self._tool_call_rejection(request)
+        if rejection is None:
+            return await handler(request)
+        return _tool_rejection_message(request, rejection)
+
+    def _prepare_model_request(self, request: ModelRequest) -> ModelRequest:
+        with self._lock:
+            status = self._status
+            skill_files = dict(self._skill_files)
+            selected_skills = self._selected_skills
+            granted_tools = self._granted_tools
+        if status == "active":
+            tools = [
+                candidate
+                for candidate in request.tools
+                if _tool_is_visible(
+                    _tool_name(candidate),
+                    selected_skills,
+                    granted_tools,
+                )
+            ]
+            tool_choice = request.tool_choice
+            if isinstance(tool_choice, str) and not _tool_is_visible(
+                tool_choice,
+                selected_skills,
+                granted_tools,
+            ):
+                tool_choice = None
+            return request.override(
+                tools=tools,
+                tool_choice=tool_choice,
+                model_settings={
+                    **request.model_settings,
+                    "parallel_tool_calls": False,
+                },
+                system_message=_append_system_text(
+                    request.system_message,
+                    self._active_turn_prompt(skill_files, granted_tools),
+                ),
+            )
+        if status == "failed":
+            return request.override(
+                tools=[],
+                tool_choice=None,
+                system_message=_append_system_text(
+                    request.system_message,
+                    _ACTIVATION_FAILED_PROMPT,
+                ),
+            )
+
+        activation_tools = [
+            candidate
+            for candidate in request.tools
+            if _tool_name(candidate) == SKILL_ACTIVATION_TOOL_NAME
+        ]
+        if len(activation_tools) != 1:
+            raise RuntimeError(
+                "Shopper skill activation tool is not registered exactly once."
+            )
+        return request.override(
+            tools=activation_tools,
+            tool_choice=SKILL_ACTIVATION_TOOL_NAME,
+            model_settings={**request.model_settings, "parallel_tool_calls": False},
+            system_message=_append_system_text(
+                self._carried_activation_system_message(),
+                _activation_prompt(
+                    self._skill_descriptions,
+                    previous_skills=self._previous_selected_skills,
+                ),
+            ),
+        )
+
+    def _carried_activation_system_message(self) -> SystemMessage | None:
+        """What the selection step keeps of the answering prompt: almost none.
+
+        This step is granted one tool and asked one question, and it reads the
+        shopper's words, their cart and the recent discussion from the user
+        message either way. The answering prompt -- how to ground a claim, how
+        to order tool calls, how to word a reply -- cannot change which skill
+        the question has, and it was the whole of this request: roughly four
+        thousand tokens read to emit a dozen.
+
+        What the answering prompt does carry that this step still needs is the
+        rule that fenced text is an observation, because the user message can
+        quote a model's words about a stranger's file. A step that reads it
+        without that rule is the one place a fence would stand unexplained, so
+        the caller passes the notice and nothing else.
+        """
+
+        carried = self._activation_system_prompt.strip()
+        return _append_system_text(None, carried) if carried else None
+
+    def _active_turn_prompt(
+        self,
+        skill_files: Mapping[str, str],
+        granted_tools: Collection[str],
+    ) -> str:
+        """The selected skills, behind the context only granted tools can use.
+
+        A request that was not granted a tool cannot call it, so that tool's
+        schema and rules are unreadable cost. The activation step is granted
+        nothing and paid for the catalog's every time; a cart read and a policy
+        question paid on every model call of the turn for a search they cannot
+        run.
+
+        Being granted a tool is necessary but not sufficient. A tool the turn
+        has finished with is still granted, and its instructions are as
+        unreadable then as an ungranted tool's -- the turn has been told not to
+        take the action they describe. `spent_tool_context` names those.
+        """
+
+        spent = frozenset(self._spent_tool_context())
+        sections = [
+            text
+            for name, text in self._granted_tool_context.items()
+            if name in granted_tools and name not in spent and text.strip()
+        ]
+        sections.append(_active_skills_prompt(skill_files))
+        return "\n\n".join(sections)
+
+    def _clarification_model_response(self) -> ModelResponse | None:
+        with self._lock:
+            if self._status != "clarification":
+                return None
+            clarification = self._clarification_response
+        return ModelResponse(result=[AIMessage(content=clarification)])
+
+    def _tool_call_rejection(self, request: ToolCallRequest) -> str | None:
+        tool_name = str(request.tool_call.get("name") or "")
+        if tool_name == SKILL_ACTIVATION_TOOL_NAME:
+            return None
+        if tool_name not in SHOPPING_TOOL_POLICIES:
+            return None
+        if not _has_current_turn_activation(request.state, self._request_id):
+            return SKILL_ACTIVATION_REQUIRED
+        with self._lock:
+            status = self._status
+            selected_skills = self._selected_skills
+            opening_skills = self._opening_skills
+            granted_tools = self._granted_tools
+        policy = SHOPPING_TOOL_POLICIES[tool_name]
+        if (
+            status == "active"
+            and policy.risk == "mutating"
+            and not policy.allows_any(opening_skills)
+        ):
+            return _cart_change_not_requested(tool_name, sorted(opening_skills))
+        if status != "active" or not tool_is_granted(
+            tool_name,
+            selected_skills,
+            granted_tools,
+        ):
+            if status == "active" and self._widen_to_grant(
+                tool_name,
+                selected_skills,
+            ):
+                return None
+            return _tool_not_granted(tool_name, selected_skills)
+        return None
+
+    def _widen_to_grant(
+        self,
+        tool_name: str,
+        selected_skills: Collection[str],
+    ) -> bool:
+        """Add the skill that grants this tool, rather than asking for it.
+
+        A turn selects its skills at its first token, and the prompt asks it
+        to keep the primary skill of the task it continues. So on turn seven of
+        a capsule, "add the Ombre Canvas Tote Bag" rightly keeps
+        `outfit-styling` -- but continuing a styling task says nothing about
+        whether the turn needs the cart. The granting skill is already known
+        here from `allowed_skills_any_of`, so asking the model to name it would
+        spend a model call on what the caller has computed.
+
+        So the call is its own request. A tool the turn was refused names the
+        skill that grants it, and if adding that skill is a legal selection it
+        is added and the call proceeds in the same step. Nothing is
+        negotiated, so there is no round to repeat.
+
+        What still refuses: a granting skill that would be a second primary in
+        one exclusive group, because the selection model rejects it and the
+        one-primary invariant is not this function's to break; a turn past the
+        activation cap, because `activate` refuses past it and a turn that
+        cannot find its tool should hear an honest no; and a tool outside the
+        policy table, which never reached here.
+        """
+
+        widened = self._widen_for_tool(tool_name, sorted(selected_skills))
+        if widened is None:
+            return False
+        names, files = widened
+        try:
+            return self.activate(dict(files), list(names))
+        except (KeyError, ValueError):
+            return False
+
+    def _validate_model_response(self, response: ModelResponse) -> ModelResponse:
+        with self._lock:
+            status = self._status
+        if status == "active":
+            shopping_calls = [
+                tool_call
+                for message in response.result
+                for tool_call in _value(message, "tool_calls") or []
+                if _value(tool_call, "name") in SHOPPING_TOOL_POLICIES
+            ]
+            if len(shopping_calls) > 1:
+                raise ShopperSkillActivationError(
+                    "The model requested multiple shopping tools in one step."
+                )
+            return response
+        if status != "pending":
+            return response
+
+        activation_calls = _activation_calls(response)
+        if not activation_calls:
+            raise ShopperSkillActivationError(
+                "The model did not complete required shopper skill activation."
+            )
+        if len(activation_calls) == 1:
+            return response
+
+        clarification = _activation_clarification("invalid_selection")
+        with self._lock:
+            self._status = "clarification"
+            self._clarification_response = clarification
+        return ModelResponse(result=[AIMessage(content=clarification)])
+
+
+def _active_skills_prompt(skill_files: Mapping[str, str]) -> str:
+    sections = [
+        "## Active Shopper Skills",
+        "The complete instructions below are mandatory for this turn. Apply them "
+        "before constructing tool arguments or the final response. They are already "
+        "loaded; do not read these SKILL.md files again or mention them to the shopper.",
+    ]
+    for path, content in skill_files.items():
+        sections.extend((f"### {path}", content.strip()))
+    return "\n\n".join(sections)
+
+
+def _activation_prompt(
+    skill_descriptions: Mapping[str, str],
+    *,
+    previous_skills: tuple[str, ...] = (),
+) -> str:
+    lines = [_ACTIVATION_PROMPT, "", "Registered shopper skills:"]
+    lines.extend(
+        f"- {name}: {description}" for name, description in skill_descriptions.items()
+    )
+    if previous_skills:
+        lines.extend(
+            (
+                "",
+                "Previous turn's selected shopper skills: "
+                + ", ".join(previous_skills)
+                + ". Keep the same primary skill when the current request "
+                "continues that task; change it only when the shopper changes "
+                "tasks.",
+            )
+        )
+    return "\n".join(lines)
+
+
+def selected_skill_names_for_turn(
+    messages: list[Any],
+    request_id: str,
+) -> tuple[str, ...]:
+    """Return skills whose activation completed in the current turn."""
+
+    marker = f"REQUEST ID: {request_id}"
+    current_turn_start: int | None = None
+    for index, message in enumerate(messages):
+        if _message_type(message) == "human" and marker in _message_text(message):
+            current_turn_start = index
+    if current_turn_start is None:
+        return ()
+    turn_messages = messages[current_turn_start:]
+    completed_call_ids = {
+        str(_value(message, "tool_call_id") or "")
+        for message in turn_messages
+        if _message_type(message) == "tool"
+        and _value(message, "name") == SKILL_ACTIVATION_TOOL_NAME
+        and _message_text(message).startswith(SKILL_ACTIVATION_COMPLETE)
+    }
+    for message in turn_messages:
+        if _message_type(message) != "ai":
+            continue
+        for tool_call in _value(message, "tool_calls") or []:
+            if _value(tool_call, "name") != SKILL_ACTIVATION_TOOL_NAME:
+                continue
+            if str(_value(tool_call, "id") or "") not in completed_call_ids:
+                continue
+            arguments = _value(tool_call, "args") or {}
+            names = _value(arguments, "skill_names") or []
+            return tuple(
+                name
+                for name in names
+                if isinstance(name, str) and name.strip()
+            )
+    return ()
+
+
+def _tool_rejection_message(
+    request: ToolCallRequest,
+    content: str,
+) -> ToolMessage:
+    return ToolMessage(
+        content=content,
+        name=str(request.tool_call.get("name") or "unknown"),
+        tool_call_id=str(request.tool_call.get("id") or ""),
+    )
+
+
+def _activation_calls(response: ModelResponse) -> list[Any]:
+    return [
+        tool_call
+        for message in response.result
+        for tool_call in _value(message, "tool_calls") or []
+        if _value(tool_call, "name") == SKILL_ACTIVATION_TOOL_NAME
+    ]
+
+
+def _activation_validation_issue(error: Any) -> str:
+    errors = error.errors() if callable(getattr(error, "errors", None)) else []
+    for detail in errors:
+        issue = str(_value(detail, "type") or "")
+        if issue in {
+            SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY,
+            SKILL_ACTIVATION_MULTIPLE_PRIMARY,
+        }:
+            return issue
+    return "invalid_selection"
+
+
+def _activation_validation_feedback(error: Any, issue: str) -> str:
+    """Relay the validator's own message rather than restating the rule.
+
+    The validator already names the skills it actually rejected; a second copy
+    of the rule here would go stale when a skill is registered.
+    """
+
+    errors = error.errors() if callable(getattr(error, "errors", None)) else []
+    for detail in errors:
+        if str(_value(detail, "type") or "") != issue:
+            continue
+        message = str(_value(detail, "msg") or "").strip()
+        if message:
+            message = message.removeprefix("Value error, ").strip()
+        if message:
+            return message if message.endswith(".") else f"{message}."
+    return "The selected shopper-skill combination is invalid."
+
+
+def _activation_clarification(issue: str) -> str:
+    if issue == SKILL_ACTIVATION_MODIFIER_REQUIRES_PRIMARY:
+        return "What product or outfit would you like to find within your budget?"
+    return "What product or shopping task would you like help with?"
+
+
+def _has_current_turn_activation(state: Any, request_id: str) -> bool:
+    messages = _state_messages(state)
+    marker = f"REQUEST ID: {request_id}"
+    start = len(messages)
+    for index, message in enumerate(messages):
+        if _message_type(message) == "human" and marker in _message_text(message):
+            start = index + 1
+    for message in messages[start:]:
+        if _message_type(message) != "tool":
+            continue
+        if _value(message, "name") != SKILL_ACTIVATION_TOOL_NAME:
+            continue
+        if _value(message, "status") == "error":
+            continue
+        if _message_text(message).startswith(SKILL_ACTIVATION_COMPLETE):
+            return True
+    return False
+
+
+def _append_system_text(
+    system_message: SystemMessage | None,
+    text: str,
+) -> SystemMessage:
+    content: list[ContentBlock] = (
+        list(system_message.content_blocks) if system_message else []
+    )
+    if content:
+        text = f"\n\n{text}"
+    content.append({"type": "text", "text": text})
+    return SystemMessage(content_blocks=content)
+
+
+def _state_messages(state: Any) -> list[Any]:
+    messages = _value(state, "messages") or []
+    return messages if isinstance(messages, list) else []
+
+
+def _message_type(message: Any) -> str:
+    return str(_value(message, "type") or _value(message, "role") or "").lower()
+
+
+def _message_text(message: Any) -> str:
+    content = _value(message, "content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            str(_value(block, "text") or "") for block in content
+        ).strip()
+    return str(content or "")
+
+
+def _tool_name(candidate: Any) -> str:
+    if isinstance(candidate, dict):
+        function = candidate.get("function") or {}
+        return str(candidate.get("name") or function.get("name") or "")
+    return str(getattr(candidate, "name", ""))
+
+
+def _tool_is_visible(
+    tool_name: str,
+    selected_skills: Collection[str],
+    granted_tools: Collection[str],
+) -> bool:
+    if tool_name == SKILL_ACTIVATION_TOOL_NAME:
+        return False
+    return tool_is_granted(tool_name, selected_skills, granted_tools)
+
+
+def _value(value: Any, name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)

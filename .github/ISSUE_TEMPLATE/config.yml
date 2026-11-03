@@ -7,5 +7,5 @@ blank_issues_enabled: true
 # link that below to have it show up in the 'Submit Issue' page
 contact_links:
   - name: Ask a Question
-    url: https://github.com/jarmak-nv/rapids-repo-template/discussions
+    url: https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/discussions
     about: Please ask any questions here.

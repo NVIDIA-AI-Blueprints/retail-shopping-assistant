@@ -1,0 +1,16 @@
+id: P29_a_size_belongs_to_what_it_was_given_for
+covers: [sizes, discovery, honesty]
+why: >
+  A shopper sizes one thing and not another. Measured across recorded turns, a
+  size given for one product family was spread to another in a third of
+  multi-role searches -- and on this exact phrasing, in every attempt. Footwear
+  is sold in 5-9, so a dress's size 2 on the shoes scope can only return
+  nothing, and the miss is then reported as though the shop had no shoes.
+
+  Asserted on what the turn asked the catalog for, because the request is where
+  the defect is: the empty result is only its symptom.
+turns:
+  - say: Cancun wedding next week, need a dress in size 2 and shoes
+    expect:
+      unsized_scopes: [shoe]
+      products_min: 1

@@ -1,0 +1,23 @@
+id: J24_no_product_type
+covers: [product-discovery, typeless-scope, colour, honesty]
+why: >
+  Three requests that name no product noun. "Something nice" gives nothing to
+  search on and is a question to ask. A price and a colour are each a complete
+  scope on their own, and both should be answered with breadth rather than one
+  department presented as the shop.
+turns:
+  # Nothing to search by: no type, no filter, no taxonomy. The useful answer is
+  # one question that names what the shop actually sells, not a search.
+  - say: I'm looking for something nice
+    expect: {}
+  # A colour is a filter and every department is in scope. The catalog lists
+  # blue, so no substitution is involved -- this is the clean case.
+  - say: show me blue things
+    expect: {products_min: 1}
+  # An unlisted colour word. The catalog does not stock "teal" as a value, so
+  # the reply has to say which colour it actually searched.
+  - say: what about teal
+    expect: {}
+  # A price ceiling, no product type. Same shape as the colour above.
+  - say: actually just show me anything under $50
+    expect: {products_min: 1}

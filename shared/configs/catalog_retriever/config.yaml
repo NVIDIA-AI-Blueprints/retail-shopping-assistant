@@ -1,11 +1,24 @@
-text_embed_port: "http://embedqa:8000/v1"
-text_model_name: "nvidia/nemotron-3-embed-1b" 
-image_embed_port: "http://nvclip:8000/v1"
-image_model_name: "nvidia/nvclip"
 db_port: "http://milvus:19530" 
 db_name: "shopping_advisor_db"
-sim_threshold: 0.5
+catalog_id: "fashion_products"
+sim_threshold: 0.3
 text_collection: "shopping_advisor_text_db"
 image_collection: "shopping_advisor_image_db"
-#data_source: "/app/shared/data/products.csv"
-data_source: "/app/shared/data/products_extended.csv"
+# The one place this default is declared. CATALOG_IMAGE_EMBEDDING_ENABLED
+# overrides it when set to a non-empty value; compose and the env profiles pass
+# that variable through without supplying a competing default of their own.
+# On, indexing also embeds every product image and needs a reachable
+# image_embedding endpoint.
+image_embedding_enabled: false
+# The vector index both collections use, declared once here.
+# CATALOG_VECTOR_INDEX_TYPE and CATALOG_GPU_SEARCH override type and
+# gpu_search when set to a non-empty value. AUTOINDEX runs on the CPU Milvus
+# image. GPU_CAGRA needs the -gpu image; with gpu_search false the GPU builds
+# the index and the CPU searches it. Changing either changes the catalog
+# fingerprint, so the indexer rebuilds. See docs/VECTOR_SEARCH.md.
+vector_index:
+  type: "AUTOINDEX"
+  gpu_search: false
+  ef: 100
+data_source: "/app/shared/data/enriched_products.jsonl"
+schema_source: "/app/shared/data/enriched_products.schema.yaml"

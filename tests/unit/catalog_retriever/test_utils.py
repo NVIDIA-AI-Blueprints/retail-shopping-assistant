@@ -14,22 +14,17 @@ from __future__ import annotations
 import base64
 import io
 from typing import Any
-from unittest.mock import patch
 
 import pytest
-from PIL import Image
-
 from catalog_retriever.src import utils as utils_mod
 from catalog_retriever.src.utils import (
     image_path_to_base64,
-    image_to_base64,
     image_url_to_base64,
     is_path,
     is_url,
-    normalize_runtime_image_input,
     resize_base64_image,
 )
-
+from PIL import Image
 
 # --------------------------------------------------------------------------->
 # Helpers
@@ -87,43 +82,6 @@ class TestIsPath:
         assert is_path(value) is expected
 
 
-class TestNormalizeRuntimeImageInput:
-    def test_accepts_image_data_uri(self) -> None:
-        payload = base64.b64encode(_build_png_bytes()).decode()
-        value = f"data:image/png;base64,{payload}"
-
-        assert normalize_runtime_image_input(value) == value
-
-    def test_normalizes_raw_base64(self) -> None:
-        payload = base64.b64encode(_build_jpeg_bytes()).decode()
-
-        assert normalize_runtime_image_input(payload) == (
-            f"data:image/jpeg;base64,{payload}"
-        )
-
-    def test_preserves_raw_image_format(self) -> None:
-        payload = base64.b64encode(_build_png_bytes()).decode()
-
-        assert normalize_runtime_image_input(payload) == (
-            f"data:image/png;base64,{payload}"
-        )
-
-    @pytest.mark.parametrize(
-        "value",
-        [
-            "http://169.254.169.254/latest/meta-data/",
-            "https://example.com/image.jpg",
-            "/etc/passwd",
-            "not base64 image data",
-            "data:text/plain;base64,SGVsbG8=",
-            "",
-        ],
-    )
-    def test_rejects_non_image_sources(self, value: str) -> None:
-        with pytest.raises(ValueError, match="image_base64"):
-            normalize_runtime_image_input(value)
-
-
 # --------------------------------------------------------------------------->
 # image_path_to_base64
 # --------------------------------------------------------------------------->
@@ -135,6 +93,7 @@ class TestImagePathToBase64:
     ) -> None:
         # The function hardcodes the ``/app/shared/`` prefix, so patch
         # ``open`` to redirect the path lookup to our temp file.
+        monkeypatch.setenv("SHARED_ROOT", "/app/shared")
         img_bytes = _build_jpeg_bytes()
         expected_path = "/app/shared/img.jpg"
         real_path = tmp_path / "img.jpg"
@@ -162,6 +121,7 @@ class TestImagePathToBase64:
     def test_returns_none_when_encoded_exceeds_limit(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv("SHARED_ROOT", "/app/shared")
         img_bytes = _build_jpeg_bytes(size=(32, 32))
         real_path = tmp_path / "small.jpg"
         real_path.write_bytes(img_bytes)
@@ -178,6 +138,29 @@ class TestImagePathToBase64:
         result = image_path_to_base64("small.jpg", max_b64_length=50)
 
         assert result is None
+
+    @pytest.mark.parametrize("escape", ["/../outside.jpg", "/images/../../outside.jpg"])
+    def test_refuses_paths_outside_the_shared_root(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch, escape: str
+    ) -> None:
+        shared = tmp_path / "shared"
+        (shared / "images").mkdir(parents=True)
+        (tmp_path / "outside.jpg").write_bytes(_build_jpeg_bytes())
+        monkeypatch.setenv("SHARED_ROOT", str(shared))
+
+        with pytest.raises(ValueError, match="outside"):
+            image_path_to_base64(escape)
+
+    def test_follows_a_path_that_stays_inside(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "images").mkdir()
+        (tmp_path / "images" / "a.jpg").write_bytes(_build_jpeg_bytes())
+        monkeypatch.setenv("SHARED_ROOT", str(tmp_path))
+
+        assert image_path_to_base64("/images/../images/a.jpg").startswith(
+            "data:image/jpeg;base64,"
+        )
 
 
 # --------------------------------------------------------------------------->
@@ -253,23 +236,6 @@ class TestImageUrlToBase64:
             image_url_to_base64("http://example.com/a.jpg", max_b64_length=10)
             is None
         )
-
-
-# --------------------------------------------------------------------------->
-# image_to_base64 (raw PIL input)
-# --------------------------------------------------------------------------->
-
-
-class TestImageToBase64:
-    def test_roundtrips_pil_image(self) -> None:
-        img = Image.new("RGB", (16, 16), color="green")
-        result = image_to_base64(img)
-
-        assert result.startswith("data:image/jpeg;base64,")
-        _, b64 = result.split(",", 1)
-        decoded = base64.b64decode(b64)
-        recovered = Image.open(io.BytesIO(decoded))
-        assert recovered.format == "JPEG"
 
 
 # --------------------------------------------------------------------------->

@@ -10,13 +10,13 @@ Their documentation is very good, and for a less opinionated overview we recomme
 Project Leads | Community | Developers
 
 ### See also
-- [Issues](maintainers/work-management/issues.md)
-- [Pull Requests]({maintainers/work-management/prs.md)
-- [Triage](maintainers/work-management/issue_triage.md)
+- [Issues](REF-issues.md)
+- [Pull Requests](REF-prs.md)
+- [Triage](REF-issue_triage.md)
 
 ## Accessing the project
 
-The project can be accessed in multiple ways by clicking on the `Projects` tab within the repo and then selecting the project. It is also linked in the [readme](README.md)
+The project can be accessed in multiple ways by clicking on the `Projects` tab within the repo and then selecting the project. It is also linked in the [readme](../../README.md)
 
 ## Project Setup
 To Projects, we add the following custom fields:

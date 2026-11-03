@@ -1,0 +1,11 @@
+id: P09_image_find_similar
+covers: [media, discovery]
+why: >
+  What the camera conveyed becomes search terms. It is the model's reading of
+  a picture, not the shopper speaking and not a catalog fact - attributes it
+  saw must not be asserted as things the catalog confirmed.
+turns:
+  - say: I like this, can you find me something similar
+    attach: Black_dress.jpeg
+    expect:
+      products_min: 1

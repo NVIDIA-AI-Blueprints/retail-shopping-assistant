@@ -1,0 +1,23 @@
+id: P07_cart_size_required
+covers: [cart-management, sizes]
+why: >
+  A sized product cannot enter the cart without a size, and the size must come
+  from the shopper. "Add the dress" once put a size 6 in a cart nobody asked
+  for, and the shopper left with three dresses.
+
+  Named Jade Suede Heels, not Polished Pearl Pumps: this catalog gives that
+  second name to two products, so the assistant is right to ask which one and
+  the probe scored asking as a failure. Sizes are what this probe is for; the
+  name collision was noise, and it made the result depend on whether the model
+  guessed.
+turns:
+  - say: show me some heels
+    expect:
+      products_min: 2
+  - say: add the Jade Suede Heels to my cart
+    expect:
+      cart_unchanged: true
+  - say: size 7
+    expect:
+      cart:
+        - {name: Jade Suede Heels, size: "7", qty: 1}

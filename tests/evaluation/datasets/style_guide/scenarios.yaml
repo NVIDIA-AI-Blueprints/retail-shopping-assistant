@@ -1,0 +1,313 @@
+version: 1
+dataset_goal: "Evaluate customer-facing outfit-styling skill behavior across entry modes without overfitting to one static catalog."
+catalog_policy:
+  default_preference: "Use behavior_only or category_level scenarios unless the entry point requires a concrete seed product."
+  refresh_required_for_levels:
+    - seed_anchor
+    - cart_state_seed
+    - visual_seed_asset
+  refresh_reference: "See tests/evaluation/datasets/style_guide/README.md."
+scenarios:
+  - id: style_no_anchor_discovery_event_outfit
+    target_turns: 8
+    entry_mode: no_anchor_discovery
+    secondary_entry_pattern: occasion_first
+    skill_focus:
+      - cold_start_clarification
+      - occasion_fit
+      - complete_outfit_planning
+    catalog_dependency:
+      level: behavior_only
+      stable_under_catalog_refresh: true
+      catalog_requirements:
+        - "Any catalog with at least two styleable categories."
+      refresh_note: "No named catalog products. Keep unless the deployment is no longer a fashion or apparel catalog."
+    brief: "Shopper starts from the homepage with no product or cart context and wants an outfit for a specific event."
+    shopper_goal: "Build a polished outfit for an outdoor summer dinner without starting from a product anchor."
+    constraints:
+      - "No anchor product is provided in the first turn."
+      - "Assistant should ask concise clarifying questions before recommending if occasion, weather, or formality is ambiguous."
+      - "When recommending products, use available catalog items and explain why the pieces work together."
+    shopper_behavior:
+      type: occasion_driven_explorer
+      notes: "Gives occasion and vibe first, answers concise clarification, then asks for a complete look."
+    language_cues:
+      - "I need an outfit, not just one item."
+      - "It is outdoors, so keep it practical."
+      - "What pieces would you put together?"
+    success_criteria:
+      - "Detects no-anchor discovery and opens with one or two useful clarifying questions if needed."
+      - "Builds a coherent outfit across multiple categories once enough context exists."
+      - "Explains styling rationale in shopper-facing language without exposing skill or tool names."
+    failure_modes:
+      - "Randomly recommends a category before collecting enough styling context."
+      - "Mentions internal skill, tool, mode, or dataset names to the shopper."
+      - "Invents unavailable products, prices, or catalog facts."
+
+  - id: style_constraint_first_under_budget
+    target_turns: 8
+    entry_mode: no_anchor_discovery
+    secondary_entry_pattern: constraint_first
+    skill_focus:
+      - budget_styling_blend
+      - multi_intent_constraints
+      - substitution_strategy
+    catalog_dependency:
+      level: category_level
+      stable_under_catalog_refresh: true
+      catalog_requirements:
+        - "Catalog should include at least two categories with prices."
+      refresh_note: "No exact product names. Adjust budget only if the deployment's average item price makes a two-piece outfit impossible."
+    brief: "Shopper leads with a firm outfit budget and style constraints before naming any category."
+    shopper_goal: "Get the most complete casual-chic outfit possible under a firm total budget."
+    constraints:
+      - "Total outfit budget: $130 maximum."
+      - "Do not recommend a final outfit over budget."
+      - "If a complete outfit is not possible, explain the closest viable subset and ask which constraint can move."
+    shopper_behavior:
+      type: strict_budget_style_mixer
+      notes: "Treats budget and style as equally important, asks for swaps, and rejects over-budget bundles."
+    language_cues:
+      - "I mean the whole look under $130."
+      - "Can you swap one piece to keep the vibe?"
+      - "Do not sneak in something over budget."
+    success_criteria:
+      - "Combines budget-shopping and styling behavior in one response plan."
+      - "Keeps a running total when discussing a complete outfit."
+      - "Offers grounded substitutions instead of abandoning the style goal."
+    failure_modes:
+      - "Handles budget and styling as separate one-step workflows."
+      - "Upsells over the stated budget."
+      - "Does arithmetic with unsupported or missing prices."
+
+  - id: style_anchor_product_work_to_evening
+    target_turns: 8
+    entry_mode: anchor_product
+    secondary_entry_pattern: product_page_anchor
+    skill_focus:
+      - anchor_product_outfit
+      - complementary_search
+      - product_attribute_reasoning
+    catalog_dependency:
+      level: seed_anchor
+      stable_under_catalog_refresh: false
+      seed_products:
+        - "Classic Silk Camisole in Black"
+      catalog_requirements:
+        - "Anchor top or equivalent black camisole-like product exists."
+        - "At least one bottom, footwear, or accessory category exists for complementary styling."
+      refresh_note: "Replace the seed product with an equivalent current anchor product when the catalog changes."
+    brief: "Shopper is on a product page for a named anchor item and asks how to style it."
+    shopper_goal: "Build a work-to-evening outfit around the anchor top and understand what missing pieces to shop for."
+    constraints:
+      - "Treat the named item as the anchor product, not as a cold-start search request."
+      - "Suggest complementary pieces from available catalog products."
+      - "If a catalog attribute is missing, say what is unknown instead of inventing it."
+    shopper_behavior:
+      type: product_page_styling
+      notes: "Already likes the anchor and wants the assistant to complete the outfit, then refine for work and evening."
+    language_cues:
+      - "I am looking at this black silk camisole."
+      - "What would you put with it for work?"
+      - "Can this shift to dinner after work?"
+    success_criteria:
+      - "Recognizes the anchor product and does not ask the shopper to restate the whole shopping goal."
+      - "Uses catalog-supported attributes for the anchor and complementary items."
+      - "Explains why each recommended piece balances color, formality, texture, or practicality."
+    failure_modes:
+      - "Ignores the anchor and starts a generic search."
+      - "Claims unsupported fit, sizing, or care facts."
+      - "Recommends complementary products that are absent from the transcript or catalog results."
+
+  - id: style_cart_build_then_gap_check
+    target_turns: 8
+    entry_mode: cart_styling
+    secondary_entry_pattern: cart_completion
+    skill_focus:
+      - cart_context_reasoning
+      - missing_piece_detection
+      - upsell_boundaries
+    catalog_dependency:
+      level: cart_state_seed
+      stable_under_catalog_refresh: false
+      seed_products:
+        - "Black Polka-Dotted Slip Dress"
+        - "Soft Ballet Flats in Blush Pink Leather"
+      catalog_requirements:
+        - "Seed products or equivalent dress and footwear items can be added to cart."
+        - "Catalog includes at least one accessory or layer candidate for gap filling."
+      refresh_note: "Replace seed items with equivalent current dress and footwear products when the catalog changes."
+    brief: "Shopper first creates cart state with styleable items, then asks whether the cart works as an outfit and what is missing."
+    shopper_goal: "Confirm whether selected cart items work together and identify one practical missing piece without uncontrolled upsell."
+    constraints:
+      - "Assistant must only claim cart contents or mutations that are supported by tool results."
+      - "Cart styling should assess harmony and missing pieces, not blindly recommend every possible add-on."
+      - "If cart state is empty or ambiguous, ask for clarification or retrieve cart before styling."
+    shopper_behavior:
+      type: cart_styling_checker
+      notes: "Adds two items, asks if the outfit works, then asks for exactly one missing piece."
+    turn_sequence:
+      - "Ask to find the Black Polka-Dotted Slip Dress so it can be added."
+      - "Ask to add the Black Polka-Dotted Slip Dress to the cart."
+      - "Ask to find the Soft Ballet Flats in Blush Pink Leather so they can be added."
+      - "Ask to add the Soft Ballet Flats in Blush Pink Leather to the cart."
+      - "Ask the assistant to look at the cart as an outfit and say what one thing is missing, if anything."
+    language_cues:
+      - "Find the dress first."
+      - "Add that dress to my cart."
+      - "Find the blush flats."
+      - "Add those flats too."
+      - "Now look at my cart as an outfit."
+      - "What one thing is missing, if anything?"
+    success_criteria:
+      - "Uses cart state as the source of truth."
+      - "Confirms what works together before suggesting a missing category."
+      - "Recommends at most one or two grounded add-ons unless the shopper asks for more."
+    failure_modes:
+      - "Claims cart items that were not successfully added."
+      - "Treats cart styling as a generic product search."
+      - "Uses the styling moment for broad, unbounded upsell."
+
+  - id: style_mid_browse_direct_pairing_question
+    target_turns: 8
+    entry_mode: mid_browse_styling
+    secondary_entry_pattern: conversational_mid_browse
+    skill_focus:
+      - direct_pairing_answer
+      - browse_context_reuse
+      - concise_recommendations
+    catalog_dependency:
+      level: category_level
+      stable_under_catalog_refresh: true
+      catalog_requirements:
+        - "Catalog includes at least one styleable apparel item plus one complementary category."
+      refresh_note: "No exact product names. Keep unless category coverage changes materially."
+    brief: "Shopper is browsing and asks a direct styling question in the middle of product discovery."
+    shopper_goal: "Understand what to wear with a browsed item and whether it fits a semi-dressy occasion."
+    constraints:
+      - "Answer the styling question directly before broadening the search."
+      - "Use the most recent product discussion when available."
+      - "Recommend catalog-grounded pairings only."
+    shopper_behavior:
+      type: mid_browse_styling_probe
+      notes: "Browses a category, then interrupts with 'what would I wear this with?' and pushes for occasion fit."
+    language_cues:
+      - "What would I wear this with?"
+      - "Could that work for a nice dinner?"
+      - "Give me the pairings, not a huge list."
+    success_criteria:
+      - "Routes the style question into outfit reasoning without losing browse context."
+      - "Keeps the answer focused and useful for the current product discussion."
+      - "Does not require the shopper to restart the conversation."
+    failure_modes:
+      - "Answers as if it is a fresh search with no prior context."
+      - "Lists many unrelated products without styling rationale."
+      - "Exposes internal routing or mode detection."
+
+  - id: style_comparison_decision_between_vibes
+    target_turns: 8
+    entry_mode: mid_browse_styling
+    secondary_entry_pattern: comparison_decision
+    skill_focus:
+      - tradeoff_explanation
+      - occasion_fit
+      - value_and_versatility
+    catalog_dependency:
+      level: category_level
+      stable_under_catalog_refresh: true
+      catalog_requirements:
+        - "Catalog includes at least two comparable products in a styleable category."
+      refresh_note: "No exact product names. Keep unless the catalog cannot return comparable options."
+    brief: "Shopper compares two possible style directions and wants a clear recommendation, not just a product list."
+    shopper_goal: "Choose the better option for repeated wear across work, dinner, and casual plans."
+    constraints:
+      - "Do not choose solely by lowest price."
+      - "Be explicit about tradeoffs in versatility, formality, comfort, and care when facts are available."
+      - "If the assistant lacks a fact, it should say so rather than infer."
+    shopper_behavior:
+      type: value_and_style_comparator
+      notes: "Asks which direction is actually smarter to buy and challenges generic style advice."
+    language_cues:
+      - "Which vibe would you actually pick?"
+      - "Do not just tell me both are cute."
+      - "What am I giving up with each?"
+    success_criteria:
+      - "Makes a defensible recommendation with tradeoffs."
+      - "Keeps catalog facts separate from style judgment."
+      - "Handles value and versatility as part of the styling decision."
+    failure_modes:
+      - "Gives a vague non-answer."
+      - "Invents material, care, comfort, or fit details."
+      - "Ignores the shopper's repeated-use priority."
+
+  - id: style_wardrobe_gap_existing_outfit
+    target_turns: 8
+    entry_mode: no_anchor_discovery
+    secondary_entry_pattern: wardrobe_gap
+    skill_focus:
+      - shopper_owned_context
+      - gap_analysis
+      - practical_accessory_choice
+    catalog_dependency:
+      level: behavior_only
+      stable_under_catalog_refresh: true
+      catalog_requirements:
+        - "Any catalog with at least one category that can fill outfit gaps."
+      refresh_note: "No named catalog products. Keep unless the deployment cannot style shopper-owned outfits."
+    brief: "Shopper describes clothes they already own and asks what catalog item would complete the look."
+    shopper_goal: "Find one practical missing piece for an outfit the shopper already owns."
+    constraints:
+      - "Use the shopper-owned outfit as context but do not pretend those owned items are catalog products."
+      - "Recommend one or two catalog-grounded gap fillers."
+      - "Explain why the item completes the outfit and whether it can be reused."
+    shopper_behavior:
+      type: practical_gap_filler
+      notes: "Wants one useful addition, not a full new outfit."
+    language_cues:
+      - "I already own the main pieces."
+      - "What is the one thing I should add?"
+      - "I want to use it again, not just once."
+    success_criteria:
+      - "Separates shopper-owned context from catalog inventory."
+      - "Identifies the missing category before recommending a product."
+      - "Avoids over-recommending when one item is requested."
+    failure_modes:
+      - "Claims the shopper-owned pieces are in the cart or catalog."
+      - "Rebuilds the entire outfit unnecessarily."
+      - "Suggests unsupported products or facts."
+
+  - id: style_post_selection_refinement
+    target_turns: 8
+    entry_mode: mid_browse_styling
+    secondary_entry_pattern: post_selection_refinement
+    skill_focus:
+      - refinement_memory
+      - vibe_shift
+      - substitution_strategy
+    catalog_dependency:
+      level: category_level
+      stable_under_catalog_refresh: true
+      catalog_requirements:
+        - "Catalog includes enough alternatives to support at least one substitution."
+      refresh_note: "No exact product names. Keep unless the catalog has too few alternatives for meaningful substitution."
+    brief: "Shopper likes a suggested outfit direction but asks to make it more casual, less expensive, or more colorful."
+    shopper_goal: "Refine an existing recommendation without losing the original outfit intent."
+    constraints:
+      - "Preserve useful parts of the prior recommendation when possible."
+      - "Make the requested vibe or budget shift explicit."
+      - "Use grounded substitutions instead of starting over."
+    shopper_behavior:
+      type: iterative_refiner
+      notes: "Accepts part of the outfit, rejects one constraint, and expects the assistant to revise intelligently."
+    language_cues:
+      - "I like that direction, but make it more casual."
+      - "Can we lower the total without losing the look?"
+      - "Keep the part that works."
+    success_criteria:
+      - "Tracks the prior recommendation across turns."
+      - "Changes only the pieces needed to satisfy the new constraint."
+      - "Explains what changed and why."
+    failure_modes:
+      - "Forgets the prior style direction."
+      - "Starts a brand-new unrelated search."
+      - "Fails to respect the refinement constraint."

@@ -1,4 +1,4 @@
-# Release 2.0.0 (October 2026)
+# Release 2.0.0 (November 2026)
 
 Substantial changes since 1.0.0. The architecture described in the 1.0.0 notes
 below is historical; these are the current shapes.
@@ -16,14 +16,21 @@ below is historical; these are the current shapes.
 - 🐳 **vLLM with Hugging Face checkpoints** replaces NIM containers for
   self-hosted models, and covers every model role: the chat model, text
   embedding, and the content safety, topic control, and video safety
-  guardrails, on six 80 GB GPUs by default ([#263](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/263), [#284](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/284), [#309](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/309), [#316](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/316)).
+  guardrails, on six 80 GB GPUs by default ([#263](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/263), [#284](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/284), [#309](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/309), [#316](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/316), [#324](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/324)).
 - ⚙️ **One place for each setting**: every model URL and model name is set in
   `.env.example`; every other default lives once in `shared/configs/` or in
   code ([#264](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/264), [#276](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/276)).
 - 🔍 **Catalog search** filters in the database instead of ranking the whole
-  catalog, embeds with Nemotron 3 Embed 1B, and is built by a dedicated
+  catalog, embeds with Nemotron 3.5 Embed 1B, and is built by a dedicated
   `catalog-indexer` service. Image embedding is off by default: uploads are
-  read by the vision model and searched as text ([#188](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/188), [#189](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/189), [#208](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/208), [#214](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/214)).
+  read by the vision model and searched as text ([#188](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/188), [#189](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/189), [#208](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/208), [#214](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/214), [#326](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/326)).
+- 📦 **Catalog data**: an enriched catalog with structured, filterable
+  attributes, shipped alongside the original 1.0.0 product files ([#343](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/343)).
+- 📄 **Licensing**: the blueprint is Apache 2.0 under governing download terms
+  that name the separate software, models, data and services it uses. The
+  README lists the main components and their terms, and
+  `LICENSE-3rd-party.txt` carries full license texts and upstream NOTICE
+  files ([#329](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/329), [#331](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/331), [#332](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/332), [#333](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/333), [#334](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/334), [#335](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/335), [#336](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/336), [#338](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/338)).
 - 🗄️ **Storage**: SeaweedFS replaces MinIO, Milvus moves to 3.0 with an opt-in
   GPU index, and the memory service is SQLite only ([#271](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/271), [#293](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/293), [#312](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/312), [#313](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/313)).
 - 🖥️ **UI** moves from Create React App to Vite and is served as a static build
@@ -49,6 +56,9 @@ below is historical; these are the current shapes.
   something instead of substituting a near match ([#170](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/170), [#234](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/234), [#237](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/237)).
 - 🔢 **Numbered products**: what the shopper sees is numbered, so "the second
   one" resolves to the product they meant ([#242](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/242), [#244](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/244)).
+- ➕ **Show me more, and show it again**: "more" leaves out every product
+  already shown, and asking to see earlier products shows them again from
+  the conversation instead of searching ([#327](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/327)).
 - 🌦️ **Weather-aware styling**, optional and off by default: a destination's
   forecast shapes what the assistant suggests ([#155](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/155), [#227](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/227), [#248](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/248)).
 - 🛍️ **Storefront**: an editable cart, a compact product grid with Show all,
@@ -58,8 +68,9 @@ below is historical; these are the current shapes.
 - 🔒 **Guardrails** as an isolated service: content safety, topic control, and
   video safety. On by default for API requests; the UI toggle starts off.
   `GUARDRAILS_AVAILABLE=false` deploys without them, hosted or local: no
-  guardrail model is started or called, and the UI hides the toggle
-  ([#266](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/266), [#285](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/285)).
+  guardrail model is started or called, and the UI hides the toggle.
+  Video uploads are judged by default, and `MULTIMODAL_SAFETY_USE_AUDIO=false`
+  judges frames only ([#266](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/266), [#285](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/285), [#322](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/322), [#323](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/323)).
 - 📊 **Observability**: per-turn spans, whole-conversation Phoenix sessions,
   and NeMo Relay model spans, on in the example profile ([#158](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/158), [#209](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/209), [#254](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/254)).
 - 🔍 **Data-derived catalog filters**, published from the catalog and its schema
@@ -74,11 +85,15 @@ below is historical; these are the current shapes.
   Production guide ([#207](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/207), [#289](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/289)).
 - 🛡️ **Security hardening**: shopper content is not logged, text from outside
   the system is marked as data before a model reads it, dependencies are
-  patched, Bandit findings are cleared, and SonarQube runs in CI ([#221](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/221), [#272](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/272), [#278](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/278), [#279](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/279), [#303](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/303)).
+  patched, Bandit findings are cleared, internal service ports bind to
+  loopback, and SonarQube runs in CI ([#221](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/221), [#272](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/272), [#278](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/278), [#279](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/279), [#303](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/303), [#330](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/330), [#339](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/339)).
 
 ## Removed
 
 - NIM containers for self-hosted models ([#284](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/284)).
+- `docker-compose-nim-local.yaml`, `notebook/1_Deploy_Retail_Shopping_Assistant.ipynb`
+  and `docs/BREV.md`. Start with [Notebook 1](notebook/1_Getting_Started.ipynb);
+  Brev setup is in [On NVIDIA Brev](docs/DEPLOYMENT.md#on-nvidia-brev).
 
 ## Known Issues
 
@@ -101,9 +116,8 @@ below is historical; these are the current shapes.
     Retry, or use locally hosted models.
   - The video has no audio track at all. A silent audio track is fine, and
     `MULTIMODAL_SAFETY_USE_AUDIO=false` judges frames only.
-- **"Show me more" repeats the same products.** A follow-up search returns the
-  products already shown and presents them as new. Paging is planned for a
-  follow-up release.
+- **Asking for something never shown can start a search straight away.** The
+  assistant sometimes searches instead of first offering to.
 - **A product named by colour or detail can resolve to a similar one.** "The
   amber ones" or a product's name sometimes picks a near neighbour from the
   same showing. Check the cart after an add.
@@ -116,6 +130,10 @@ below is historical; these are the current shapes.
 - **With the weather tool on, a forecast question can be answered without
   products.** A question that asks about the weather and what to wear may
   answer the forecast and show nothing. The weather tool is off by default.
+
+**Full Changelog**: https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/compare/v1.0.0...v2.0.0
+
+**Tag:** [v2.0.0](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/releases/tag/v2.0.0)
 
 # Retail Shopping Assistant 1.0.0 (03 September 2025)
 

@@ -62,11 +62,13 @@ describe("App session lifecycle", () => {
   let container;
   let root;
   let originalFetch;
+  let capabilities;
 
   beforeEach(() => {
     vi.useFakeTimers();
     sessionStorage.clear();
     originalFetch = global.fetch;
+    capabilities = undefined;
     global.fetch = vi.fn((input) => {
       const url = String(input);
       if (url.includes("/cart")) {
@@ -77,8 +79,8 @@ describe("App session lifecycle", () => {
       }
       if (url.endsWith("/capabilities")) {
         return Promise.resolve({
-          ok: false,
-          json: () => Promise.resolve({}),
+          ok: capabilities !== undefined,
+          json: () => Promise.resolve(capabilities ?? {}),
         });
       }
       if (url.endsWith("/query/stream")) {
@@ -134,6 +136,20 @@ describe("App session lifecycle", () => {
         String(input).includes("shopper-profiles")
       )
     ).toBe(false);
+  });
+
+  test.each([
+    [undefined, false],
+    [{ available: false, supported_modalities: [], client_can_disable: true }, false],
+    [{ available: true, supported_modalities: ["text"], client_can_disable: true }, true],
+  ])("guardrails %j show the switch: %s", async (guardrails, shown) => {
+    capabilities = guardrails && { guardrails };
+    React.act(() => {
+      root.render(<App />);
+    });
+    await flushEffects();
+
+    expect(Boolean(container.querySelector(".chatbox__guardrail"))).toBe(shown);
   });
 
   test("Reset clears the identity and the next request starts a new conversation", async () => {

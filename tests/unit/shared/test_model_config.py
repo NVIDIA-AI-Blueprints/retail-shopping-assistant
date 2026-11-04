@@ -209,12 +209,14 @@ def test_unavailable_guardrails_need_no_guardrail_endpoint_or_key(
         model_endpoint_env.delenv(key, raising=False)
     config = resolve_model_config(config_root=_SHIPPED)
 
+    model_endpoint_env.setenv("GUARDRAILS_AVAILABLE", "true")
     with pytest.raises(ModelConfigError, match="content_safety"):
         validate_model_config(config)
 
-    model_endpoint_env.setenv("GUARDRAILS_AVAILABLE", "false")
-    validate_model_config(config)
-    assert model_config_snapshot(config)["guardrails_available"] is False
+    for value in ("false", ""):
+        model_endpoint_env.setenv("GUARDRAILS_AVAILABLE", value)
+        validate_model_config(config)
+        assert model_config_snapshot(config)["guardrails_available"] is False
 
 
 def test_guardrails_available_rejects_an_unknown_value(

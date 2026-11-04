@@ -184,13 +184,14 @@ is released for Blackwell GPUs; this guide has not yet validated or sized it.
 
 The default layout needs six 80 GB GPUs. `.env.local-models.example` points
 every role at these services through the environment, so `models.yaml` does not change,
-and adds video to the guarded modalities. As on the hosted path, guardrails
-are on by default for API requests, and the UI's Guardrails toggle starts off
-and turns them on per session; `GUARDRAILS_ENABLED=false` makes off the API
-default. To deploy without them, set
+and adds video to the guarded modalities. Unlike the hosted path, it deploys
+guardrails: they are on by default for API requests, and the UI's Guardrails
+toggle starts off and turns them on per session; `GUARDRAILS_ENABLED=false`
+makes off the API default. To deploy without them, set
 `GUARDRAILS_AVAILABLE=false` in `.env.local-models`: the three guardrail
 models are not started, which frees GPU 5 and 50 GB of GPU 4, and the UI has
-no Guardrails toggle. The same setting works on the hosted path
+no Guardrails toggle. On the hosted path that is the default, and
+`GUARDRAILS_AVAILABLE=true` deploys them
 ([Guardrails](GUARDRAILS.md#deploying-without-guardrails)).
 
 The guardrail service picks its request shape from the model name: the
@@ -427,10 +428,10 @@ section lists what changes before shoppers can reach it and as traffic grows.
   (19530, 9091) bind to loopback. Phoenix (6006) publishes on every interface
   for local convenience; bind it to `127.0.0.1` or firewall it. Only the UI
   needs to be reachable.
-- **Set `GUARDRAILS_CLIENT_CAN_DISABLE=false`.** Guardrails are on by default,
-  but a request, such as the UI toggle, may still turn them off, which is
-  what a before-and-after demo needs and what an untrusted caller should not
-  have.
+- **Set `GUARDRAILS_AVAILABLE=true` and `GUARDRAILS_CLIENT_CAN_DISABLE=false`.**
+  Guardrails are not deployed by default, and once deployed, a request, such
+  as the UI toggle, may still turn them off, which is what a before-and-after
+  demo needs and what an untrusted caller should not have.
 - **Image queries carry the image itself.** The catalog retriever refuses an
   image URL and never fetches one or opens a file for a query; only catalog
   indexing loads the image URLs and `shared/` paths in your catalog data.
@@ -530,7 +531,7 @@ the service at startup with the names of the missing variables.
 | `app_llm` | Answers the shopper and drives tool use | `integrate.api.nvidia.com` | `LLM_BASE_URL`, `LLM_MODEL` | `LLM_API_KEY` |
 | `vlm` | Reads photo and video uploads | `integrate.api.nvidia.com` | `VLM_BASE_URL`, `VLM_MODEL` | `VLM_API_KEY` |
 | `text_embedding` | Embeds the catalog and text queries | `integrate.api.nvidia.com` | `TEXT_EMBED_BASE_URL`, `TEXT_EMBED_MODEL` | `EMBED_API_KEY` |
-| `content_safety` | Checks text and images for unsafe content (guardrails, on by default) | `integrate.api.nvidia.com` | `RAILS_CONTENT_BASE_URL`, `RAILS_CONTENT_MODEL` | `RAIL_API_KEY` |
+| `content_safety` | Checks text and images for unsafe content (guardrails, with `GUARDRAILS_AVAILABLE=true`) | `integrate.api.nvidia.com` | `RAILS_CONTENT_BASE_URL`, `RAILS_CONTENT_MODEL` | `RAIL_API_KEY` |
 | `topic_control` | Checks whether a request is on topic (guardrails) | `integrate.api.nvidia.com` | `RAILS_TOPIC_BASE_URL`, `RAILS_TOPIC_MODEL` | `RAIL_API_KEY` |
 | `multimodal_safety` | Checks video, including embedded audio (guardrails) | `integrate.api.nvidia.com` | `MULTIMODAL_SAFETY_BASE_URL`, `MULTIMODAL_SAFETY_MODEL` | `MULTIMODAL_SAFETY_API_KEY` |
 
@@ -575,7 +576,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `VLM_BASE_URL`, `VLM_MODEL` | Media perception endpoint and model; set separately from `LLM_*` | Yes | `.env.example`, the same model as `app_llm` |
 | `VLM_API_KEY` | Optional VLM media perception API key; Compose falls back to `NVIDIA_API_KEY` when unset | When `vlm` uses an authenticated endpoint and `NVIDIA_API_KEY` is unset | `NVIDIA_API_KEY` |
 | `EMBED_API_KEY` | Embedding model API key | Yes | - |
-| `RAIL_API_KEY` | Guardrails API key | Yes | - |
+| `RAIL_API_KEY` | Guardrails API key | With guardrails | - |
 | `GUARDRAILS_URL` | Orchestrator URL for the guardrail service | No | `http://rails:8012` |
 | `RAILS_CONTENT_BASE_URL` / `RAILS_CONTENT_MODEL` | Endpoint and model for current text/image content safety | With guardrails | `.env.example` |
 | `RAILS_TOPIC_BASE_URL` / `RAILS_TOPIC_MODEL` | Topic-control endpoint and model. The dedicated Topic Control model is preferred; selecting Content Safety applies the configured retail policy through `custom_policy` | With guardrails | `.env.example` |
@@ -585,8 +586,8 @@ set there; a unit test fails if the two differ, so change both together.
 | `MULTIMODAL_SAFETY_VIDEO_FPS` | Temporal sampling rate sent to Nemotron Omni. The complete video object and embedded audio are submitted, but the model evaluates sampled frames | No | `rails.py` (2.0) |
 | `MULTIMODAL_SAFETY_USE_AUDIO` | `false` leaves the video's audio out of the judgement, for an Omni endpoint that rejects audio | No | `rails.py` (true) |
 | `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the content and topic input rails in `parallel` or `sequential` mode | No | `shared/configs/rails/config.yml`: `rails.input.parallel` (parallel) |
-| `GUARDRAILS_AVAILABLE` | `false` deploys without guardrails: no guardrail model is called or needs a key, `.env.local-models` starts no guardrail model, the UI hides the Guardrails toggle, and a request with `guardrails: true` gets a 400. Cannot be combined with `GUARDRAILS_ENABLED=true`. Read from the environment only, as both services and `.env.local-models` need it | No | true |
-| `GUARDRAILS_ENABLED` | Default orchestrator guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Set false to turn guardrails off by default | No | `config.yaml`: `guardrails_enabled` (on; off when `GUARDRAILS_AVAILABLE=false`) |
+| `GUARDRAILS_AVAILABLE` | `true` deploys guardrails. `false` deploys without them: no guardrail model is called or needs a key, `.env.local-models` starts no guardrail model, the UI hides the Guardrails toggle, and a request with `guardrails: true` gets a 400. `GUARDRAILS_ENABLED=true` needs it. Read from the environment only, as both services and `.env.local-models` need it | No | false (`.env.local-models`: true) |
+| `GUARDRAILS_ENABLED` | Default orchestrator guardrails setting for requests that omit `guardrails`; accepts true/false, yes/no, on/off, or 1/0. Set false to turn guardrails off by default | No | `config.yaml`: `guardrails_enabled` (on when `GUARDRAILS_AVAILABLE=true`, otherwise off) |
 | `GUARDRAILS_CLIENT_CAN_DISABLE` | With guardrails enabled, whether a request's `guardrails: false` is honoured. On by default, so the UI toggle can show before and after; set `false` to lock guardrails on | No | true |
 | `GUARDRAILS_FAILURE_MODE` | Required-check error/timeout behavior: `open` bypasses and `closed` stops the turn. Explicit unsafe decisions always block in either mode | No | `config.yaml`: `guardrails_failure_mode` (closed) |
 | `GUARDRAILS_TIMEOUT_SECONDS` | Timeout for each isolated guardrail service decision. Both services read it: the orchestrator bounds its call, the guardrail service bounds the judges behind it | No | `config.yaml`: `guardrails_timeout_seconds`, and `rails.py` (45.0) |
@@ -947,7 +948,7 @@ end a turn with no tool call and no reply.
 
 #### Guardrail Defaults
 
-Guardrails ships enabled and spans two services, so each default lives with
+Guardrails ships off on the hosted path and spans two services, so each default lives with
 whichever one reads it. [Guardrails](GUARDRAILS.md) owns that layout, along
 with what a failed check costs and what the shopper is told.
 
@@ -1070,8 +1071,8 @@ python scripts/model_config.py show --validate
 
 #### 6. Every Reply Says "I cannot safely validate this request right now"
 
-**Symptoms**: with guardrails on, every turn is refused; with the UI's
-Guardrails toggle off, the same turn works.
+**Symptoms**: with `GUARDRAILS_AVAILABLE=true` and guardrails on, every turn
+is refused; with the UI's Guardrails toggle off, the same turn works.
 
 **Cause**: the guardrail check errored, and `GUARDRAILS_FAILURE_MODE=closed`
 refuses the turn. Usually `RAIL_API_KEY` is not a build.nvidia.com key with
@@ -1085,8 +1086,9 @@ build.nvidia.com key.
 export RAIL_API_KEY="..."
 docker compose -f docker-compose.yaml up -d --force-recreate rails orchestrator
 
-# Or, until you have one, make guardrails off by default
-export GUARDRAILS_ENABLED=false
+# Or, until you have one, deploy without guardrails, the hosted default
+export GUARDRAILS_AVAILABLE=false
+docker compose -f docker-compose.yaml up -d --force-recreate rails orchestrator
 ```
 
 ### Debug Mode

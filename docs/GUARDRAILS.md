@@ -1,10 +1,12 @@
 # Guardrails
 
 An optional safety layer that runs as its own service and decides whether a
-turn may proceed. It ships enabled for API requests that do not say otherwise.
-The UI's Guardrails toggle starts off, to show the same turn before and after,
-and turns it on for a session; with `GUARDRAILS_CLIENT_CAN_DISABLE=false` it
-starts on.
+turn may proceed. The hosted path ships without it, and the UI shows no
+Guardrails toggle; `GUARDRAILS_AVAILABLE=true` deploys it, and
+`.env.local-models` does so by default. Deployed, it is on for API requests
+that do not say otherwise. The UI's Guardrails toggle starts off, to show the
+same turn before and after, and turns it on for a session; with
+`GUARDRAILS_CLIENT_CAN_DISABLE=false` it starts on.
 
 ## How it decides
 
@@ -55,9 +57,10 @@ found anything unsafe.
 ## Turning it on and off
 
 ```bash
+export GUARDRAILS_AVAILABLE=true   # deploy guardrails; the hosted default is false
 export RAIL_API_KEY="..."          # content safety and topic control
 export GUARDRAILS_ENABLED=false    # only to make off the default; or send `guardrails` per request
-docker compose up -d rails
+docker compose up -d rails orchestrator
 ```
 
 The service listens on port 8012 and the orchestrator reaches it at
@@ -71,9 +74,9 @@ on, and `false` is ignored.
 
 ## Deploying without guardrails
 
-Set `GUARDRAILS_AVAILABLE=false` for a deployment that has no guardrails at
-all, hosted or local: to save the GPUs the judges need, or because no key for
-them is available.
+`GUARDRAILS_AVAILABLE=false`, the hosted default, is a deployment with no
+guardrails at all, hosted or local: to save the GPUs the judges need, or
+because no key for them is available.
 
 ```bash
 export GUARDRAILS_AVAILABLE=false
@@ -95,18 +98,18 @@ Then:
 - `scripts/model_config.py show --validate` does not check the three guardrail
   roles.
 
-`GUARDRAILS_ENABLED=true` with `GUARDRAILS_AVAILABLE=false` stops the chain
+`GUARDRAILS_ENABLED=true` without `GUARDRAILS_AVAILABLE=true` stops the chain
 server at startup, as the two contradict each other.
 
 ## Configuration
 
 | Variable | What it controls | Default |
 | --- | --- | --- |
-| `GUARDRAILS_AVAILABLE` | `false`: no guardrails in this deployment ([above](#deploying-without-guardrails)) | true |
+| `GUARDRAILS_AVAILABLE` | `true` deploys guardrails; `false`: none in this deployment ([above](#deploying-without-guardrails)) | false (`.env.local-models`: true) |
 | `RAIL_API_KEY` | API key for content safety and topic control | Required |
 | `MULTIMODAL_SAFETY_API_KEY` | API key for video safety; falls back to `RAIL_API_KEY` | Required for video |
 | `GUARDRAILS_URL` | Where the orchestrator reaches the service | `http://rails:8012` |
-| `GUARDRAILS_ENABLED` | Deployment default for requests that omit `guardrails` | on (off when `GUARDRAILS_AVAILABLE=false`) |
+| `GUARDRAILS_ENABLED` | Deployment default for requests that omit `guardrails` | on when `GUARDRAILS_AVAILABLE=true`, otherwise off |
 | `GUARDRAILS_FAILURE_MODE` | What an `error` costs | `closed` |
 | `GUARDRAILS_TIMEOUT_SECONDS` | Deadline for one decision | `45.0` |
 | `GUARDRAILS_INPUT_EXECUTION_MODE` | Run the two text input rails `parallel` or `sequential` | `parallel` |

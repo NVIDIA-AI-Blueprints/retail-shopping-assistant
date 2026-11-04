@@ -22,7 +22,7 @@ The Retail Shopping Assistant API provides a comprehensive interface for an AI-p
 - **Real-time Streaming**: Server-Sent Events (SSE) for live responses
 - **Multi-modal Input**: Text queries, image uploads, and optional VLM-backed video/image understanding
 - **Shopping Cart Management**: Add, remove, and view cart items
-- **Content Safety**: Optional guardrails for safe interactions, on by default
+- **Content Safety**: Optional guardrails for safe interactions, with `GUARDRAILS_AVAILABLE=true`
 - **Performance Monitoring**: Detailed timing information
 
 ## 🌐 Base URL
@@ -249,7 +249,7 @@ event.
 
 `guardrails=true` and `guardrails=false` are authoritative even when they differ
 from `GUARDRAILS_ENABLED`; the environment variable is only the default for an
-omitted field. A deployment with `GUARDRAILS_AVAILABLE=false` has no guardrails:
+omitted field. A deployment without `GUARDRAILS_AVAILABLE=true` has no guardrails:
 `/capabilities` reports `guardrails.available: false`, and `guardrails=true`
 gets a 400. Provider errors follow `GUARDRAILS_FAILURE_MODE` (`closed` by
 default). Closed output errors suppress unvalidated response text and product
@@ -1650,9 +1650,9 @@ print(f"Timing: {response['timings']}")
 - The API is the same whether models run on your own GPUs or on NVIDIA-hosted endpoints
   - The `vlm` model role is enabled by default for image/video media perception
     and can be set to `disabled`
-  - Content safety is on by default. Turn it off per deployment with
-    `GUARDRAILS_ENABLED=false`, or per request with the request's own
-    `guardrails` flag
+  - Content safety is deployed with `GUARDRAILS_AVAILABLE=true`, and is then on
+    by default. Turn it off per deployment with `GUARDRAILS_ENABLED=false`, or
+    per request with the request's own `guardrails` flag
 - `/query/stream` uses SSE framing. Token-level Deep Agents streaming is a
   known follow-up after the harness migration; this slice emits completed turn
   events rather than live model chunks. The stream includes `products` frames

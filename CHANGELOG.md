@@ -66,9 +66,10 @@ below is historical; these are the current shapes.
 - 💾 **Durable conversation turns**, so a turn's cart effects and raw history
   survive a restart.
 - 🔒 **Guardrails** as an isolated service: content safety, topic control, and
-  video safety. On by default for API requests; the UI toggle starts off.
-  `GUARDRAILS_AVAILABLE=false` deploys without them, hosted or local: no
-  guardrail model is started or called, and the UI hides the toggle.
+  video safety. Off by default on the hosted path: no guardrail model is
+  called, and the UI hides the toggle. `GUARDRAILS_AVAILABLE=true` deploys
+  them, and `.env.local-models` does so by default; deployed, they are on for
+  API requests and the UI toggle starts off.
   Video uploads are judged by default, and `MULTIMODAL_SAFETY_USE_AUDIO=false`
   judges frames only ([#266](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/266), [#285](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/285), [#322](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/322), [#323](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/323)).
 - 📊 **Observability**: per-turn spans, whole-conversation Phoenix sessions,

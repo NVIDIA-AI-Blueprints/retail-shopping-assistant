@@ -410,7 +410,7 @@ def load_config(config_path: str | None = None) -> OrchestratorConfig:
         ),
         "expose_agent_diagnostics": _env_bool("EXPOSE_AGENT_DIAGNOSTICS"),
         "relay_enabled": _env_bool("RELAY_ENABLED"),
-        "guardrails_available": _env_bool("GUARDRAILS_AVAILABLE"),
+        "guardrails_available": _env_bool("GUARDRAILS_AVAILABLE") is True,
         "guardrails_enabled": _env_bool("GUARDRAILS_ENABLED"),
         "guardrails_client_can_disable": _env_bool("GUARDRAILS_CLIENT_CAN_DISABLE"),
         "guardrails_failure_mode": os.environ.get("GUARDRAILS_FAILURE_MODE"),
@@ -426,10 +426,8 @@ def load_config(config_path: str | None = None) -> OrchestratorConfig:
             if value is not None and value != ""
         }
     )
-    if env_overrides["guardrails_enabled"] and config_data.get("guardrails_available") is False:
-        raise ValueError(
-            "GUARDRAILS_ENABLED cannot be true when GUARDRAILS_AVAILABLE is false"
-        )
+    if env_overrides["guardrails_enabled"] and not config_data["guardrails_available"]:
+        raise ValueError("GUARDRAILS_ENABLED=true needs GUARDRAILS_AVAILABLE=true")
     supported_guardrail_modalities = os.environ.get("GUARDRAILS_SUPPORTED_MODALITIES")
     if supported_guardrail_modalities:
         config_data["guardrails_supported_modalities"] = [

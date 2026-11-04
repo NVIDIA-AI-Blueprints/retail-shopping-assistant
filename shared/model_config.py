@@ -87,12 +87,12 @@ class ResolvedModelConfig:
 
 
 def guardrails_available() -> bool:
-    """GUARDRAILS_AVAILABLE: false means the deployment has no guardrail models."""
+    """GUARDRAILS_AVAILABLE: only true gives the deployment guardrail models."""
 
     value = os.environ.get("GUARDRAILS_AVAILABLE", "").strip().lower()
-    if value in {"", "1", "true", "yes", "on"}:
+    if value in {"1", "true", "yes", "on"}:
         return True
-    if value in {"0", "false", "no", "off"}:
+    if value in {"", "0", "false", "no", "off"}:
         return False
     raise ModelConfigError(
         "GUARDRAILS_AVAILABLE must be one of true/false, yes/no, on/off, or 1/0; "

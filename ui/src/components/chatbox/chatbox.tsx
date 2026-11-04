@@ -260,7 +260,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
   const [newMessage, setNewMessage] = useState<string>("");
   const [isGuardrailsOn, setIsGuardrailsOn] = useState(config.features.guardrails.defaultState);
   const guardrailOverrideRef = useRef<boolean | undefined>(undefined);
-  const [guardrailsAvailable, setGuardrailsAvailable] = useState(true);
+  const [guardrailsAvailable, setGuardrailsAvailable] = useState(false);
   const [guardrailModalities, setGuardrailModalities] = useState<Array<"text" | "image" | "video">>([
     "text", "image"
   ]);
@@ -948,6 +948,7 @@ const Chatbox: React.FC<ChatboxProps> = ({
           setIsGuardrailsOn(false);
           guardrailOverrideRef.current = undefined;
         } else if (data.guardrails) {
+          setGuardrailsAvailable(true);
           setGuardrailModalities(data.guardrails.supported_modalities);
           if (guardrailOverrideRef.current === undefined) {
             // Off, to show before and after, unless the deployment locks them on.

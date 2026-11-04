@@ -85,8 +85,8 @@ below is historical; these are the current shapes.
   Production guide ([#207](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/207), [#289](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/289)).
 - 🛡️ **Security hardening**: shopper content is not logged, text from outside
   the system is marked as data before a model reads it, dependencies are
-  patched, Bandit findings are cleared, internal service ports bind to
-  loopback, and SonarQube runs in CI ([#221](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/221), [#272](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/272), [#278](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/278), [#279](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/279), [#303](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/303), [#330](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/330), [#339](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/339)).
+  patched, Bandit findings are cleared, and internal service ports bind to
+  loopback ([#221](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/221), [#272](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/272), [#278](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/278), [#279](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/279), [#303](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/303), [#330](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/330), [#339](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/pull/339)).
 
 ## Removed
 

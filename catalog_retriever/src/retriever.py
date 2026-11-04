@@ -500,18 +500,32 @@ class Retriever:
             if verbose:
                 logging.info(f"CATALOG RETRIEVER | Retriever.text_embeddings() | Processing text chunk batch {i//batch_size + 1}/{num_batches} with {len(batch_chunks)} chunks.")
             try:
-                response = self.text_client.embeddings.create(
-                    input=batch_chunks,
-                    model=self.text_model_name,
-                    encoding_format="float",
-                    extra_body={"input_type": query_type, "truncate": "NONE"}
-                )
-                all_chunk_embeddings.extend([d.embedding for d in response.data])
+                all_chunk_embeddings.extend(self._embed_batch(batch_chunks, query_type))
             except Exception as e:
                 if verbose:
                     logging.error(f"CATALOG RETRIEVER | Retriever.text_embeddings() | Error embedding chunk batch: {e}")
-                all_chunk_embeddings.extend([None for _ in batch_chunks])
+                if len(batch_chunks) == 1:
+                    all_chunk_embeddings.append(None)
+                    continue
+                # Some hosted endpoints fail every multi-input request but serve single inputs.
+                logging.info("CATALOG RETRIEVER | Retriever.text_embeddings() | Retrying the batch one chunk at a time.")
+                for chunk in batch_chunks:
+                    try:
+                        all_chunk_embeddings.extend(self._embed_batch([chunk], query_type))
+                    except Exception as chunk_error:
+                        if verbose:
+                            logging.error(f"CATALOG RETRIEVER | Retriever.text_embeddings() | Error embedding chunk: {chunk_error}")
+                        all_chunk_embeddings.append(None)
         return all_chunk_embeddings
+
+    def _embed_batch(self, chunks: list[str], query_type: str) -> list[list[float]]:
+        response = self.text_client.embeddings.create(
+            input=chunks,
+            model=self.text_model_name,
+            encoding_format="float",
+            extra_body={"input_type": query_type, "truncate": "NONE"}
+        )
+        return [d.embedding for d in response.data]
 
     def _reconstruct_embeddings(
         self,

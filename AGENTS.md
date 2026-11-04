@@ -148,7 +148,7 @@ docker compose up -d --build
 ```
 
 The profile sets `LLM_*`, `VLM_*`, `TEXT_EMBED_*`, `RAILS_*` and
-`MULTIMODAL_SAFETY_*` (guardrails are on by default, as hosted), after sourcing
+`MULTIMODAL_SAFETY_*` (it deploys guardrails, which hosted are off by default), after sourcing
 `.env.example`, so tracked configuration does not change, and sets
 `LOCAL_MODEL_SERVICES` to the model services those roles point at.
 `GUARDRAILS_AVAILABLE=false`, hosted or local, deploys without guardrails: the
@@ -231,7 +231,7 @@ Key env vars:
 - `EMBED_API_KEY`
 - `RAIL_API_KEY` / `NVIDIA_API_KEY` (guardrails container)
 - `HF_TOKEN`, `HF_CACHE` (for locally deployed models)
-- `GUARDRAILS_AVAILABLE` (`false`: no guardrails, hosted or local; no guardrail model is started or called)
+- `GUARDRAILS_AVAILABLE` (`true` deploys guardrails; `false`, the hosted default, starts or calls no guardrail model; `.env.local-models` defaults to `true`)
 - `LLM_BASE_URL`, `LLM_MODEL`
 - `TEXT_EMBED_BASE_URL`, `TEXT_EMBED_MODEL`
 - `VLM_BASE_URL`, `VLM_MODEL`

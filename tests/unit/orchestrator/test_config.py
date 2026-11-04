@@ -279,7 +279,8 @@ class TestLoadConfig:
         ]
         assert config.max_catalog_searches_per_turn == valid_config_dict["max_catalog_searches_per_turn"]
         assert config.max_product_detail_reads_per_turn == valid_config_dict["max_product_detail_reads_per_turn"]
-        assert config.guardrails_enabled is True
+        assert config.guardrails_available is False
+        assert config.guardrails_enabled is False
         assert config.llm_name == "nvidia/nemotron-3.5-super-vl-120b-a12b"
         assert config.vlm_enabled is True
         assert (config.vlm_port, config.vlm_name) == (config.llm_port, config.llm_name)
@@ -321,6 +322,7 @@ class TestLoadConfig:
         _clear_model_and_service_env(monkeypatch)
         monkeypatch.setenv("SHARED_CONFIG_ROOT", str(REPO_ROOT / "shared/configs"))
         monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("GUARDRAILS_AVAILABLE", "true")
         monkeypatch.setenv("GUARDRAILS_ENABLED", raw_value)
         path = write_yaml("config.yaml", valid_config_dict)
 
@@ -343,7 +345,11 @@ class TestLoadConfig:
         assert load_config(str(path)).guardrails_available is False
 
         monkeypatch.setenv("GUARDRAILS_ENABLED", "true")
-        with pytest.raises(ValueError, match="GUARDRAILS_AVAILABLE is false"):
+        with pytest.raises(ValueError, match="needs GUARDRAILS_AVAILABLE=true"):
+            load_config(str(path))
+
+        monkeypatch.delenv("GUARDRAILS_AVAILABLE")
+        with pytest.raises(ValueError, match="needs GUARDRAILS_AVAILABLE=true"):
             load_config(str(path))
 
     def test_guardrails_is_on_unless_something_turns_it_off(
@@ -355,7 +361,7 @@ class TestLoadConfig:
         assert OrchestratorConfig(**silent).guardrails_enabled is True
         assert OrchestratorConfig(**silent, guardrails_available=False).guardrails_enabled is False
 
-    def test_shipped_config_turns_guardrails_on_unless_unavailable(
+    def test_shipped_config_turns_guardrails_on_only_when_available(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _clear_model_and_service_env(monkeypatch)
@@ -363,11 +369,12 @@ class TestLoadConfig:
         monkeypatch.setenv("LLM_API_KEY", "test-key")
         shipped = str(REPO_ROOT / "shared/configs/orchestrator/config.yaml")
 
+        assert load_config(shipped).guardrails_available is False
+        assert load_config(shipped).guardrails_enabled is False
+
+        monkeypatch.setenv("GUARDRAILS_AVAILABLE", "true")
         assert load_config(shipped).guardrails_enabled is True
         assert load_config(shipped).guardrails_client_can_disable is True
-
-        monkeypatch.setenv("GUARDRAILS_AVAILABLE", "false")
-        assert load_config(shipped).guardrails_enabled is False
 
     @pytest.mark.parametrize("raw_value", ["open", "closed"])
     def test_guardrails_failure_mode_env_override(

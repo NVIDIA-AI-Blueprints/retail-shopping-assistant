@@ -564,6 +564,26 @@ class TestEmbedChunksInBatches:
         embeddings = retriever._embed_chunks_in_batches(["a", "b"], query_type="query")
         assert embeddings == [None, None]
 
+    def test_failed_batch_is_retried_one_chunk_at_a_time(self, retriever: Retriever) -> None:
+        sent = []
+
+        def _create(**kwargs):
+            sent.append(list(kwargs["input"]))
+            if len(kwargs["input"]) > 1:
+                raise RuntimeError("500 service inference failed")
+            if kwargs["input"] == ["c"]:
+                raise RuntimeError("500 service inference failed")
+            return SimpleNamespace(data=[SimpleNamespace(embedding=[float(ord(kwargs["input"][0]))])])
+
+        retriever.text_client = SimpleNamespace(
+            embeddings=SimpleNamespace(create=_create)
+        )
+
+        embeddings = retriever._embed_chunks_in_batches(["a", "b", "c"], query_type="passage", batch_size=3)
+
+        assert embeddings == [[97.0], [98.0], None]
+        assert sent == [["a", "b", "c"], ["a"], ["b"], ["c"]]
+
 
 class TestReconstructEmbeddings:
     def test_averages_chunk_embeddings_per_text(self, retriever: Retriever) -> None:

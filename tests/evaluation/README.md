@@ -296,7 +296,41 @@ Needs the stack up and `EXPOSE_AGENT_DIAGNOSTICS=true` for the tool assertions.
 
 ## Judge Commands
 
-To run the optional Judge, set:
+The Judge grades conversations here and in
+[Notebook 3](../../notebook/3_Evaluation.ipynb). It reads `JUDGE_MODEL_BASE_URL`,
+`JUDGE_MODEL_NAME` and `JUDGE_MODEL_API_KEY`, which both env profiles set to
+the app LLM:
+
+| Profile | Judge by default |
+|---|---|
+| `.env.example` (hosted) | `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` |
+| `.env.local-models` | `local-llm` at `http://localhost:8000/v1`, with `LLM_MODEL` |
+
+The Judge runs on the host, not in a container, so its URL must resolve there:
+`localhost` and a published port, never a Compose service name such as
+`local-llm`.
+
+`docker compose up` passes the profile's `JUDGE_MODEL_*` to the orchestrator
+container, which never calls the Judge but carries the deployment's choice.
+Notebook 3 reads it from there, so it grades with the deployment's Judge
+however Jupyter was started. The commands below read `JUDGE_MODEL_*` from the
+shell that runs them, so source the same profile first.
+
+### Choosing a Different Judge
+
+Set all three variables together: an endpoint, the model name that host
+serves, and a key that host issued. Where you set them decides what they reach:
+
+| Where | Reaches |
+|---|---|
+| In your profile, then `docker compose up -d` | Every Notebook 3 session, and these commands after `source` |
+| Exported in the shell before `source` and `docker compose up -d` | The same, until that shell closes |
+| `os.environ` in the notebook, before the grading cell | That kernel only, until it restarts |
+
+In your profile, set them before it derives the default. In `.env`, your copy
+of `.env.example`, replace the defaults in the Evaluation Challenger/Judge
+section. In `.env.local-models`, add them above the line that sources
+`.env.example`; the profile keeps any Judge other than the app LLM:
 
 ```bash
 export JUDGE_MODEL_BASE_URL="<openai-compatible-base-url>"
@@ -304,8 +338,46 @@ export JUDGE_MODEL_NAME="<judge-model-name>"
 export JUDGE_MODEL_API_KEY="<judge-api-key>"
 ```
 
-For a no-auth local Judge model, set `JUDGE_MODEL_BASE_URL` and
-`JUDGE_MODEL_NAME`, then leave `JUDGE_MODEL_API_KEY` unset.
+Then recreate the orchestrator from the shell that sourced the profile, so the
+notebook sees the new Judge. The models and the rest of the app keep running:
+
+```bash
+source .env.local-models    # or .env
+docker compose up -d orchestrator
+```
+
+What each choice costs:
+
+| Judge | Extra GPUs | Caveats |
+|---|---|---|
+| The app LLM (default) | None | Hosted, grading spends the same key's quota. Local, Judge requests share `local-llm` with shoppers: grading competes with live traffic and skews a performance run ([Notebook 5](../../notebook/5_Performance_Measurement.ipynb)), so do not grade during one. A model grading its own replies can be lenient; confirm a surprising pass with a second Judge. |
+| A hosted model | None | The key must be one that host issued; a mismatch returns `401`. The conversations leave this machine. |
+| A second local model | Its weights plus KV cache, on GPUs no other model uses | Not in `docker-compose-model-local.yaml`: you start its server, publish a free host port, and point `JUDGE_MODEL_BASE_URL` at `http://localhost:<port>/v1`. |
+
+Sizing a second local Judge: BF16 weights take about 2 GB per billion
+parameters, FP8 about 1 GB, and vLLM adds KV cache and a few GB of working
+memory on top ([GPU Sizing](../../docs/DEPLOYMENT.md#gpu-sizing)).
+
+- **An 8B model** needs one GPU of its own: Topic Control, also 8B, uses about
+  28 GB. GPU 4 in the default layout has about 26 GB left, which is not enough.
+  On an eight-GPU machine GPUs 6 and 7 are free.
+- **A second Nemotron 3.5 Super BF16** needs four more 80 GB GPUs, ten in all
+  with the default layout. Grade with the app LLM or a hosted endpoint instead.
+
+For example, an 8B Judge on GPU 6, served by the same vLLM image as `local-llm`:
+
+```bash
+docker run -d --name local-judge --gpus '"device=6"' -p 127.0.0.1:8006:8000 \
+  -v "$HF_CACHE":/root/.cache/huggingface -e HF_TOKEN \
+  vllm/vllm-openai:v0.32.0 --model <hugging-face-checkpoint> --served-model-name local-judge
+
+export JUDGE_MODEL_BASE_URL="http://localhost:8006/v1"
+export JUDGE_MODEL_NAME="local-judge"
+export JUDGE_MODEL_API_KEY="local"
+```
+
+vLLM runs without authentication, but the client sends a key regardless, so set
+`JUDGE_MODEL_API_KEY` to any value.
 
 Judge the latest saved run:
 

@@ -84,6 +84,23 @@ def test_weather_secret_is_disabled_and_scoped_to_orchestrator() -> None:
         )
 
 
+def test_judge_settings_pass_through_to_orchestrator_only() -> None:
+    # Notebook 3 reads the deployment's judge from the orchestrator. The key
+    # belongs in no other container.
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.yaml").read_text())
+    services = compose["services"]
+    names = ("JUDGE_MODEL_BASE_URL", "JUDGE_MODEL_NAME", "JUDGE_MODEL_API_KEY")
+
+    for name in names:
+        assert f"{name}=${{{name}:-}}" in services["orchestrator"]["environment"]
+
+    for service_name, service in services.items():
+        if service_name == "orchestrator":
+            continue
+        environment = service.get("environment", [])
+        assert not any(entry.startswith(tuple(f"{name}=" for name in names)) for entry in environment)
+
+
 def test_weather_environment_template_contains_no_secret() -> None:
     env_template = (REPO_ROOT / ".env.example").read_text()
 

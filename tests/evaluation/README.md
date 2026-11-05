@@ -339,11 +339,13 @@ export JUDGE_MODEL_API_KEY="<judge-api-key>"
 ```
 
 Then recreate the orchestrator from the shell that sourced the profile, so the
-notebook sees the new Judge. The models and the rest of the app keep running:
+notebook sees the new Judge. `relay-collector` runs in the orchestrator's
+network namespace, so it is recreated with it; alone, it loses Relay's spans.
+The models and the rest of the app keep running:
 
 ```bash
 source .env.local-models    # or .env
-docker compose up -d orchestrator
+docker compose up -d orchestrator relay-collector
 ```
 
 What each choice costs:

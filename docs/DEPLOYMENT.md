@@ -110,6 +110,12 @@ from auto-parsing repo-root `.env` as dotenv and mixing environments.
 Copy the template rather than editing it: every `.env.*` is gitignored except
 the templates, so your filled-in copy stays out of git along with its keys.
 
+To run the notebooks or `tests/evaluation` against a deployment you started
+here, also `export EXPOSE_AGENT_DIAGNOSTICS=true` before deploying; Notebook 1
+sets it for the stack it deploys. Without it, replays record no tool calls and
+their tool checks cannot run. Diagnostics expose tool arguments and internal
+product IDs, so leave it off where shoppers can reach the agent.
+
 For an existing deployment, restart the catalog service when changing the
 embedding model or catalog data source. Its fingerprint reuses only
 matching complete collections and rebuilds mismatches. After the catalog is
@@ -264,6 +270,11 @@ ${EDITOR:-nano} .env.local-models   # set HF_TOKEN
 source .env.local-models
 mkdir -p "$HF_CACHE"
 ```
+
+To run the notebooks or `tests/evaluation` against this deployment, also
+`export EXPOSE_AGENT_DIAGNOSTICS=true` here: without it, replays record no tool
+calls. Leave it off where shoppers can reach the agent; it exposes tool
+arguments and internal product IDs.
 
 ### Step 2: Verify GPU Setup
 
@@ -612,7 +623,7 @@ set there; a unit test fails if the two differ, so change both together.
 | `CATALOG_DB_PORT` | Milvus URI the catalog service connects to | No | `catalog_retriever/config.yaml`: `db_port` |
 | `MAX_CATALOG_SEARCHES_PER_TURN` | Caps distinct catalog taxonomy-plus-hard-constraint scope executions in one assistant turn; a repeated scope is stopped even when semantic wording changes | No | `config.yaml`: `max_catalog_searches_per_turn` |
 | `MAX_PRODUCT_DETAIL_READS_PER_TURN` | Caps Deep Agents product-detail reads in one assistant turn | No | `config.yaml`: `max_product_detail_reads_per_turn` |
-| `JUDGE_MODEL_BASE_URL` / `JUDGE_MODEL_NAME` / `JUDGE_MODEL_API_KEY` | Evaluation Judge for Notebook 3 and `tests/evaluation`, called from the host, so the URL must resolve there. Compose passes them to the orchestrator, which only carries them for Notebook 3; a change takes effect after `docker compose up -d orchestrator`. See [Choosing a Different Judge](../tests/evaluation/README.md#choosing-a-different-judge) | No | The app LLM: `LLM_*` in `.env.example`; `http://localhost:8000/v1` in `.env.local-models` |
+| `JUDGE_MODEL_BASE_URL` / `JUDGE_MODEL_NAME` / `JUDGE_MODEL_API_KEY` | Evaluation Judge for Notebook 3 and `tests/evaluation`, called from the host, so the URL must resolve there. Compose passes them to the orchestrator, which only carries them for Notebook 3; a change takes effect after `docker compose up -d orchestrator relay-collector`. See [Choosing a Different Judge](../tests/evaluation/README.md#choosing-a-different-judge) | No | The app LLM: `LLM_*` in `.env.example`; `http://localhost:8000/v1` in `.env.local-models` |
 | `CHECKPOINT_STORE` | Deep Agents conversation checkpoint store; currently supports only `memory` | No | `memory` |
 | `MEMORY_DATABASE_URL` | SQLite database for conversation turns, product cards and cart state; Compose puts it on the `memory-data` volume. For more than one memory replica see [Scale Out](#scale-out) | No | Compose: `sqlite:////data/context.db` |
 | `MEMORY_SQLITE_BUSY_TIMEOUT_MS` | SQLite lock wait for the single memory-service writer | No | `DEFAULT_BUSY_TIMEOUT_MS` in `memory_retriever/src/database.py` |

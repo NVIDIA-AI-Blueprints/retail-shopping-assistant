@@ -49,7 +49,7 @@ export OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318"
 ```bash
 source .env
 docker compose up -d otel-collector phoenix
-docker compose up -d orchestrator
+docker compose up -d orchestrator relay-collector
 
 open http://localhost:6006
 ```
@@ -433,7 +433,7 @@ it:
 ```bash
 source .env
 docker compose build orchestrator
-docker compose up -d orchestrator
+docker compose up -d orchestrator relay-collector
 ```
 
 ### How Relay attaches, and why the runtime guards that seam

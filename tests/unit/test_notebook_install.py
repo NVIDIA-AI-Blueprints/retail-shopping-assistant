@@ -1,11 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The notebooks install their packages into the kernel, even without pip.
+"""The notebooks install what they need, even without pip, and say when they cannot.
 
 Notebook 3 used `%pip install`. On a Brev machine the kernel ran from a uv
 environment with no pip, so the magic printed an error and carried on, and the
-notebook failed later at `import nemo_evaluator`.
+notebook failed later at `import nemo_evaluator`. Notebook 4's last step ran
+`~/aiperf/bin/python` and raised FileNotFoundError on a machine where nobody
+had run the install commands in the cell above it.
 """
 
 from __future__ import annotations
@@ -86,3 +88,80 @@ def test_a_failed_install_raises_with_its_error(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="No matching distribution"):
         helpers.install("nemo-evaluator==99")
+
+
+@pytest.fixture
+def aiperf(monkeypatch, tmp_path):
+    """An AIPerf home under tmp_path, and the commands aiperf_python() runs."""
+
+    home = tmp_path / "aiperf"
+    monkeypatch.setattr(helpers, "AIPERF_HOME", home)
+    monkeypatch.setattr(helpers.shutil, "which", lambda name, path=None: "/usr/bin/uv")
+    state = {"installed": None, "commands": []}
+
+    def run(command, **kwargs):
+        command = [str(part) for part in command]
+        if command[1] == "-c":
+            installed = state["installed"]
+            return subprocess.CompletedProcess(command, 0 if installed else 1, f"{installed}\n", "")
+        state["commands"].append(command)
+        if command[1] == "venv":
+            (home / "bin").mkdir(parents=True)
+            (home / "bin" / "python").touch()
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helpers.subprocess, "run", run)
+    return home, state
+
+
+def _python_exists(home: Path) -> None:
+    (home / "bin").mkdir(parents=True)
+    (home / "bin" / "python").touch()
+
+
+def test_a_ready_aiperf_environment_is_reused(aiperf) -> None:
+    home, state = aiperf
+    _python_exists(home)
+    state["installed"] = helpers.AIPERF_VERSION
+
+    assert helpers.aiperf_python() == home / "bin" / "python"
+    assert state["commands"] == []
+
+
+def test_a_missing_aiperf_environment_is_created_with_the_pinned_release(aiperf) -> None:
+    home, state = aiperf
+
+    assert helpers.aiperf_python() == home / "bin" / "python"
+    assert state["commands"] == [
+        ["/usr/bin/uv", "venv", "--quiet", "--python", "3.12", str(home)],
+        ["/usr/bin/uv", "pip", "install", "--quiet", "--python", str(home / "bin" / "python"),
+         f"aiperf=={helpers.AIPERF_VERSION}"],
+    ]
+
+
+def test_another_aiperf_release_is_replaced_by_the_pinned_one(aiperf) -> None:
+    home, state = aiperf
+    _python_exists(home)
+    state["installed"] = "0.12.0"
+
+    helpers.aiperf_python()
+
+    assert [command[1] for command in state["commands"]] == ["pip"]
+    assert state["commands"][0][-1] == f"aiperf=={helpers.AIPERF_VERSION}"
+
+
+def test_without_uv_it_says_how_to_get_it(aiperf, monkeypatch) -> None:
+    monkeypatch.setattr(helpers.shutil, "which", lambda name, path=None: None)
+
+    with pytest.raises(RuntimeError, match="astral.sh/uv/install.sh"):
+        helpers.aiperf_python()
+
+
+def test_a_folder_that_is_not_an_environment_is_left_alone(aiperf) -> None:
+    home, state = aiperf
+    home.mkdir()
+    (home / "README.md").touch()
+
+    with pytest.raises(RuntimeError, match="is not a Python environment"):
+        helpers.aiperf_python()
+    assert state["commands"] == []

@@ -49,7 +49,7 @@ def install(*packages: str) -> None:
 
     if importlib.util.find_spec("pip"):
         command = [sys.executable, "-m", "pip", "install", "--quiet", *packages]
-    elif uv := shutil.which("uv") or shutil.which("uv", path=str(Path.home() / ".local" / "bin")):
+    elif uv := _uv():
         command = [uv, "pip", "install", "--quiet", "--python", sys.executable, *packages]
     else:
         raise RuntimeError(
@@ -57,9 +57,62 @@ def install(*packages: str) -> None:
             "has no pip, and uv is not installed. Install them into that Python, then "
             "restart the kernel."
         )
-    completed = subprocess.run(command, capture_output=True, text=True)
+    _run(command)
+
+
+#: The AIPerf release Notebook 5 replays with, so Notebook 4 validates the same schema.
+AIPERF_VERSION = "0.13.0"
+#: AIPerf's own environment, shared with Notebook 5. Kept apart from the kernel's
+#: because AIPerf pins its own versions of libraries the notebooks also use.
+AIPERF_HOME = Path(os.environ.get("AIPERF_HOME", Path.home() / "aiperf"))
+
+
+def aiperf_python() -> Path:
+    """The Python of the AIPerf environment, created or brought to AIPERF_VERSION first.
+
+    A second call finds it ready and returns at once.
+    """
+
+    python = AIPERF_HOME / "bin" / "python"
+    if python.exists() and _version(python, "aiperf") == AIPERF_VERSION:
+        return python
+    if AIPERF_HOME.exists() and not python.exists():
+        raise RuntimeError(
+            f"{AIPERF_HOME} exists but is not a Python environment. Move it, or set "
+            "AIPERF_HOME to another path, then run the cell again."
+        )
+    uv = _uv()
+    if not uv:
+        raise RuntimeError(
+            f"AIPerf {AIPERF_VERSION} is not installed in {AIPERF_HOME}, and uv, which "
+            "installs it without sudo, is not installed. Install uv with "
+            "`curl -LsSf https://astral.sh/uv/install.sh | sh`, then run the cell again."
+        )
+    if not python.exists():
+        print(f"Creating {AIPERF_HOME} ...", flush=True)
+        _run([uv, "venv", "--quiet", "--python", "3.12", str(AIPERF_HOME)])
+    print(f"Installing AIPerf {AIPERF_VERSION} into {AIPERF_HOME} ...", flush=True)
+    _run([uv, "pip", "install", "--quiet", "--python", str(python), f"aiperf=={AIPERF_VERSION}"])
+    return python
+
+
+def _uv() -> str | None:
+    return shutil.which("uv") or shutil.which("uv", path=str(Path.home() / ".local" / "bin"))
+
+
+def _version(python: Path, package: str) -> str | None:
+    completed = subprocess.run(
+        [str(python), "-c", f"import importlib.metadata as m; print(m.version({package!r}))"],
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip() if completed.returncode == 0 else None
+
+
+def _run(command: list) -> None:
+    completed = subprocess.run([str(part) for part in command], capture_output=True, text=True)
     if completed.returncode:
-        raise RuntimeError(f"{' '.join(command)} failed:\n{completed.stderr.strip()}")
+        raise RuntimeError(f"{' '.join(map(str, command))} failed:\n{completed.stderr.strip()}")
 
 
 def get(url: str, timeout: float = 30):

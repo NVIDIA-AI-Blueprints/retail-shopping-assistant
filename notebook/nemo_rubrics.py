@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 from dataclasses import dataclass
 from getpass import getpass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import yaml
 from helpers import REPO
@@ -155,18 +157,37 @@ def _agent_setting(name: str) -> str:
 
 
 def judge_from_env() -> ModelClient:
-    """`JUDGE_MODEL_*` when `JUDGE_MODEL_BASE_URL` is set, else the agent's own model.
+    """The judge, from the first of these that sets a base URL:
 
-    The agent's endpoint, model, and key are read from the running orchestrator,
-    so they are never mixed with a judge endpoint the agent's key is not for.
+    1. `JUDGE_MODEL_*` in this kernel, an override for this session.
+    2. `JUDGE_MODEL_*` in the running orchestrator: the judge the deployment's
+       env profile chose, however Jupyter was started.
+    3. `LLM_*` in the running orchestrator, the agent's own model, for a
+       deployment from before the judge was passed through.
+
+    Each source's endpoint, model, and key are used together, so a key is never
+    sent to an endpoint it is not for.
     """
-    base_url = os.environ.get("JUDGE_MODEL_BASE_URL")
-    if base_url:
+    if os.environ.get("JUDGE_MODEL_BASE_URL"):
+        base_url = os.environ["JUDGE_MODEL_BASE_URL"]
         model = os.environ["JUDGE_MODEL_NAME"]
         api_key = os.environ.get("JUDGE_MODEL_API_KEY") or os.environ.get("NVIDIA_API_KEY")
+    elif base_url := _agent_setting("JUDGE_MODEL_BASE_URL"):
+        model = _agent_setting("JUDGE_MODEL_NAME")
+        api_key = _agent_setting("JUDGE_MODEL_API_KEY")
     else:
         base_url, model = _agent_setting("LLM_BASE_URL"), _agent_setting("LLM_MODEL")
         api_key = _agent_setting("LLM_API_KEY")
+    try:
+        socket.getaddrinfo(urlsplit(base_url).hostname, None)
+    except (socket.gaierror, UnicodeError) as error:
+        raise RuntimeError(
+            f"The judge's host in {base_url!r} does not resolve here. A Compose service "
+            "name such as local-llm resolves only inside Docker. Recreate the app from "
+            "the shell that sourced your env profile (docker compose up -d), which passes "
+            "the profile's JUDGE_MODEL_* to the orchestrator, or set JUDGE_MODEL_* in "
+            "this kernel. tests/evaluation/README.md, Judge Commands, has the options."
+        ) from error
     return ModelClient(
         base_url=base_url,
         model=model,

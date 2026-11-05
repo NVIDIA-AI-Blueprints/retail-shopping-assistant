@@ -28,6 +28,12 @@ services:
       - VLM_API_KEY=${VLM_API_KEY:-${NVIDIA_API_KEY:-}}
       - VLM_BASE_URL=${VLM_BASE_URL:-}
       - VLM_MODEL=${VLM_MODEL:-}
+      # The evaluation judge the profile chose. The orchestrator never calls it;
+      # it carries the deployment's choice to Notebook 3, which reads it with
+      # `docker exec`. The URL is the host's address, not one this container uses.
+      - JUDGE_MODEL_BASE_URL=${JUDGE_MODEL_BASE_URL:-}
+      - JUDGE_MODEL_NAME=${JUDGE_MODEL_NAME:-}
+      - JUDGE_MODEL_API_KEY=${JUDGE_MODEL_API_KEY:-}
       # Pass-through, no defaults here: shared/configs/orchestrator/config.yaml
       # holds them (relay_enabled's is in orchestrator/src/config.py), and the
       # service URLs there already name the Compose hosts. Empty means unset,

@@ -18,7 +18,9 @@ by default) and none of the assistant.
 ## Before you start
 
 - Docker with the Compose plugin
-- Python 3.10 or later, with Jupyter
+- Python 3.10 or later, with Jupyter. A kernel environment made by `uv` has no
+  pip; the notebooks then install their packages with `uv`, from `PATH` or
+  `~/.local/bin`
 - An NVIDIA API key, from [build.nvidia.com](https://build.nvidia.com)
 - No local GPU: every model runs on a hosted endpoint
 

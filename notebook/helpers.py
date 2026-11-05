@@ -9,8 +9,12 @@ variable of the same name, for a deployment that is not on localhost.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import shutil
+import subprocess
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -33,6 +37,29 @@ WEB_UI = os.environ.get("WEB_UI", "http://localhost:3000")
 NOTEBOOK_USER_ID = 770000111
 #: The notebooks' cart. New for each kernel, so a run never inherits another's.
 NOTEBOOK_CART_ID = f"notebook-cart-{uuid.uuid4().hex[:12]}"
+
+
+def install(*packages: str) -> None:
+    """Install packages into the kernel's own Python, or raise saying why not.
+
+    `%pip install` needs pip inside the kernel's environment. Environments
+    made by uv have none, and the magic then prints an error and carries on,
+    so the first sign is a ModuleNotFoundError several cells later.
+    """
+
+    if importlib.util.find_spec("pip"):
+        command = [sys.executable, "-m", "pip", "install", "--quiet", *packages]
+    elif uv := shutil.which("uv") or shutil.which("uv", path=str(Path.home() / ".local" / "bin")):
+        command = [uv, "pip", "install", "--quiet", "--python", sys.executable, *packages]
+    else:
+        raise RuntimeError(
+            f"Cannot install {' '.join(packages)}: the kernel's Python ({sys.executable}) "
+            "has no pip, and uv is not installed. Install them into that Python, then "
+            "restart the kernel."
+        )
+    completed = subprocess.run(command, capture_output=True, text=True)
+    if completed.returncode:
+        raise RuntimeError(f"{' '.join(command)} failed:\n{completed.stderr.strip()}")
 
 
 def get(url: str, timeout: float = 30):

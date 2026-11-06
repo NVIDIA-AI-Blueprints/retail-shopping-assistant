@@ -20,7 +20,7 @@ Then AIPerf and Jupyter, once, with [uv](https://docs.astral.sh/uv/) (no
 ```bash
 command -v uv || curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
-uv venv ~/aiperf --python 3.12
+[ -x ~/aiperf/bin/python ] || uv venv ~/aiperf --python 3.12
 uv pip install --python ~/aiperf/bin/python aiperf==0.13.0 jupyterlab matplotlib
 ```
 

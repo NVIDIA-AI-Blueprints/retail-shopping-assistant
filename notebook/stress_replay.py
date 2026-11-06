@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import time
+import urllib.parse
 import urllib.request
 import uuid
 from collections import defaultdict
@@ -100,6 +101,232 @@ def server_status(base_url: str, metrics_url: str, key: str | None = None) -> di
         if found:
             status[field] = found[1]
     return status
+
+
+#: Launch flags whose value is a secret, recorded as "***".
+_SECRET_FLAGS = ("--api-key",)
+
+
+def server_launch(base_url: str) -> dict | None:
+    """The container serving `base_url`, its image, and the flags vLLM was started with.
+
+    None when no local container serves it (a remote server, or no docker). The
+    API key is masked.
+    """
+
+    port = str(urllib.parse.urlsplit(base_url).port or 80)
+    try:
+        ids = _docker("ps", "-q").split()
+    except (OSError, RuntimeError):
+        return None
+    for container in (json.loads(_docker("inspect", *ids)) if ids else []):
+        command = container["Config"]["Cmd"] or []
+        published = (container["NetworkSettings"].get("Ports") or {}).values()
+        on_port = any(binding.get("HostPort") == port for bindings in published for binding in bindings or [])
+        on_host = container["HostConfig"].get("NetworkMode") == "host" and _flag(command, "--port") == port
+        if on_port or on_host:
+            return {"container": container["Name"].lstrip("/"), "image": container["Config"]["Image"],
+                    "flags": _masked(command)}
+    return None
+
+
+def _masked(command: list[str]) -> list[str]:
+    masked, hide = [], False
+    for part in command:
+        if hide:
+            masked.append("***")
+            hide = False
+        elif part in _SECRET_FLAGS:
+            masked.append(part)
+            hide = True
+        elif part.startswith(tuple(f"{flag}=" for flag in _SECRET_FLAGS)):
+            masked.append(part.split("=", 1)[0] + "=***")
+        else:
+            masked.append(part)
+    return masked
+
+
+def cache_setting(status: dict) -> tuple[str, str]:
+    """`on`, `off` or `unknown`, and the block size, as run names and summary.csv record them."""
+
+    cache = {"True": "on", "False": "off"}.get(status["enable_prefix_caching"], "unknown")
+    return cache, status["block_size"] or "na"
+
+
+#: Flags that only mean something with prefix caching on; dropped to turn it off,
+#: as `gpu/deploy.sh` does with PREFIX_CACHE=0.
+_CACHE_ONLY_FLAGS = ("--block-size", "--prefix-match-unit", "--mamba-cache-mode")
+#: The server's command while caching was on, kept to restore it exactly.
+_CACHE_ON_COMMAND = RESULTS / "server-command-cache-on.json"
+
+
+def set_prefix_cache(
+    on: bool, base_url: str, metrics_url: str, key: str | None = None, timeout_s: float = 3600
+) -> dict:
+    """Restart the model server with prefix caching on or off, then return `server_status`.
+
+    Nothing else changes: every other setting is read from the running
+    container. Handles the two servers this repository starts: the container
+    `gpu/deploy.sh` runs, and the assistant's `local-llm` Compose service. A
+    server already in the asked state is left running.
+    """
+
+    wanted = "True" if on else "False"
+    if server_status(base_url, metrics_url, key)["enable_prefix_caching"] == wanted:
+        print(f"Prefix caching is already {'on' if on else 'off'}; the server was not restarted.")
+        return server_status(base_url, metrics_url, key)
+    port = str(urllib.parse.urlsplit(base_url).port or 80)
+    deploy_container = os.environ.get("CONTAINER_NAME", "nemotron35")
+    if _docker("ps", "-q", "--filter", f"name=^{deploy_container}$"):
+        name = _restart_deploy_sh(deploy_container, on)
+    elif compose := _docker("ps", "-q", "--filter", "label=com.docker.compose.service=local-llm",
+                            "--filter", f"publish={port}"):
+        name = _restart_compose(compose.split()[0], on)
+    else:
+        raise RuntimeError(
+            f"No server this notebook can restart serves {base_url}: neither the {deploy_container} "
+            "container from gpu/deploy.sh nor the assistant's local-llm. Restart yours with prefix "
+            f"caching {'on' if on else 'off'}, then run Step 1."
+        )
+    print(f"Waiting for {name} to load the model (minutes; docker logs -f {name}) ...", flush=True)
+    started = time.monotonic()
+    while time.monotonic() - started < timeout_s:
+        status = server_status(base_url, metrics_url, key)
+        if status["ready"] and status["enable_prefix_caching"] == wanted:
+            return status
+        if not _docker("ps", "-q", "--filter", f"name=^{name}$"):
+            logs = subprocess.run(["docker", "logs", "--tail", "40", name], capture_output=True, text=True)
+            raise RuntimeError(f"{name} stopped while loading. Last lines:\n{logs.stdout}{logs.stderr}")
+        time.sleep(15)
+    raise RuntimeError(f"The server at {base_url} was not ready after {timeout_s / 60:.0f} minutes.")
+
+
+def _docker(*args: str) -> str:
+    completed = subprocess.run(["docker", *args], capture_output=True, text=True)
+    if completed.returncode:
+        raise RuntimeError(f"docker {' '.join(args)} failed: {completed.stderr.strip()}")
+    return completed.stdout.strip()
+
+
+def _inspect(container: str) -> dict:
+    return json.loads(_docker("inspect", container))[0]
+
+
+def _flag(command: list[str], name: str) -> str | None:
+    for index, part in enumerate(command):
+        if part.startswith(f"{name}="):
+            return part.split("=", 1)[1]
+        if part == name and index + 1 < len(command):
+            return command[index + 1]
+    return None
+
+
+def _without_cache(command: list[str]) -> list[str]:
+    kept, skip = [], False
+    for part in command:
+        if skip:
+            skip = False
+        elif part == "--enable-prefix-caching":
+            kept.append("--no-enable-prefix-caching")
+        elif part in _CACHE_ONLY_FLAGS:
+            skip = True
+        elif not part.startswith(tuple(f"{flag}=" for flag in _CACHE_ONLY_FLAGS)):
+            kept.append(part)
+    return kept
+
+
+def _gpus(container: dict) -> str:
+    requests = container["HostConfig"].get("DeviceRequests") or []
+    ids = [i for request in requests for i in (request.get("DeviceIDs") or [])]
+    return ",".join(ids) if ids else "all"
+
+
+def _container_env(container: dict, name: str) -> str:
+    prefix = f"{name}="
+    return next((e[len(prefix):] for e in container["Config"]["Env"] or [] if e.startswith(prefix)), "")
+
+
+def _hf_cache(container: dict) -> str:
+    return next(m["Source"] for m in container["Mounts"] if m["Destination"] == "/root/.cache/huggingface")
+
+
+def _cache_on_command(current: list[str]) -> list[str] | None:
+    """The command with caching on: the current one if it is, else the one kept earlier."""
+
+    if "--enable-prefix-caching" in current:
+        _CACHE_ON_COMMAND.parent.mkdir(parents=True, exist_ok=True)
+        _CACHE_ON_COMMAND.write_text(json.dumps(current))
+        return current
+    return json.loads(_CACHE_ON_COMMAND.read_text()) if _CACHE_ON_COMMAND.exists() else None
+
+
+def _restart_deploy_sh(name: str, on: bool) -> str:
+    container = _inspect(name)
+    command = container["Args"]
+    before = _cache_on_command(command) or []
+    settings = {
+        "PREFIX_CACHE": "1" if on else "0",
+        "CONTAINER_NAME": name,
+        "VLLM_IMAGE": container["Config"]["Image"],
+        "MODEL": _flag(command, "--model"),
+        "SERVED_NAME": _flag(command, "--served-model-name"),
+        "PORT": _flag(command, "--port"),
+        "EXPOSE": "lan" if _flag(command, "--host") == "0.0.0.0" else "loopback",
+        "GPUS": _gpus(container),
+        "TP": _flag(command, "--tensor-parallel-size"),
+        "GPU_MEM_UTIL": _flag(command, "--gpu-memory-utilization"),
+        "MAX_NUM_SEQS": _flag(command, "--max-num-seqs"),
+        "MAX_MODEL_LEN": _flag(command, "--max-model-len"),
+        "BLOCK_SIZE": _flag(before, "--block-size"),
+        "MAMBA_PREFIX": ("1" if _flag(before, "--mamba-cache-mode") == "align" else "0") if before else None,
+        "HF_CACHE": _hf_cache(container),
+        "HF_TOKEN": _container_env(container, "HF_TOKEN") or os.environ.get("HF_TOKEN", ""),
+    }
+    env = {**os.environ, **{k: v for k, v in settings.items() if v}}
+    print(f"Restarting {name} with gpu/deploy.sh, prefix caching {'on' if on else 'off'} ...", flush=True)
+    completed = subprocess.run(["bash", str(HERE / "gpu" / "deploy.sh")], env=env, capture_output=True,
+                               text=True)
+    if completed.returncode:
+        raise RuntimeError(f"gpu/deploy.sh failed:\n{completed.stdout[-2000:]}{completed.stderr[-2000:]}")
+    return name
+
+
+def _restart_compose(container_id: str, on: bool) -> str:
+    container = _inspect(container_id)
+    labels = container["Config"]["Labels"]
+    command = container["Config"]["Cmd"]
+    cache_on = _cache_on_command(command)
+    if on and cache_on is None:
+        raise RuntimeError(
+            f"No record of {labels['com.docker.compose.service']}'s command with caching on. "
+            "Recreate it from the shell that sourced your env profile: docker compose up -d local-llm"
+        )
+    target = cache_on if on else _without_cache(command)
+    # Compose interpolates these into the service; taken from the running container
+    # so the image, GPUs, and model cache stay the same.
+    env = {
+        **os.environ,
+        "HF_CACHE": _hf_cache(container),
+        "HF_TOKEN": _container_env(container, "HF_TOKEN") or os.environ.get("HF_TOKEN", ""),
+        "LOCAL_LLM_VLLM_IMAGE": container["Config"]["Image"],
+        "LOCAL_LLM_GPUS": _gpus(container),
+        "LOCAL_LLM_HF_MODEL": _flag(target, "--model") or "",
+        "LOCAL_LLM_TP": _flag(target, "--tensor-parallel-size") or "",
+    }
+    service = labels["com.docker.compose.service"]
+    files = labels["com.docker.compose.project.config_files"].split(",")
+    override = RESULTS / f"{service}-command.yaml"
+    override.write_text(json.dumps({"services": {service: {"command": target}}}, indent=2))
+    compose = ["docker", "compose", "-p", labels["com.docker.compose.project"],
+               "--project-directory", labels["com.docker.compose.project.working_dir"]]
+    for path in [*files, str(override)]:
+        compose += ["-f", path]
+    print(f"Restarting {service} with prefix caching {'on' if on else 'off'} ...", flush=True)
+    completed = subprocess.run([*compose, "up", "-d", "--no-deps", service], env=env,
+                               capture_output=True, text=True)
+    if completed.returncode:
+        raise RuntimeError(f"docker compose failed:\n{completed.stderr[-2000:]}")
+    return container["Name"].lstrip("/")
 
 
 def expand(lines: list[dict], copies: int, run: str) -> list[dict]:

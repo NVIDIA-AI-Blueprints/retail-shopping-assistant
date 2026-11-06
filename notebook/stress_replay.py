@@ -703,7 +703,13 @@ def gates(out: Path, trace: list[dict], manifest: list[dict]) -> dict:
 
     - complete: every session played once, every call of it.
     - in_order: each session's calls went out in recorded order.
-    - output_lengths: every reply as long as recorded (`ignore_eos` worked).
+    - output_lengths: every measured reply as long as recorded (`ignore_eos` worked).
+    - empty_replies: agent calls sent with no tools left (the turn's search
+      budget was spent) where the model asked for a tool anyway. The server's
+      tool parser removes that from the text, so the reply is empty, as it was
+      for the app. The server still generates every token, but AIPerf does not
+      measure the reply and reports it as an error.
+    - other_errors: every other failed call. 0 in a clean run.
     - prompt_tokens: the share of calls whose prompt the server counted within 2%
       of the capture, which says it read the same prompt.
     """
@@ -730,11 +736,17 @@ def gates(out: Path, trace: list[dict], manifest: list[dict]) -> dict:
         == list(range(len(rows)))
         for rows in calls.values()
     )
-    lengths_ok, close, compared = True, 0, 0
+    lengths_ok, close, compared, empty, failed = True, 0, 0, 0, 0
     for session, rows in calls.items():
         original = session.split("~")[0]
         for row in rows:
             turn = row["metadata"]["turn_index"]
+            if row.get("error"):
+                if _empty_reply(row, expected[session][turn]):
+                    empty += 1
+                else:
+                    failed += 1
+                continue
             metrics = row["metrics"]
             wanted = expected[session][turn].get("output_length")
             got = metrics.get("output_sequence_length", {}).get("value")
@@ -748,8 +760,20 @@ def gates(out: Path, trace: list[dict], manifest: list[dict]) -> dict:
         "complete": complete,
         "in_order": in_order,
         "output_lengths": lengths_ok,
+        "empty_replies": empty,
+        "other_errors": failed,
         "prompt_tokens_within_2pct": close / compared if compared else None,
     }
+
+
+def _empty_reply(row: dict, line: dict) -> bool:
+    """An agent call with no tools left, which the server answers with no text."""
+
+    return (
+        row["error"].get("type") == "InvalidInferenceResultError"
+        and not line.get("tools")
+        and "parallel_tool_calls" in (line.get("extra") or {})
+    )
 
 
 def append_summary(row: dict, path: Path = RESULTS / "summary.csv") -> Path:

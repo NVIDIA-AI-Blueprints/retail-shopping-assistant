@@ -183,6 +183,12 @@ jobs:
       - name: Run QA test suite
         if: always()
         run: |
+          # The test image is private; log in before docker run pulls it.
+          if ! printenv NVIDIA_API_KEY | docker login nvcr.io --username '$oauthtoken' --password-stdin; then
+            echo "❌ docker login nvcr.io failed; cannot pull $TEST_IMAGE"
+            exit 1
+          fi
+
           echo "Waiting for application to be ready..."
           max_retries=30
           retry_count=0
@@ -308,7 +314,15 @@ jobs:
 
       - name: Run QA test suite
         if: always()
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
+          # The test image is private; log in before docker run pulls it.
+          if ! printenv NVIDIA_API_KEY | docker login nvcr.io --username '$oauthtoken' --password-stdin; then
+            echo "❌ docker login nvcr.io failed; cannot pull $TEST_IMAGE"
+            exit 1
+          fi
+
           docker run --rm \
             -v "$(pwd)/$QA_INPUT:/app/input/retail_shopping_assistant_staging" \
             -v "$(pwd):/workspace" \

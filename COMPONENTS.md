@@ -76,7 +76,7 @@
 - [idna](https://pypi.org/project/idna/) ([BSD-3-Clause](https://spdx.org/licenses/BSD-3-Clause.html))
 - [jiter](https://pypi.org/project/jiter/) ([MIT](https://spdx.org/licenses/MIT.html))
 - [jsonpatch](https://pypi.org/project/jsonpatch/) ([BSD-3-Clause](https://spdx.org/licenses/BSD-3-Clause.html))
-- [jsonpointer](https://pypi.org/project/jsonpointer/) ([Modified BSD License](https://spdx.org/licenses/ModifiedBSDLicense.html))
+- [jsonpointer](https://pypi.org/project/jsonpointer/) ([BSD-3-Clause](https://spdx.org/licenses/BSD-3-Clause.html))
 - [kiwisolver](https://pypi.org/project/kiwisolver/) ([BSD-3-Clause](https://spdx.org/licenses/BSD-3-Clause.html))
 - [langchain](https://pypi.org/project/langchain/) ([MIT](https://spdx.org/licenses/MIT.html))
 - [langchain-core](https://pypi.org/project/langchain-core/) ([MIT](https://spdx.org/licenses/MIT.html))
